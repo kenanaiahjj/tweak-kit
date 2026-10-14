@@ -19,6 +19,36 @@ export type LastApply = { id: string; by: 'haiku' | 'direct'; count: number; fil
 /** What the Diff pane shows: the newest apply's unified diffs. */
 export type DiffView = { id: string; files: { path: string; diff: string }[] }
 
+/** One field's value in the page, as the overlay reports it. */
+export type RemoteField = { value: string; changed: boolean }
+
+/** What the page's overlay reports to the Claude Code pane: the selection and everything the panel shows. */
+export type RemoteSnapshot = {
+  open: boolean
+  page: string
+  width: number
+  picking: boolean
+  editState: string
+  undoCount: number
+  lastApply: { id: string; by?: string; count: number; files: string[] } | null
+  note: string
+  changes: { key: string; label: string; summary: string; status: 'draft' | 'applying' | 'skipped'; reason?: string }[]
+  tokens: { name: string; value: string }[]
+  selected: null | {
+    name: string
+    source?: string
+    isFlex: boolean
+    isGrid: boolean
+    hasText: boolean
+    hasGradient: boolean
+    scope: 'all' | 'viewport'
+    note: string
+    warnings: string[]
+    fields: Record<string, RemoteField>
+  }
+  layers?: { depth: number; name: string; text: string; kind: string; selected: boolean; changed: boolean }[]
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'ui-tweaks': {
@@ -28,6 +58,9 @@ declare module 'claude-code' {
       lastApply: LastApply | null
       dismissedApply: string | null
       diffView: DiffView | null
+      remote: RemoteSnapshot | null
+      remotePages: number
+      paneOpen: boolean
     }
   }
 }

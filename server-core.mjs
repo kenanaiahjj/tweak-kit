@@ -116,16 +116,59 @@ function send(res, status, body, type = "application/json") {
   res.end(typeof body === "string" ? body : JSON.stringify(body));
 }
 
+/** Tells the Claude Code mod where this dev server is: <root>/.ui-tweaks/server.json. */
+export async function announceServer(root, url) {
+  const dir = tweaksDir(root);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, ".gitignore"), "*\n");
+  await fs.writeFile(path.join(dir, "server.json"), JSON.stringify({ url, pid: process.pid, at: Date.now() }) + "\n");
+}
+
 /**
  * Connect-style middleware. `getVersion` (optional) returns a number that changes when
  * the served files change; the overlay reloads the page when it does (static mode only).
  */
 export function createTweaksHandler({ root, getVersion }) {
+  // The Claude Code pane drives the page through here: the page posts what is selected,
+  // the pane polls for it and posts commands, which reach the page over server-sent events.
+  const remote = { version: 0, snapshot: null, pages: new Set(), seenAt: 0 };
+  const toPages = (data) => {
+    for (const page of remote.pages) page.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
   return async function handle(req, res, next) {
     const url = new URL(req.url, "http://localhost");
     if (!url.pathname.startsWith(PREFIX)) return next();
     try {
       if (req.method === "OPTIONS") return send(res, 204, "");
+      if (req.method === "GET" && url.pathname === `${PREFIX}/remote/events`) {
+        res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive", "Access-Control-Allow-Origin": "*" });
+        res.write(": connected\n\n");
+        remote.pages.add(res);
+        const ping = setInterval(() => res.write(": ping\n\n"), 15000);
+        req.on("close", () => {
+          clearInterval(ping);
+          remote.pages.delete(res);
+        });
+        return;
+      }
+      if (req.method === "POST" && url.pathname === `${PREFIX}/remote/state`) {
+        remote.snapshot = JSON.parse(await readBody(req));
+        remote.version++;
+        return send(res, 200, { ok: true, version: remote.version });
+      }
+      if (req.method === "GET" && url.pathname === `${PREFIX}/remote/state`) {
+        remote.seenAt = Date.now();
+        const since = Number(url.searchParams.get("since") || -1);
+        if (since === remote.version) return send(res, 200, { version: remote.version, unchanged: true, pages: remote.pages.size });
+        return send(res, 200, { version: remote.version, snapshot: remote.snapshot, pages: remote.pages.size });
+      }
+      if (req.method === "POST" && url.pathname === `${PREFIX}/remote/command`) {
+        remote.seenAt = Date.now();
+        if (!remote.pages.size) return send(res, 409, { error: "No page with the overlay is open." });
+        toPages(JSON.parse(await readBody(req)));
+        return send(res, 200, { ok: true });
+      }
       if (req.method === "GET" && url.pathname === `${PREFIX}/overlay.js`) {
         return send(res, 200, await fs.readFile(OVERLAY_PATH, "utf8"), "text/javascript");
       }
@@ -133,6 +176,7 @@ export function createTweaksHandler({ root, getVersion }) {
         const pending = await readPending(root);
         const last = (await readHistory(root)).slice(-1)[0];
         return send(res, 200, {
+          remote: Date.now() - remote.seenAt < 4000,
           lastApply: last ? { id: last.id, by: last.by, count: last.count, files: last.files.map((f) => path.basename(f)) } : null,
           pendingIds: pending.batches.map((b) => b.id),
           // Per tweak, so the overlay can drop previews one at a time and show Haiku's skip reasons.

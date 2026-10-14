@@ -5,7 +5,7 @@
 import http from "node:http";
 import { promises as fs, watch } from "node:fs";
 import path from "node:path";
-import { createTweaksHandler, overlayScriptTag } from "./server-core.mjs";
+import { announceServer, createTweaksHandler, overlayScriptTag } from "./server-core.mjs";
 
 const args = process.argv.slice(2);
 const portFlag = args.indexOf("--port");
@@ -74,6 +74,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, () => {
+  void announceServer(root, `http://localhost:${port}`);
   if (apiOnly) {
     console.log(`UI Tweaks sidecar on http://localhost:${port} for ${root}`);
     console.log(`Add to your dev page: <script src="http://localhost:${port}/__ui-tweaks/overlay.js" data-api="http://localhost:${port}" data-root="${root}" defer></script>`);

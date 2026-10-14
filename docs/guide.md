@@ -124,17 +124,35 @@ Nothing to do: the kit writes a `.gitignore` containing `*` inside `.ui-tweaks/`
 
 ## 3. Use it
 
-1. Start your dev server and open the app.
+1. Start your dev server and open the app. Claude Code's built-in browser pane is a good place for it.
 2. Open a Claude Code session **in the project folder**. The mod watches the folder the session is in.
-3. Click **Tweak** (bottom right), or press **Alt+T**.
+3. Click **Tweak** (bottom right of the page), or run **`/tweak`** in Claude Code.
 
-### Selecting
+### The Claude Code pane (the default)
+
+With a session open in the project, **Tweak** opens the **UI Tweaks pane** in Claude Code. The page keeps only your app, the selection outline and the live preview; the controls are all in the pane.
+
+- **Select** by clicking in the page, or in the pane's layers list. The page's button turns into a **Picking · Claude Code** chip; click it, or use **Picking: on/off** in the pane, to use the page normally.
+- **Numbers:** type a value and press Enter, or step it with **− / +**. Padding, margin, radius and border width take one to four values, as in CSS (`8`, `8 16`, `8 16 4 2`).
+- **Colors:** type a hex value, or click one of your `:root` color tokens.
+- **Gradients:** **Replace with solid**, or change the base color. Exploring gradients is better done in a design tool.
+- **Also in the pane:** the Default / Hover / Active / Focus state, auto layout, the "only at N px" switch, notes, the list of changes with ↺, **Undo**, **Send to Claude**, **Reset** and **Undo last apply**.
+
+Closing the pane hands the page back its own panel.
+
+How it connects: the dev server writes its address to `.ui-tweaks/server.json`. The pane reads what the page reports through the dev server and sends its commands back the same way (the page listens over server-sent events). A ● next to a field means you changed it.
+
+### The in-page panel
+
+Without a Claude Code session (or in Chrome on its own), **Tweak** opens the panel on the page. It has the same controls, plus color pickers, gradient-stop editing and drag-to-scrub.
+
+### Selecting (in-page panel)
 
 - **Click** an element on the page, or pick it in the **layers list** at the top of the panel. The list shows the element in context, so you can reach a button next to a heading. Hovering a row outlines it on the page.
 - **V** turns picking off, so you can use the page normally (to get to another screen, for example). Press V again to resume.
 - **Esc** deselects, then closes.
 
-### Editing
+### Editing (in-page panel)
 
 | Section | Controls |
 | --- | --- |
@@ -168,6 +186,7 @@ Press **Send to Claude**. The toast tells you what happened, e.g. "Applied 3 dir
 
 | Command | Does |
 | --- | --- |
+| `/tweak` | Opens the UI Tweaks pane for the page in the browser |
 | `/apply-tweaks` | Applies waiting tweaks with Haiku (normally automatic) |
 | `/apply-tweaks claude` | Sends waiting tweaks, e.g. ones Haiku skipped, to the main model |
 | `/apply-tweaks undo` | Undoes the last apply |
@@ -211,6 +230,7 @@ All inside `<project>/.ui-tweaks/`, which ignores itself in git:
 | `log.json` | What happened to each tweak and why (last 300) |
 | `history.json`, `history/slot-N.json` | Undo history: file copies for the last 10 applies |
 | `lock.json` | Which session is applying right now |
+| `server.json` | The dev server's address, for the Claude Code pane |
 
 ## Setting it up for a team
 
@@ -265,6 +285,10 @@ Then remove the `uiTweaks` lines from `vite.config.ts`, or the script tag from y
 **"Another Claude Code session is applying tweaks".** Another session in the same project holds the lock. It's released when that apply ends, or after 10 minutes.
 
 **A tweak was skipped.** The band and `.ui-tweaks/log.json` say why. Fix the cause (e.g. edit the gradient layers instead of a hidden background color), or press **Send to Claude** in the band.
+
+**The pane says "Open your app in the browser".** The page with the overlay isn't open, or the dev server restarted on another port; reload the page. The pane finds the dev server through `.ui-tweaks/server.json`, so the session must be in the project folder.
+
+**Tweak opened the panel on the page instead of the pane.** No Claude Code session with the mod was watching this dev server (the page waits about 2.5 s for the pane). Check the session is in the project folder, or run `/tweak`.
 
 **Pop-out says it was blocked.** Allow pop-ups for the page, or use a regular browser instead of Claude Code's built-in one.
 

@@ -1,5 +1,5 @@
 // Vite plugin: injects the UI Tweaks overlay in `vite dev` only. Builds are untouched.
-import { createTweaksHandler } from "./server-core.mjs";
+import { announceServer, createTweaksHandler } from "./server-core.mjs";
 
 export default function uiTweaks() {
   let root = process.cwd();
@@ -14,6 +14,10 @@ export default function uiTweaks() {
     },
     configureServer(server) {
       server.middlewares.use(createTweaksHandler({ root }));
+      server.httpServer?.once("listening", () => {
+        const address = server.httpServer.address();
+        if (address && typeof address === "object") void announceServer(root, `http://localhost:${address.port}`);
+      });
     },
     transformIndexHtml() {
       return [

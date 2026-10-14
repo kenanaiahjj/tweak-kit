@@ -2,14 +2,14 @@
 
 Figma-style visual tweaks in your running app, written back to the real source code.
 
-Open your app in the browser, click any element, and adjust it in a panel: spacing, size, auto layout, type, color, gradients, radius, border, shadow, and hover/active/focus states. When you're happy, press **Send to Claude**. Most tweaks are written to your CSS and JSX instantly, with no AI involved. The rest are applied by a small Haiku agent in Claude Code, which is checked, logged and undoable.
+Open your app in the browser, click any element, and adjust it in a panel, either a **pane inside Claude Code** (your app stays uncovered) or an in-page panel: spacing, size, auto layout, type, color, radius, border, shadow, and hover/active/focus states. When you're happy, press **Send to Claude**. Most tweaks are written to your CSS and JSX instantly, with no AI involved. The rest are applied by a small Haiku agent in Claude Code, which is checked, logged and undoable.
 
 It has two parts:
 
 | Part | What it is | Install |
 | --- | --- | --- |
 | **Browser kit** | The overlay panel plus a small dev-server piece that saves tweaks and applies the simple ones | per project, as a dev dependency |
-| **Claude Code mod** (`ui-tweaks`) | Applies the remaining tweaks with Haiku, and shows status, diff and undo above the Claude Code prompt | once per person |
+| **Claude Code mod** (`ui-tweaks`) | The **UI Tweaks pane** in Claude Code, Haiku for the tweaks that need a model, and status, diff and undo above the prompt | once per person |
 
 ## Quick start
 
@@ -39,7 +39,7 @@ const uiTweaks = await import("ui-tweak-kit/vite").then((k) => k.default()).catc
 export default defineConfig({ plugins: [react(), uiTweaks] });
 ```
 
-**3. Use it.** Run your dev server, open the app, click **Tweak** (or press Alt+T), edit, and press **Send to Claude**. Keep a Claude Code session open in the project folder so the mod can apply anything that needs Haiku.
+**3. Use it.** Run your dev server, open the app (Claude Code's browser pane works well), and click **Tweak**. With a Claude Code session open in the project folder, the **UI Tweaks pane** opens in Claude Code (or run `/tweak`). Click elements in the page, edit in the pane, and press **Send to Claude**. Without a session, the panel opens on the page instead.
 
 The repo is private, so you need read access to `lmfventures/tweak-kit` and git set up to reach GitHub.
 

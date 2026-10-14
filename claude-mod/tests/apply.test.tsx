@@ -159,3 +159,64 @@ test('line stats and unified diffs', () => {
   expect(diff.split('\n').filter(l => l.startsWith('@@'))).toEqual(['@@ -1,6 +1,6 @@', '@@ -8,3 +8,4 @@'])
   expect(diff).toContain('-c\n+C')
 })
+
+const SNAPSHOT = {
+  open: true,
+  page: '/',
+  width: 390,
+  picking: true,
+  editState: '',
+  undoCount: 1,
+  lastApply: null,
+  note: '',
+  changes: [{ key: 'e1', label: '.cta', summary: 'padding-top 10px → 14px', status: 'draft' }],
+  tokens: [{ name: '--brand', value: '#5b3df5' }],
+  selected: {
+    name: 'a.cta',
+    source: 'src/App.tsx:12',
+    isFlex: true,
+    isGrid: false,
+    hasText: true,
+    hasGradient: true,
+    scope: 'all',
+    note: '',
+    warnings: ['background-color is hidden under the gradient fill'],
+    fields: { padding: { value: '14 16 10', changed: true }, 'font-size': { value: '16', changed: false }, color: { value: '#ffffff', changed: false } },
+  },
+  layers: [
+    { depth: 0, name: 'main.page', text: '', kind: 'frame', selected: false, changed: false },
+    { depth: 1, name: 'a.cta', text: 'Get started', kind: 'gradient', selected: true, changed: true },
+  ],
+}
+
+test('the panel pane shows what the page reports, on the desktop and the terminal, and its buttons send commands', async ($, on) => {
+  const sent: string[] = []
+  const clock = mock.clock(on, { now: 1000 })
+  on('fs.read', ($, e) => {
+    if (e.path.endsWith('server.json')) return { value: JSON.stringify({ url: 'http://localhost:5188' }) }
+    throw new Error('ENOENT')
+  })
+  // The dev server: the poll gets the page's snapshot; commands are recorded.
+  on('http.fetch', ($, e) => {
+    if (e.init?.method === 'POST') {
+      sent.push(String(e.init.body))
+      return { value: { status: 200, ok: true, headers: {}, text: '{}' } } as never
+    }
+    return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ version: 1, snapshot: { ...SNAPSHOT, open: false }, pages: 1 }) } } as never
+  })
+  on('agent.register', () => ({ value: { agent: 'ui-tweaks:applier' } }) as never)
+  on('command.register', () => ({ value: {} }) as never)
+  on('session.start', () => ({ cwd: '/p' }) as never)
+  await $.session.start({ cwd: '/p' } as never)
+  await clock.advance(300) // one poll
+
+  for (const surface of ['desktop', 'terminal'] as const) {
+    const ui = await $.ui.mount({ plugin: 'ui-tweaks', surface, component: 'Pane', requestId: 'ui-tweaks-panel', props: {} as never })
+    const drawn = JSON.stringify(await ui.drawn())
+    expect(drawn).toContain('a.cta')
+    expect(drawn).toContain('src/App.tsx:12')
+    await ui.press({ key: 'inc-padding' })
+    await ui.unmount()
+  }
+  expect(sent.some(b => b.includes('"op":"nudge"') && b.includes('"prop":"padding"'))).toBe(true)
+})

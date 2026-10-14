@@ -19,6 +19,28 @@ const PANEL = 'ui-tweaks-panel'
 const remote = atom({ plugin: 'ui-tweaks', key: 'remote' } as const, null)
 const remotePages = atom({ plugin: 'ui-tweaks', key: 'remotePages' } as const, 0)
 const paneOpen = atom({ plugin: 'ui-tweaks', key: 'paneOpen' } as const, false)
+// Which pane folders are open (true) or closed (false); absent means the folder's default.
+const folds = atom({ plugin: 'ui-tweaks', key: 'folds' } as const, {})
+// The field being typed into, after a double-click on its dial.
+const editing = atom({ plugin: 'ui-tweaks', key: 'editing' } as const, null)
+
+// Dial ranges: [min, max, step]; a range grows to fit a larger current value.
+const RANGES: Record<string, [number, number, number]> = {
+  'row-gap': [0, 64, 1],
+  'column-gap': [0, 64, 1],
+  width: [0, 800, 1],
+  height: [0, 400, 1],
+  'max-width': [0, 1200, 1],
+  padding: [0, 64, 1],
+  margin: [0, 64, 1],
+  'font-size': [8, 72, 1],
+  'line-height': [0.8, 2.4, 0.05],
+  'letter-spacing': [-2, 4, 0.05],
+  'border-radius': [0, 64, 1],
+  'border-width': [0, 8, 1],
+  opacity: [0, 1, 0.05],
+}
+const SIDE_GROUPS = new Set(['padding', 'margin', 'border-radius', 'border-width'])
 const LOG = '.ui-tweaks/log.json'
 
 // Undo history, shared with the kit's dev server (POST /__ui-tweaks/undo):
@@ -589,208 +611,245 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('ui.render', { component: 'Pane', requestId: PANEL }, async ($, e) => {
-    if (e.surface === 'mobile') {
-      const { Text } = $.ui.resolve(e)
-      return <Text dimColor>The UI Tweaks panel needs fields, which the mobile app does not draw yet.</Text>
+  // A dial was dragged, stepped or double-clicked in the pane.
+  on('ui.message', { requestId: PANEL }, async ($, e) => {
+    const data = e.data as { prop?: string; value?: number; edit?: boolean }
+    if (!data.prop) return {}
+    if (data.edit) {
+      await update($, editing, () => data.prop ?? null)
+      return {}
     }
-    const { Box, Button, Input, Select, Text } = $.ui.resolve(e)
+    const value = String(data.value)
+    void sendCommand($, SIDE_GROUPS.has(data.prop) ? { op: 'set-group', group: data.prop, value } : { op: 'set', prop: data.prop, value })
+    return {}
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANEL }, async ($, e) => {
+    if (e.surface !== 'desktop' && e.surface !== 'terminal') {
+      const { Text } = $.ui.resolve(e)
+      return <Text dimColor>The UI Tweaks panel runs in the Claude desktop app and the terminal; use the in-page panel here.</Text>
+    }
+    const { Box, Button, Client, Input, Select, Text } = $.ui.resolve(e)
     const snap = await read($, remote)
     const pages = await read($, remotePages)
+    const open = await read($, folds)
+    const typing = await read($, editing)
     const cmd = (c: PaneCommand) => void sendCommand($, c)
 
     if (snap === null || pages === 0) {
       return (
         <Box flexDirection="column" gap={1}>
           <Text bold>UI Tweaks</Text>
-          <Text dimColor>Open your app in the browser (dev server with the tweak kit running), then click an element.</Text>
+          <Text dimColor>Open your app in the browser (its dev server running the tweak kit), then click an element.</Text>
         </Box>
       )
     }
 
     const sel = snap.selected
     const f = (name: string) => sel?.fields[name] ?? { value: '', changed: false }
-    const mark = (name: string) => (f(name).changed ? '● ' : '')
 
-    // A number field: type a value (Enter applies) or step it with − / +.
-    const num = (prop: string, label: string, step = 1) => (
-      <Box key={`row-${prop}`} flexDirection="row" gap={1} alignItems="center">
-        <Input key={`in-${prop}`} label={mark(prop) + label} value={f(prop).value} onSubmit={v => cmd({ op: 'set', prop, value: v })} />
-        <Button key={`dec-${prop}`} label="−" onPress={() => cmd({ op: 'nudge', prop, delta: -step })} />
-        <Button key={`inc-${prop}`} label="+" onPress={() => cmd({ op: 'nudge', prop, delta: step })} />
-      </Box>
-    )
-    // Four sides in one field: "8", "8 16", "8 16 4" or "8 16 4 2", as in CSS.
-    const sides = (group: string, label: string) => (
-      <Box key={`row-${group}`} flexDirection="row" gap={1} alignItems="center">
-        <Input key={`in-${group}`} label={mark(group) + label} value={f(group).value} onSubmit={v => cmd({ op: 'set-group', group, value: v })} />
-        <Button key={`dec-${group}`} label="−" onPress={() => cmd({ op: 'nudge', prop: group, delta: -1 })} />
-        <Button key={`inc-${group}`} label="+" onPress={() => cmd({ op: 'nudge', prop: group, delta: 1 })} />
-      </Box>
-    )
-    const color = (prop: string, label: string, isGroup = false) => (
-      <Box key={`row-${prop}`} flexDirection="column">
-        <Box flexDirection="row" gap={1} alignItems="center">
-          <Text backgroundColor={f(prop).value.split(' ')[0]?.startsWith('#') ? f(prop).value.split(' ')[0] : undefined}>{'  '}</Text>
-          <Input key={`in-${prop}`} label={mark(prop) + label} value={f(prop).value} onSubmit={v => cmd(isGroup ? { op: 'set-group', group: prop, value: v } : { op: 'set', prop, value: v })} />
+    // A collapsible folder, DialKit-style.
+    const folder = (id: string, title: string, isOpenByDefault: boolean, body: () => unknown, aside?: string) => {
+      const isOpen = open[id] ?? isOpenByDefault
+      return (
+        <Box key={`fold-${id}`} flexDirection="column">
+          <Button key={`fold-btn-${id}`} plain onPress={() => void update($, folds, o => ({ ...o, [id]: !isOpen }))}>
+            <Text bold>{isOpen ? '▾' : '▸'} {title}</Text>
+            {aside ? <Text dimColor> {aside}</Text> : ''}
+          </Button>
+          {isOpen ? <Box flexDirection="column" paddingLeft={2}>{body() as never}</Box> : null}
         </Box>
-        {snap.tokens.length > 0 && (
-          <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
-            {snap.tokens.map(t => (
-              <Button key={`tok-${prop}-${t.name}`} plain onPress={() => cmd(isGroup ? { op: 'set-group', group: prop, value: `var(${t.name})` } : { op: 'set', prop, value: `var(${t.name})` })}>
-                <Text color={t.value}>■</Text> <Text dimColor>{t.name.replace(/^--/, '')}</Text>
-              </Button>
-            ))}
-          </Box>
-        )}
+      )
+    }
+
+    // A number as a dial row; double-click it to type an exact value (sides: "8 16", as in CSS).
+    const dial = (prop: string, label: string) => {
+      const field = f(prop)
+      const first = parseFloat(field.value)
+      const value = Number.isFinite(first) ? first : null
+      const [min, baseMax, step] = RANGES[prop] ?? [0, 100, 1]
+      const max = value !== null && value > baseMax ? Math.ceil(value * 1.5) : baseMax
+      const isTyping = typing === prop
+      return (
+        <Box key={`dial-row-${prop}`} flexDirection="column">
+          <Client
+            key={`dial-${prop}`}
+            module="./dial.tsx"
+            width="100%"
+            height={1}
+            props={{ prop, label: (field.changed ? '● ' : '') + label, value, text: field.value || '—', min, max, step, changed: field.changed }}
+          />
+          {isTyping && (
+            <Input
+              key={`type-${prop}`}
+              label={label}
+              value={field.value}
+              autoFocus
+              onSubmit={v => {
+                cmd(SIDE_GROUPS.has(prop) ? { op: 'set-group', group: prop, value: v } : { op: 'set', prop, value: v })
+                void update($, editing, () => null)
+              }}
+            />
+          )}
+        </Box>
+      )
+    }
+
+    // A few choices as buttons; the current one is the primary button.
+    const segment = (key: string, label: string, current: string, options: [string, string][], onPick: (value: string) => void) => (
+      <Box key={`seg-${key}`} flexDirection="row" gap={1} alignItems="center">
+        <Text color="subtle">{label}</Text>
+        {options.map(([value, text]) => (
+          <Button key={`seg-${key}-${value || 'none'}`} label={text} variant={value === current ? 'primary' : 'secondary'} onPress={() => onPick(value)} />
+        ))}
       </Box>
     )
-    const pick = (prop: string, label: string, options: string[]) => (
+
+    const choose = (prop: string, label: string, options: string[]) => (
       <Select
         key={`sel-${prop}`}
-        label={mark(prop) + label}
+        label={(f(prop).changed ? '● ' : '') + label}
         value={f(prop).value}
         options={(options.includes(f(prop).value) ? options : [f(prop).value, ...options]).map(o => ({ value: o, label: o }))}
         onSelect={v => cmd({ op: 'set', prop, value: v })}
       />
     )
-    const heading = (text: string) => <Text bold>{text}</Text>
 
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Box flexDirection="row" gap={1} alignItems="center">
-          <Text bold>UI Tweaks</Text>
-          <Text dimColor>
-            {snap.page} · {snap.width}px
-          </Text>
-          <Button key="pick" label={snap.picking ? 'Picking: on' : 'Picking: off'} hotkey="p" onPress={() => cmd({ op: 'pick', on: !snap.picking })} />
-          {snap.undoCount > 0 && <Button key="undo" label="Undo" hotkey="z" onPress={() => cmd({ op: 'undo' })} />}
-        </Box>
-
-        {sel === null ? (
-          <Text dimColor>Click an element in the browser to edit it.</Text>
-        ) : (
-          <Box flexDirection="column" gap={1}>
-            <Box flexDirection="column">
-              <Text bold>{sel.name}</Text>
-              {sel.source !== undefined && <Text dimColor>{sel.source}</Text>}
-            </Box>
-
-            <Box flexDirection="column">
-              {(snap.layers ?? []).map((l, i) => (
-                <Button key={`layer-${i}`} plain onPress={() => cmd({ op: 'select', index: i })}>
-                  {'  '.repeat(l.depth)}
-                  {l.selected ? '▸ ' : '  '}
-                  {l.kind === 'gradient' ? '◐' : l.kind === 'text' ? 'T' : l.kind === 'media' ? '▣' : l.kind === 'fill' ? '■' : '#'} {l.name}{' '}
-                  <Text dimColor>{l.text}</Text>
-                  {l.changed ? <Text color="magenta"> ●</Text> : ''}
+    // A color: swatch, hex field, and the project's color tokens behind ◇.
+    const color = (prop: string, label: string, isGroup = false) => {
+      const field = f(prop)
+      const hex = field.value.split(' ')[0] ?? ''
+      const tokensOpen = open[`tokens-${prop}`] ?? false
+      const set = (value: string) => cmd(isGroup ? { op: 'set-group', group: prop, value } : { op: 'set', prop, value })
+      return (
+        <Box key={`color-${prop}`} flexDirection="column">
+          <Box flexDirection="row" gap={1} alignItems="center">
+            <Text backgroundColor={hex.startsWith('#') ? hex : undefined} color="subtle">{hex.startsWith('#') ? '   ' : ' ∅ '}</Text>
+            <Input key={`in-${prop}`} label={(field.changed ? '● ' : '') + label} value={field.value} onSubmit={set} />
+            {snap.tokens.length > 0 && (
+              <Button key={`tok-btn-${prop}`} label="◇" plain onPress={() => void update($, folds, o => ({ ...o, [`tokens-${prop}`]: !tokensOpen }))} />
+            )}
+          </Box>
+          {tokensOpen && (
+            <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
+              {snap.tokens.map(t => (
+                <Button key={`tok-${prop}-${t.name}`} plain onPress={() => set(`var(${t.name})`)}>
+                  <Text color={t.value}>■</Text> <Text color="subtle">{t.name.replace(/^--/, '')}</Text>
                 </Button>
               ))}
             </Box>
+          )}
+        </Box>
+      )
+    }
 
-            <Select
-              key="state"
-              label="State"
-              value={snap.editState}
-              options={[
-                { value: '', label: 'Default' },
-                { value: 'hover', label: 'Hover' },
-                { value: 'active', label: 'Active' },
-                { value: 'focus-visible', label: 'Focus' },
-              ]}
-              onSelect={v => cmd({ op: 'state', value: v })}
-            />
+    const crumbs = (snap.layers ?? []).filter(l => l.depth < (snap.layers ?? []).find(x => x.selected)!.depth || l.selected)
+    const changed = snap.changes.length
+
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Box flexDirection="row" justifyContent="space-between" alignItems="center">
+          <Text bold>UI Tweaks</Text>
+          <Box flexDirection="row" gap={1}>
+            {snap.undoCount > 0 && <Button key="undo" label="Undo" hotkey="z" onPress={() => cmd({ op: 'undo' })} />}
+            <Button key="pick" label={snap.picking ? '⌖ Picking' : '⌖ Paused'} variant={snap.picking ? 'primary' : 'secondary'} hotkey="p" onPress={() => cmd({ op: 'pick', on: !snap.picking })} />
+          </Box>
+        </Box>
+
+        {sel === null ? (
+          <Text color="subtle">Click an element in your app to tweak it.</Text>
+        ) : (
+          <Box flexDirection="column" gap={1}>
+            <Box flexDirection="column">
+              <Text bold color="claude">{sel.name}</Text>
+              <Text color="subtle">
+                {sel.source ?? 'no JSX line'} · {snap.page} at {snap.width}px
+              </Text>
+            </Box>
+
+            {folder('layers', 'Layers', false, () =>
+              (snap.layers ?? []).map((l, i) => (
+                <Button key={`layer-${i}`} plain onPress={() => cmd({ op: 'select', index: i })}>
+                  {'  '.repeat(l.depth)}
+                  <Text color={l.selected ? 'claude' : 'text'}>{l.kind === 'gradient' ? '◐' : l.kind === 'text' ? 'T' : l.kind === 'media' ? '▣' : l.kind === 'fill' ? '■' : '#'} {l.name}</Text>
+                  <Text color="subtle"> {l.text}</Text>
+                  {l.changed ? <Text color="suggestion"> ●</Text> : ''}
+                </Button>
+              )), crumbs.map(c => c.name.split('.')[1] ?? c.name).join(' › '))}
+
+            {segment('state', 'State', snap.editState, [['', 'Default'], ['hover', 'Hover'], ['active', 'Active'], ['focus-visible', 'Focus']], v => cmd({ op: 'state', value: v }))}
 
             {sel.warnings.map(w => (
-              <Text key={`warn-${w}`} color="yellow">
+              <Text key={`warn-${w}`} color="warning">
                 ⚠ {w}
               </Text>
             ))}
 
-            {(sel.isFlex || sel.isGrid) && (
-              <Box flexDirection="column">
-                {heading(sel.isFlex ? 'Auto layout' : 'Grid')}
-                {sel.isFlex && pick('flex-direction', 'Direction', ['row', 'column'])}
-                {pick('justify-content', 'Justify', ['flex-start', 'center', 'flex-end', 'space-between', 'space-around', 'space-evenly'])}
-                {pick('align-items', 'Align', ['stretch', 'flex-start', 'center', 'flex-end', 'baseline'])}
-                {num('row-gap', 'Row gap')}
-                {num('column-gap', 'Column gap')}
-              </Box>
-            )}
+            {(sel.isFlex || sel.isGrid) &&
+              folder('layout', sel.isFlex ? 'Auto layout' : 'Grid', true, () => [
+                sel.isFlex ? segment('direction', 'Direction', f('flex-direction').value, [['row', '→ Row'], ['column', '↓ Column']], v => cmd({ op: 'set', prop: 'flex-direction', value: v })) : null,
+                choose('justify-content', 'Justify', ['flex-start', 'center', 'flex-end', 'space-between', 'space-around', 'space-evenly']),
+                choose('align-items', 'Align', ['stretch', 'flex-start', 'center', 'flex-end', 'baseline']),
+                dial('row-gap', 'Row gap'),
+                dial('column-gap', 'Column gap'),
+              ])}
 
-            <Box flexDirection="column">
-              {heading('Size')}
-              {num('width', 'Width')}
-              {num('height', 'Height')}
-              {num('max-width', 'Max width')}
-            </Box>
+            {folder('size', 'Size', true, () => [dial('width', 'Width'), dial('height', 'Height'), dial('max-width', 'Max width')])}
 
-            <Box flexDirection="column">
-              {heading('Spacing')}
-              {sides('padding', 'Padding')}
-              {sides('margin', 'Margin')}
-            </Box>
+            {folder('spacing', 'Spacing', true, () => [dial('padding', 'Padding'), dial('margin', 'Margin')])}
 
-            {sel.hasText && (
-              <Box flexDirection="column">
-                {heading('Text')}
-                {num('font-size', 'Size')}
-                {pick('font-weight', 'Weight', ['300', '400', '500', '600', '700', '800'])}
-                {num('line-height', 'Line height', 0.05)}
-                {num('letter-spacing', 'Letter spacing', 0.1)}
-                {pick('text-align', 'Align', ['left', 'center', 'right'])}
-                {color('color', 'Color')}
-              </Box>
-            )}
+            {sel.hasText &&
+              folder('text', 'Text', true, () => [
+                dial('font-size', 'Size'),
+                choose('font-weight', 'Weight', ['300', '400', '500', '600', '700', '800']),
+                dial('line-height', 'Line height'),
+                dial('letter-spacing', 'Letter spacing'),
+                segment('align', 'Align', f('text-align').value, [['left', 'Left'], ['center', 'Center'], ['right', 'Right']], v => cmd({ op: 'set', prop: 'text-align', value: v })),
+                color('color', 'Color'),
+              ])}
 
-            <Box flexDirection="column">
-              {heading('Fill & border')}
-              {sel.hasGradient && (
-                <Box flexDirection="row" gap={1} alignItems="center">
-                  <Text dimColor>Gradient fill</Text>
+            {folder('fill', 'Fill', true, () => [
+              sel.hasGradient ? (
+                <Box key="gradient" flexDirection="row" gap={1} alignItems="center">
+                  <Text color="subtle">◐ Gradient fill</Text>
                   <Button key="solid" label="Replace with solid" onPress={() => cmd({ op: 'solid' })} />
                 </Box>
-              )}
-              {color('background-color', sel.hasGradient ? 'Base color' : 'Background')}
-              {sides('border-radius', 'Corner radius')}
-              {sides('border-width', 'Border width')}
-              {color('border-color', 'Border color', true)}
-              {num('opacity', 'Opacity', 0.05)}
-              <Input key="in-box-shadow" label={mark('box-shadow') + 'Shadow'} value={f('box-shadow').value} onSubmit={v => cmd({ op: 'set', prop: 'box-shadow', value: v })} />
-            </Box>
+              ) : null,
+              color('background-color', sel.hasGradient ? 'Base color' : 'Background'),
+              dial('opacity', 'Opacity'),
+            ])}
 
-            <Box flexDirection="column">
-              {heading('Apply to')}
-              <Select
-                key="scope"
-                label="Screen widths"
-                value={sel.scope}
-                options={[
-                  { value: 'all', label: 'All screen widths' },
-                  { value: 'viewport', label: `Only at ${snap.width}px` },
-                ]}
-                onSelect={v => cmd({ op: 'scope', value: v })}
-              />
-              <Input key="in-note" label="Note for Claude" placeholder='e.g. "apply to every card like this"' value={sel.note} onSubmit={v => cmd({ op: 'note', value: v })} />
-            </Box>
+            {folder('border', 'Border', false, () => [dial('border-radius', 'Radius'), dial('border-width', 'Width'), color('border-color', 'Color', true)], `${f('border-radius').value} radius`)}
+
+            {folder('effects', 'Shadow', false, () => (
+              <Input key="in-box-shadow" label={(f('box-shadow').changed ? '● ' : '') + 'box-shadow'} value={f('box-shadow').value} onSubmit={v => cmd({ op: 'set', prop: 'box-shadow', value: v })} />
+            ))}
+
+            {folder('apply', 'Apply to', sel.scope === 'viewport' || sel.note !== '', () => [
+              segment('scope', 'Widths', sel.scope, [['all', 'All'], ['viewport', `Only ${snap.width}px`]], v => cmd({ op: 'scope', value: v })),
+              <Input key="in-note" label="Note" placeholder='e.g. "apply to every card like this"' value={sel.note} onSubmit={v => cmd({ op: 'note', value: v })} />,
+            ], sel.scope === 'viewport' ? `only ${snap.width}px` : sel.note ? 'note' : undefined)}
           </Box>
         )}
 
-        <Box flexDirection="column">
-          {heading(snap.changes.length ? `Changes · ${snap.changes.length}` : 'No changes yet')}
-          {snap.changes.map(c => (
-            <Box key={`chg-${c.key}`} flexDirection="row" gap={1}>
-              <Button key={`rev-${c.key}`} label="↺" onPress={() => cmd({ op: 'revert', key: c.key })} />
-              <Text>
-                {c.label} <Text dimColor>{c.summary}</Text>
-                {c.status === 'applying' ? <Text color="magenta"> applying…</Text> : ''}
-                {c.status === 'skipped' ? <Text color="yellow"> skipped: {c.reason ?? ''}</Text> : ''}
-              </Text>
+        <Box flexDirection="column" gap={1}>
+          {changed > 0 && (
+            <Box flexDirection="column">
+              {snap.changes.map(c => (
+                <Box key={`chg-${c.key}`} flexDirection="row" gap={1}>
+                  <Button key={`rev-${c.key}`} label="↺" plain onPress={() => cmd({ op: 'revert', key: c.key })} />
+                  <Text>
+                    {c.label}
+                    {c.status === 'applying' ? <Text color="suggestion"> · applying…</Text> : ''}
+                    {c.status === 'skipped' ? <Text color="warning"> · skipped: {c.reason ?? ''}</Text> : ''}
+                  </Text>
+                </Box>
+              ))}
             </Box>
-          ))}
+          )}
           <Box flexDirection="row" gap={1}>
-            <Button key="send" label="Send to Claude" variant="primary" hotkey="s" onPress={() => cmd({ op: 'send' })} />
-            {snap.changes.length > 0 && <Button key="reset" label="Reset" onPress={() => cmd({ op: 'reset' })} />}
+            <Button key="send" label={changed ? `Send ${changed} to Claude` : 'Send to Claude'} variant="primary" hotkey="s" onPress={() => cmd({ op: 'send' })} />
+            {changed > 0 && <Button key="reset" label="Reset" onPress={() => cmd({ op: 'reset' })} />}
             {snap.lastApply !== null && <Button key="undo-apply" label="Undo last apply" onPress={() => cmd({ op: 'undo-apply' })} />}
           </Box>
         </Box>

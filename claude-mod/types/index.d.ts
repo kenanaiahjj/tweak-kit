@@ -61,6 +61,8 @@ declare module 'claude-code' {
       remote: RemoteSnapshot | null
       remotePages: number
       paneOpen: boolean
+      folds: Record<string, boolean>
+      editing: string | null
     }
   }
 }

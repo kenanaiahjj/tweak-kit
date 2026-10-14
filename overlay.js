@@ -1667,7 +1667,7 @@
   // ---------- the Claude Code pane ----------
   // With the ui-tweaks mod's pane open, the controls live in Claude Code: the page keeps the
   // selection outline and the live preview, posts what is selected, and runs the pane's commands.
-  const COLOR_PROPS = new Set(["color", "background-color", "border-top-color", "border-color"]);
+  const isColorProp = (prop) => /(^|-)color$/.test(prop);
   const REMOTE_GROUPS = { padding: GROUPS.padding, margin: GROUPS.margin, "border-radius": GROUPS["border-radius"], "border-width": GROUPS["border-width"], "border-color": GROUPS["border-color"] };
   let remoteLayers = [];
 
@@ -1676,7 +1676,7 @@
     if (change && change.to && change.to.startsWith("var(")) return { value: change.to, changed: true };
     const raw = computed(el, prop);
     let value = raw;
-    if (COLOR_PROPS.has(prop)) value = prettyColor(raw);
+    if (isColorProp(prop)) value = prettyColor(raw);
     else if (prop === "line-height" && raw !== "normal") value = shortNumber(parseFloat(raw) / parseFloat(computed(el, "font-size")));
     else {
       const p = parseNumber(raw);
@@ -1771,7 +1771,7 @@
 
   function runCommand(cmd) {
     const el = state.selected && state.selected.isConnected ? state.selected : null;
-    const value = (prop, v) => (COLOR_PROPS.has(prop) ? parseColorInput(String(v)) : normalizeLength(String(v), prop));
+    const value = (prop, v) => (isColorProp(prop) ? parseColorInput(String(v)) : normalizeLength(String(v), prop));
     switch (cmd.op) {
       case "attach":
         state.remote = true;

@@ -215,8 +215,12 @@ test('the panel pane shows what the page reports, on the desktop and the termina
     const drawn = JSON.stringify(await ui.drawn())
     expect(drawn).toContain('a.cta')
     expect(drawn).toContain('src/App.tsx:12')
-    await ui.press({ key: 'inc-padding' })
+    // Drag the padding dial: its row is a Client that posts the value under the pointer.
+    await ui.resize({ columns: 40, rows: 1, in: 'dial-padding' })
+    await ui.pointer({ type: 'down', x: 20, y: 0, in: 'dial-padding' })
+    await ui.pointer({ type: 'up', x: 20, y: 0, in: 'dial-padding' })
+    await ui.advance(50)
     await ui.unmount()
   }
-  expect(sent.some(b => b.includes('"op":"nudge"') && b.includes('"prop":"padding"'))).toBe(true)
+  expect(sent.some(b => b.includes('"op":"set-group"') && b.includes('"group":"padding"'))).toBe(true)
 })

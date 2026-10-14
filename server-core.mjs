@@ -119,6 +119,115 @@ function send(res, status, body, type = "application/json") {
 }
 
 /**
+ * Docked mode: the app in a frame on the left, the overlay's own panel docked on the right.
+ * The overlay inside the frame finds #ui-tweaks-root here and moves its panel into it.
+ */
+export function studioPage(appPath) {
+  const safe = typeof appPath === "string" && appPath.startsWith("/") && !appPath.startsWith("//") ? appPath : "/";
+  const src = JSON.stringify(safe).replace(/</g, "\\u003c");
+  return `<!doctype html>
+<html lang="en" data-ui-tweaks-studio>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>UI Tweaks</title>
+<style>
+  :root { --bg: #141414; --bar: #1e1e1e; --line: #2c2c2c; --text: #e6e6e6; --dim: #9a9a9a; --accent: #0d99ff; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 12px/1.4 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  .studio { display: flex; height: 100vh; }
+  .stage { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .toolbar { height: 40px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 6px; background: var(--bar); border-bottom: 1px solid var(--line); min-width: 0; }
+  .toolbar button { height: 26px; padding: 0 7px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--text); font: inherit; cursor: pointer; flex: none; }
+  .toolbar button:hover { background: #2c2c2c; }
+  .toolbar button.on { background: var(--accent); color: #fff; }
+  .toolbar .sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; flex: none; }
+  .toolbar .size { color: var(--dim); margin: 0 6px; font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
+  .toolbar .path { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+  .canvas { flex: 1; min-height: 0; overflow: hidden; display: flex; justify-content: center; align-items: flex-start; background: var(--bg); background-image: radial-gradient(#ffffff0d 1px, transparent 1px); background-size: 16px 16px; }
+  .device { padding: 12px; }
+  .wrap { flex: none; width: 100%; height: 100%; overflow: hidden; }
+  iframe { display: block; width: 100%; height: 100%; border: 0; background: #fff; transform-origin: top left; }
+  .device .wrap { box-shadow: 0 0 0 1px var(--line), 0 12px 40px rgba(0,0,0,.45); border-radius: 4px; }
+  #ui-tweaks-root { width: 280px; flex: none; background: #1e1e1e; border-left: 1px solid var(--line); overflow: hidden; }
+  .waiting { padding: 24px 18px; color: var(--dim); line-height: 1.5; text-align: center; }
+  @media (max-width: 720px) { #ui-tweaks-root { width: 264px; } .toolbar .path { display: none; } }
+</style>
+</head>
+<body>
+<div class="studio">
+  <div class="stage">
+    <div class="toolbar">
+      <button class="exit" title="Leave docked mode">✕</button>
+      <button class="reload" title="Reload the app">↻</button>
+      <span class="sep"></span>
+      <button data-width="" title="Fill the space">Fit</button>
+      <button data-width="390" title="Phone, 390px">390</button>
+      <button data-width="768" title="Tablet, 768px">768</button>
+      <button data-width="1280" title="Laptop, 1280px">1280</button>
+      <span class="size"></span>
+      <span class="path"></span>
+    </div>
+    <div class="canvas"><div class="wrap"><iframe id="ui-tweaks-frame" title="Your app"></iframe></div></div>
+  </div>
+  <div id="ui-tweaks-root"><div class="waiting">Loading your app…<br />The panel docks here once it's up.</div></div>
+</div>
+<script>
+  const frame = document.getElementById("ui-tweaks-frame");
+  const canvas = document.querySelector(".canvas");
+  const size = document.querySelector(".size");
+  const pathLabel = document.querySelector(".path");
+  frame.src = ${src};
+  const wrap = document.querySelector(".wrap");
+  const KEY = "ui-tweaks:studio-width";
+  let width = "";
+  // A device width wider than the space is laid out at its real width, then scaled to fit.
+  function layout() {
+    const w = Number(width) || 0;
+    canvas.classList.toggle("device", !!w);
+    if (!w) {
+      Object.assign(wrap.style, { width: "100%", height: "100%" });
+      Object.assign(frame.style, { width: "100%", height: "100%", transform: "" });
+      size.textContent = Math.round(canvas.clientWidth) + "px";
+      return;
+    }
+    const availW = canvas.clientWidth - 24, availH = canvas.clientHeight - 24;
+    const scale = Math.min(1, availW / w);
+    Object.assign(frame.style, { width: w + "px", height: availH / scale + "px", transform: scale < 1 ? "scale(" + scale + ")" : "" });
+    Object.assign(wrap.style, { width: w * scale + "px", height: availH + "px" });
+    size.textContent = w + "px" + (scale < 1 ? " · " + Math.round(scale * 100) + "%" : "");
+  }
+  function setWidth(w) {
+    width = w || "";
+    for (const b of document.querySelectorAll("[data-width]")) b.classList.toggle("on", b.dataset.width === width);
+    try { localStorage.setItem(KEY, width); } catch {}
+    layout();
+  }
+  let saved = "";
+  try { saved = localStorage.getItem(KEY) || ""; } catch {}
+  setWidth(saved);
+  for (const b of document.querySelectorAll("[data-width]")) b.addEventListener("click", () => setWidth(b.dataset.width));
+  new ResizeObserver(layout).observe(canvas);
+  const appUrl = () => { try { return frame.contentWindow.location; } catch { return null; } };
+  frame.addEventListener("load", () => {
+    const loc = appUrl();
+    if (!loc) return;
+    const path = loc.pathname + loc.search + loc.hash;
+    pathLabel.textContent = path;
+    history.replaceState(null, "", "?path=" + encodeURIComponent(path));
+    try { frame.contentDocument.title && (document.title = "UI Tweaks · " + frame.contentDocument.title); } catch {}
+  });
+  document.querySelector(".reload").addEventListener("click", () => frame.contentWindow.location.reload());
+  document.querySelector(".exit").addEventListener("click", () => {
+    const loc = appUrl();
+    location.href = loc ? loc.href : ${src};
+  });
+</script>
+</body>
+</html>`;
+}
+
+/**
  * Tells the Claude Code mod where this dev server is: <root>/.ui-tweaks/server.json, and a registry
  * entry in ~/.ui-tweaks/servers/ for sessions started in another folder. The entry goes when we exit
  * cleanly; the mod checks a server answers before using it, so a stale entry is harmless.
@@ -145,45 +254,13 @@ export async function announceServer(root, url) {
  * the served files change; the overlay reloads the page when it does (static mode only).
  */
 export function createTweaksHandler({ root, getVersion }) {
-  // The Claude Code pane drives the page through here: the page posts what is selected,
-  // the pane polls for it and posts commands, which reach the page over server-sent events.
-  const remote = { version: 0, snapshot: null, pages: new Set(), seenAt: 0 };
-  const toPages = (data) => {
-    for (const page of remote.pages) page.write(`data: ${JSON.stringify(data)}\n\n`);
-  };
-
   return async function handle(req, res, next) {
     const url = new URL(req.url, "http://localhost");
     if (!url.pathname.startsWith(PREFIX)) return next();
     try {
       if (req.method === "OPTIONS") return send(res, 204, "");
-      if (req.method === "GET" && url.pathname === `${PREFIX}/remote/events`) {
-        res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive", "Access-Control-Allow-Origin": "*" });
-        res.write(": connected\n\n");
-        remote.pages.add(res);
-        const ping = setInterval(() => res.write(": ping\n\n"), 15000);
-        req.on("close", () => {
-          clearInterval(ping);
-          remote.pages.delete(res);
-        });
-        return;
-      }
-      if (req.method === "POST" && url.pathname === `${PREFIX}/remote/state`) {
-        remote.snapshot = JSON.parse(await readBody(req));
-        remote.version++;
-        return send(res, 200, { ok: true, version: remote.version });
-      }
-      if (req.method === "GET" && url.pathname === `${PREFIX}/remote/state`) {
-        remote.seenAt = Date.now();
-        const since = Number(url.searchParams.get("since") || -1);
-        if (since === remote.version) return send(res, 200, { version: remote.version, unchanged: true, pages: remote.pages.size });
-        return send(res, 200, { version: remote.version, snapshot: remote.snapshot, pages: remote.pages.size });
-      }
-      if (req.method === "POST" && url.pathname === `${PREFIX}/remote/command`) {
-        remote.seenAt = Date.now();
-        if (!remote.pages.size) return send(res, 409, { error: "No page with the overlay is open." });
-        toPages(JSON.parse(await readBody(req)));
-        return send(res, 200, { ok: true });
+      if (req.method === "GET" && url.pathname === `${PREFIX}/studio`) {
+        return send(res, 200, studioPage(url.searchParams.get("path") || "/"), "text/html; charset=utf-8");
       }
       if (req.method === "GET" && url.pathname === `${PREFIX}/overlay.js`) {
         return send(res, 200, await fs.readFile(OVERLAY_PATH, "utf8"), "text/javascript");
@@ -192,7 +269,6 @@ export function createTweaksHandler({ root, getVersion }) {
         const pending = await readPending(root);
         const last = (await readHistory(root)).slice(-1)[0];
         return send(res, 200, {
-          remote: Date.now() - remote.seenAt < 4000,
           lastApply: last ? { id: last.id, by: last.by, count: last.count, files: last.files.map((f) => path.basename(f)) } : null,
           pendingIds: pending.batches.map((b) => b.id),
           // Per tweak, so the overlay can drop previews one at a time and show Haiku's skip reasons.

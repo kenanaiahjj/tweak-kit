@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { FileStat, LastApply, PendingTweaks, RemoteSnapshot, SkippedTweak } from '../types'
+import type { FileStat, LastApply, PendingTweaks, SkippedTweak } from '../types'
 import { lineStats, unifiedDiff } from './diff'
 
 // Written by the ui-tweak-kit overlay (POST /__ui-tweaks) in the project being served.
@@ -15,13 +15,6 @@ const lastApply = atom({ plugin: 'ui-tweaks', key: 'lastApply' } as const, null)
 const dismissedApply = atom({ plugin: 'ui-tweaks', key: 'dismissedApply' } as const, null)
 const diffView = atom({ plugin: 'ui-tweaks', key: 'diffView' } as const, null)
 const DIFF_PANE = 'ui-tweaks-diff'
-const PANEL = 'ui-tweaks-panel'
-const remote = atom({ plugin: 'ui-tweaks', key: 'remote' } as const, null)
-const remotePages = atom({ plugin: 'ui-tweaks', key: 'remotePages' } as const, 0)
-const paneOpen = atom({ plugin: 'ui-tweaks', key: 'paneOpen' } as const, false)
-// Which pane folders are open (true) or closed (false); absent means the folder's default.
-const folds = atom({ plugin: 'ui-tweaks', key: 'folds' } as const, {})
-const SIDE_GROUPS = new Set(['padding', 'margin', 'border-radius', 'border-width'])
 const LOG = '.ui-tweaks/log.json'
 
 // Undo history, shared with the kit's dev server (POST /__ui-tweaks/undo):
@@ -425,15 +418,12 @@ async function finishHaiku($: EngineInterface, answer: string) {
   if (skipped.length) void $.ui.notify(`${summary}: ${skipped[0]!.reason}`, { title: 'UI tweaks' })
 }
 
-// ---------- the panel as a Claude Code pane ----------
-// The page's overlay keeps the selection outline and the live preview; the pane holds the controls.
-// Both talk through the project's dev server: the pane polls what is selected and posts commands.
+// ---------- finding the project ----------
+// The dev server announces itself in <project>/.ui-tweaks/server.json and in ~/.ui-tweaks/servers,
+// so a session started in another folder still finds the project whose tweaks it should apply.
 const SERVER = '.ui-tweaks/server.json'
 let serverUrl: string | null = null
 let serverCheckedAt = 0
-let remoteVersion = -1
-let polling = false
-let wasOpen = false
 
 type ServerEntry = { url?: string; root?: string; at?: number }
 
@@ -476,54 +466,6 @@ async function devServer($: EngineInterface): Promise<string | null> {
   return null
 }
 
-export type PaneCommand = Record<string, string | number | boolean> & { op: string }
-
-async function sendCommand($: EngineInterface, cmd: PaneCommand): Promise<boolean> {
-  const url = await devServer($)
-  if (url === null) return false
-  const res = await $.http
-    .fetch(`${url}/__ui-tweaks/remote/command`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cmd) })
-    .catch(() => null)
-  return res?.ok ?? false
-}
-
-async function openPanel($: EngineInterface): Promise<string> {
-  const url = await devServer($)
-  if (url === null) return "No dev server with the tweak kit is running in this project. Start it, then open the page."
-  const { isPlaced } = await $.ui.open({ id: PANEL, title: 'UI Tweaks' })
-  if (!isPlaced) return 'This surface cannot show the panel; use the in-page panel instead.'
-  await update($, paneOpen, () => true)
-  if (!(await sendCommand($, { op: 'attach' }))) return 'Panel open. Open your app in the browser to start tweaking.'
-  return 'Panel open: click an element in the browser.'
-}
-
-async function pollRemote($: EngineInterface) {
-  if (polling) return
-  polling = true
-  try {
-    const url = await devServer($)
-    if (url === null) return
-    const res = await $.http.fetch(`${url}/__ui-tweaks/remote/state?since=${remoteVersion}`).catch(() => null)
-    if (!res?.ok) {
-      serverUrl = null // the dev server moved or stopped: look again
-      projectRoot = null
-      return
-    }
-    const body = JSON.parse(res.text) as { version: number; unchanged?: boolean; snapshot?: RemoteSnapshot | null; pages: number }
-    if (body.pages !== (await read($, remotePages))) await update($, remotePages, () => body.pages)
-    if (body.unchanged) return
-    remoteVersion = body.version
-    const snap = body.snapshot ?? null
-    await update($, remote, () => snap)
-    // The Tweak button in the page asks for the pane: open it once per request.
-    const isOpen = !!snap?.open
-    if (isOpen && !wasOpen && !(await read($, paneOpen))) void openPanel($)
-    wasOpen = isOpen
-  } finally {
-    polling = false
-  }
-}
-
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.agent.register({
@@ -540,12 +482,7 @@ export const register: Register = on => {
       description: 'Apply the waiting browser tweaks with Haiku ("claude": main model; "undo": revert Haiku\'s last apply)',
       argumentHint: '[claude|undo]',
     })
-    await $.command.register({
-      name: 'tweak',
-      description: 'Open the UI Tweaks panel for the page in the browser',
-    })
     $.clock.every(1500, () => void refresh($))
-    $.clock.every(250, () => void pollRemote($))
     await refresh($)
 
     return next(e)
@@ -553,16 +490,6 @@ export const register: Register = on => {
 
   // Only this mod starts the applier; keep it out of the main model's agent list.
   on('agent.offer', { agent: APPLIER }, () => ({ isOffered: false }))
-
-  on('command.run', { command: 'tweak' }, async $ => ({ text: await openPanel($) }))
-
-  // Closing the pane hands the page back its own panel button.
-  on('ui.close', { id: PANEL }, async ($, e, next) => {
-    await update($, paneOpen, () => false)
-    void sendCommand($, { op: 'detach' })
-
-    return next(e)
-  })
 
   on('command.run', { command: 'apply-tweaks' }, async ($, e) => {
     const arg = (e.args ?? '').trim()
@@ -590,243 +517,6 @@ export const register: Register = on => {
     }
 
     return next(e)
-  })
-
-  on('ui.render', { component: 'Pane', requestId: PANEL }, async ($, e) => {
-    if (e.surface !== 'desktop' && e.surface !== 'terminal') {
-      const { Text } = $.ui.resolve(e)
-      return <Text dimColor>The UI Tweaks panel runs in the Claude desktop app and the terminal; use the in-page panel here.</Text>
-    }
-    const { Box, Button, Input, Select, Text } = $.ui.resolve(e)
-    const snap = await read($, remote)
-    const pages = await read($, remotePages)
-    const open = await read($, folds)
-    const cmd = (c: PaneCommand) => void sendCommand($, c)
-
-    // Figma-like: a fixed-width column of sections split by hairlines, two fields to a row.
-    const width = Math.max(30, Math.min((e.props.bodyColumns ?? 44) - 2, 44))
-    const half = Math.floor((width - 1) / 2)
-    const rule = (key: string) => (
-      <Text key={key} color="promptBorder">
-        {'─'.repeat(width)}
-      </Text>
-    )
-    const title = (text: string, aside?: string) => (
-      <Box flexDirection="row" justifyContent="space-between">
-        <Text bold>{text}</Text>
-        {aside ? <Text color="subtle">{aside}</Text> : null}
-      </Box>
-    )
-    const section = (key: string, heading: unknown, ...rows: unknown[]) => [
-      rule(`rule-${key}`),
-      <Box key={`sec-${key}`} flexDirection="column" gap={1}>
-        {heading as never}
-        {rows.filter(Boolean) as never}
-      </Box>,
-    ]
-
-    if (snap === null || pages === 0) {
-      return (
-        <Box flexDirection="column" gap={1} paddingX={1} paddingY={1} width={width + 2}>
-          <Text bold>UI Tweaks</Text>
-          <Text color="subtle">Open your app in the browser (its dev server running the tweak kit), then click an element.</Text>
-        </Box>
-      )
-    }
-
-    const sel = snap.selected
-    const f = (name: string) => sel?.fields[name] ?? { value: '', changed: false }
-    const mark = (name: string) => (f(name).changed ? '•' : '')
-    const setValue = (prop: string, value: string) => cmd(SIDE_GROUPS.has(prop) ? { op: 'set-group', group: prop, value } : { op: 'set', prop, value })
-
-    // A field with a short prefix, as Figma's "W 420". Enter applies.
-    const field = (prop: string, prefix: string, w = half) => (
-      <Box key={`field-${prop}`} width={w}>
-        <Input key={`in-${prop}`} label={mark(prop) + prefix} value={f(prop).value} onSubmit={v => setValue(prop, v)} />
-      </Box>
-    )
-    const pair = (key: string, left: unknown, right?: unknown) => (
-      <Box key={`pair-${key}`} flexDirection="row" gap={1}>
-        {left as never}
-        {(right ?? null) as never}
-      </Box>
-    )
-    const choose = (prop: string, prefix: string, options: string[], w = half) => (
-      <Box key={`choose-${prop}`} width={w}>
-        <Select
-          key={`sel-${prop}`}
-          label={mark(prop) + prefix}
-          value={f(prop).value}
-          options={(options.includes(f(prop).value) ? options : [f(prop).value, ...options]).map(o => ({ value: o, label: o }))}
-          onSelect={v => setValue(prop, v)}
-        />
-      </Box>
-    )
-    // Icon-style toggles: the current one is filled.
-    const toggles = (key: string, current: string, options: [string, string][], onPick: (value: string) => void) => (
-      <Box key={`tog-${key}`} flexDirection="row" gap={1}>
-        {options.map(([value, text]) => (
-          <Button key={`tog-${key}-${value || 'none'}`} label={text} variant={value === current ? 'primary' : 'secondary'} onPress={() => onPick(value)} />
-        ))}
-      </Box>
-    )
-    // A fill: swatch, hex, and the project's color tokens behind ◇.
-    const paint = (prop: string, extra?: unknown) => {
-      const hex = f(prop).value.split(' ')[0] ?? ''
-      const tokensOpen = open[`tokens-${prop}`] ?? false
-      return (
-        <Box key={`paint-${prop}`} flexDirection="column" gap={1}>
-          <Box flexDirection="row" gap={1} alignItems="center">
-            <Text backgroundColor={hex.startsWith('#') ? hex : undefined} color="subtle">
-              {hex.startsWith('#') ? '   ' : ' ∅ '}
-            </Text>
-            <Box width={half - 4}>
-              <Input key={`in-${prop}`} label={mark(prop)} value={f(prop).value} onSubmit={v => setValue(prop, v)} />
-            </Box>
-            {snap.tokens.length > 0 && (
-              <Button key={`tok-btn-${prop}`} label="◇" plain onPress={() => void update($, folds, o => ({ ...o, [`tokens-${prop}`]: !tokensOpen }))} />
-            )}
-            {(extra ?? null) as never}
-          </Box>
-          {tokensOpen && (
-            <Box flexDirection="row" flexWrap="wrap" columnGap={2} paddingLeft={4}>
-              {snap.tokens.map(t => (
-                <Button key={`tok-${prop}-${t.name}`} plain onPress={() => setValue(prop, `var(${t.name})`)}>
-                  <Text color={t.value}>●</Text> <Text color="subtle">{t.name.replace(/^--/, '')}</Text>
-                </Button>
-              ))}
-            </Box>
-          )}
-        </Box>
-      )
-    }
-
-    const changed = snap.changes.length
-    const layersOpen = open.layers ?? false
-    const selectedDepth = (snap.layers ?? []).find(l => l.selected)?.depth ?? 0
-    const crumbs = (snap.layers ?? []).filter(l => l.depth < selectedDepth || l.selected).map(l => l.name.split('.')[1] ?? l.name)
-
-    return (
-      <Box flexDirection="column" gap={1} paddingX={1} paddingY={1} width={width + 2}>
-        <Box flexDirection="row" justifyContent="space-between" alignItems="center">
-          <Text bold>UI Tweaks</Text>
-          <Box flexDirection="row" gap={1}>
-            {snap.undoCount > 0 && <Button key="undo" label="↶" hotkey="z" onPress={() => cmd({ op: 'undo' })} />}
-            <Button key="pick" label={snap.picking ? '⌖ Pick' : '⌖ Paused'} variant={snap.picking ? 'secondary' : 'primary'} hotkey="p" onPress={() => cmd({ op: 'pick', on: !snap.picking })} />
-          </Box>
-        </Box>
-
-        {sel === null ? (
-          <Box flexDirection="column" gap={1}>
-            {rule('rule-empty')}
-            <Text color="subtle">Click an element in your app to edit it.</Text>
-          </Box>
-        ) : (
-          <Box flexDirection="column" gap={1}>
-            {rule('rule-head')}
-            <Box flexDirection="column">
-              <Text bold color="claude">
-                {sel.name}
-              </Text>
-              <Text color="subtle">
-                {sel.source ?? 'no JSX line'} · {snap.width}px
-              </Text>
-            </Box>
-            <Button key="layers" plain onPress={() => void update($, folds, o => ({ ...o, layers: !layersOpen }))}>
-              <Text color="subtle">{layersOpen ? '▾ ' : '▸ '}</Text>
-              <Text color="subtle">{crumbs.slice(0, -1).join(' › ')}{crumbs.length > 1 ? ' › ' : ''}</Text>
-              <Text>{crumbs.at(-1) ?? ''}</Text>
-            </Button>
-            {layersOpen && (
-              <Box flexDirection="column" paddingLeft={2}>
-                {(snap.layers ?? []).map((l, i) => (
-                  <Button key={`layer-${i}`} plain onPress={() => cmd({ op: 'select', index: i })}>
-                    {'  '.repeat(l.depth)}
-                    <Text color={l.selected ? 'claude' : 'subtle'}>{l.kind === 'gradient' ? '◐' : l.kind === 'text' ? 'T' : l.kind === 'media' ? '▣' : l.kind === 'fill' ? '■' : '#'} </Text>
-                    <Text color={l.selected ? 'claude' : 'text'}>{l.name}</Text>
-                    {l.changed ? <Text color="suggestion"> •</Text> : ''}
-                  </Button>
-                ))}
-              </Box>
-            )}
-            {toggles('state', snap.editState, [['', 'Default'], ['hover', 'Hover'], ['active', 'Active'], ['focus-visible', 'Focus']], v => cmd({ op: 'state', value: v }))}
-            {sel.warnings.map(w => (
-              <Text key={`warn-${w}`} color="warning">
-                ⚠ {w}
-              </Text>
-            ))}
-
-            {(sel.isFlex || sel.isGrid) &&
-              section(
-                'layout',
-                title(sel.isFlex ? 'Auto layout' : 'Grid'),
-                sel.isFlex ? toggles('direction', f('flex-direction').value, [['row', '→'], ['column', '↓']], v => setValue('flex-direction', v)) : null,
-                pair('align', choose('justify-content', 'Justify', ['flex-start', 'center', 'flex-end', 'space-between', 'space-around', 'space-evenly']), choose('align-items', 'Align', ['stretch', 'flex-start', 'center', 'flex-end', 'baseline'])),
-                pair('gap', field('column-gap', '↔'), field('row-gap', '↕')),
-              )}
-
-            {section(
-              'frame',
-              title('Layout'),
-              pair('size', field('width', 'W'), field('height', 'H')),
-              pair('max', field('max-width', 'Max W'), field('opacity', 'Opacity')),
-              field('padding', 'Padding', width),
-              field('margin', 'Margin', width),
-            )}
-
-            {sel.hasText &&
-              section(
-                'text',
-                title('Text'),
-                pair('type', field('font-size', 'Size'), choose('font-weight', 'Weight', ['300', '400', '500', '600', '700', '800'])),
-                pair('lines', field('line-height', 'Line'), field('letter-spacing', 'Letter')),
-                toggles('text-align', f('text-align').value, [['left', 'Left'], ['center', 'Center'], ['right', 'Right']], v => setValue('text-align', v)),
-                paint('color'),
-              )}
-
-            {section(
-              'fill',
-              title('Fill', sel.hasGradient ? '◐ gradient' : undefined),
-              sel.hasGradient ? <Button key="solid" label="Replace gradient with solid" onPress={() => cmd({ op: 'solid' })} /> : null,
-              paint('background-color'),
-            )}
-
-            {section('stroke', title('Stroke & corners'), pair('stroke', field('border-radius', 'Radius'), field('border-width', 'Width')), paint('border-color'))}
-
-            {section('effects', title('Effects'), field('box-shadow', 'Shadow', width))}
-
-            {section(
-              'apply',
-              title('Apply to'),
-              toggles('scope', sel.scope, [['all', 'All widths'], ['viewport', `Only ${snap.width}px`]], v => cmd({ op: 'scope', value: v })),
-              <Box key="note" width={width}>
-                <Input key="in-note" label="Note" placeholder='e.g. "every card like this"' value={sel.note} onSubmit={v => cmd({ op: 'note', value: v })} />
-              </Box>,
-            )}
-          </Box>
-        )}
-
-        {rule('rule-changes')}
-        <Box flexDirection="column" gap={1}>
-          {title(changed ? `Changes` : 'No changes yet', changed ? String(changed) : undefined)}
-          {snap.changes.map(c => (
-            <Box key={`chg-${c.key}`} flexDirection="row" gap={1}>
-              <Button key={`rev-${c.key}`} label="↺" plain onPress={() => cmd({ op: 'revert', key: c.key })} />
-              <Text>
-                {c.label}
-                {c.status === 'applying' ? <Text color="suggestion"> · applying…</Text> : ''}
-                {c.status === 'skipped' ? <Text color="warning"> · skipped: {c.reason ?? ''}</Text> : ''}
-              </Text>
-            </Box>
-          ))}
-          <Box flexDirection="row" gap={1}>
-            <Button key="send" label={changed ? `Send ${changed} to Claude` : 'Send to Claude'} variant="primary" hotkey="s" onPress={() => cmd({ op: 'send' })} />
-            {changed > 0 && <Button key="reset" label="Reset" onPress={() => cmd({ op: 'reset' })} />}
-            {snap.lastApply !== null && <Button key="undo-apply" label="Undo last apply" onPress={() => cmd({ op: 'undo-apply' })} />}
-          </Box>
-        </Box>
-      </Box>
-    )
   })
 
   on('ui.render', { component: 'Pane', requestId: DIFF_PANE }, async ($, e) => {

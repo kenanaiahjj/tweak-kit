@@ -11,15 +11,22 @@
   const API = ((script && script.dataset.api) || "") + "/__ui-tweaks";
   const LIVE_RELOAD = !!(script && script.dataset.liveReload);
   const STORE_KEY = "ui-tweaks:drafts:" + location.pathname;
+  // Docked mode: the page runs in the studio's frame and its panel docks beside it (same origin).
+  const STUDIO = (() => {
+    try {
+      return window.parent !== window && window.parent.document.documentElement.hasAttribute("data-ui-tweaks-studio") ? window.parent : null;
+    } catch {
+      return null;
+    }
+  })();
+  // The studio is served by the dev server the page came from; a sidecar on another origin can't frame it.
+  const CAN_DOCK = !(script && script.dataset.api);
 
   // ---------- state ----------
   const state = {
     isOpen: false,
     isPicking: true,
     editState: "", // "", "hover", "active" or "focus-visible": which state edits apply to
-    remote: false, // true while the Claude Code pane holds the controls
-    remoteAvailable: false, // a Claude Code session with the mod is watching this dev server
-    awaitingPane: false, // asked Claude Code to open the pane; the in-page panel waits
     selected: null, // Element
     hovered: null,
     tweaks: new Map(), // key -> tweak
@@ -621,6 +628,8 @@
     .layer-more { color: var(--dim); font-size: 10px; height: 20px; line-height: 20px; }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
     .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+    .grid4 .field label { width: 14px; }
+    .grid4 .field input { padding-right: 2px; text-align: center; }
     .field { display: flex; align-items: center; height: 28px; background: var(--bg2); border: 1px solid transparent; border-radius: 5px; min-width: 0; }
     .field:hover { border-color: var(--line); }
     .field:focus-within { border-color: var(--accent); }
@@ -1235,12 +1244,21 @@
     close.className = "icon";
     close.textContent = "✕";
     close.title = "Close (Alt+T). Previews stay until you reset them.";
-    close.addEventListener("click", () => toggle(false));
+    close.addEventListener("click", () => (STUDIO ? leaveStudio() : toggle(false)));
     const pop = document.createElement("button");
     pop.className = "icon";
-    pop.textContent = state.popup ? "⇲ Dock" : "⧉";
-    pop.title = state.popup ? "Put the panel back on the page" : "Pop the panel out into its own window";
-    pop.addEventListener("click", () => (state.popup ? dock() : popOut()));
+    if (STUDIO) {
+      pop.textContent = "⇱";
+      pop.title = "Leave docked mode";
+    } else {
+      pop.textContent = state.popup ? "⇲ Dock" : "⧉";
+      pop.title = state.popup ? "Put the panel back on the page" : CAN_DOCK ? "Dock the panel beside the page (Shift: pop out into a window)" : "Pop the panel out into its own window";
+    }
+    pop.addEventListener("click", (e) => {
+      if (STUDIO || state.popup) return dock();
+      if (CAN_DOCK && !e.shiftKey) return openStudio();
+      popOut();
+    });
     const undo = document.createElement("button");
     undo.className = "icon";
     undo.textContent = "↶";
@@ -1484,17 +1502,9 @@
       undoApply.className = "btn ghost";
       undoApply.textContent = "Undo apply";
       undoApply.title = "Put those files back as they were before this apply";
-      undoApply.addEventListener("click", async () => {
+      undoApply.addEventListener("click", () => {
         undoApply.disabled = true;
-        try {
-          const res = await fetch(API + "/undo", { method: "POST" });
-          const body = await res.json();
-          toast(res.ok ? `Undid the apply: ${body.files.join(", ")} restored` : `Not undone: ${body.error}`);
-          if (res.ok) state.lastApply = null;
-        } catch (error) {
-          toast("Couldn't reach the tweaks server (" + error.message + ")");
-        }
-        renderChanges();
+        void undoLastApply();
       });
       row.append(what, undoApply);
       box.append(row);
@@ -1587,11 +1597,7 @@
   async function poll() {
     try {
       const res = await fetch(API + "/status", { cache: "no-store" });
-      const { pendingIds, pendingTweaks = [], version, lastApply = null, remote = false } = await res.json();
-      if (remote !== state.remoteAvailable) {
-        state.remoteAvailable = remote;
-        if (remote) publish();
-      }
+      const { pendingIds, pendingTweaks = [], version, lastApply = null } = await res.json();
       if (JSON.stringify(lastApply) !== JSON.stringify(state.lastApply)) {
         state.lastApply = lastApply;
         if (state.isOpen) renderChanges();
@@ -1664,228 +1670,21 @@
     render();
   }
 
-  // ---------- the Claude Code pane ----------
-  // With the ui-tweaks mod's pane open, the controls live in Claude Code: the page keeps the
-  // selection outline and the live preview, posts what is selected, and runs the pane's commands.
-  const isColorProp = (prop) => /(^|-)color$/.test(prop);
-  const REMOTE_GROUPS = { padding: GROUPS.padding, margin: GROUPS.margin, "border-radius": GROUPS["border-radius"], "border-width": GROUPS["border-width"], "border-color": GROUPS["border-color"] };
-  let remoteLayers = [];
-
-  function remoteValue(el, t, prop) {
-    const change = t && t.changes[changeKey(prop)];
-    if (change && change.to && change.to.startsWith("var(")) return { value: change.to, changed: true };
-    const raw = computed(el, prop);
-    let value = raw;
-    if (isColorProp(prop)) value = prettyColor(raw);
-    else if (prop === "line-height" && raw !== "normal") value = shortNumber(parseFloat(raw) / parseFloat(computed(el, "font-size")));
-    else {
-      const p = parseNumber(raw);
-      if (p && p.unit === "px") value = shortNumber(p.n);
-    }
-    return { value, changed: !!change };
-  }
-
-  function remoteGroup(el, t, group) {
-    const parts = REMOTE_GROUPS[group].map((p) => remoteValue(el, t, p));
-    const values = parts.map((p) => p.value);
-    const [a, b, c, d] = values;
-    const collapsed = a === b && b === c && c === d ? [a] : a === c && b === d ? [a, b] : b === d ? [a, b, c] : values;
-    return { value: collapsed.join(" "), changed: parts.some((p) => p.changed) };
-  }
-
-  function snapshot() {
-    const el = state.selected && state.selected.isConnected ? state.selected : null;
-    const t = el ? state.tweaks.get(keyOf(el)) : null;
-    const base = {
-      open: state.isOpen,
-      page: location.pathname,
-      width: innerWidth,
-      picking: state.isPicking,
-      editState: state.editState,
-      undoCount: state.undo.length,
-      lastApply: state.lastApply,
-      note: state.note,
-      changes: [...state.tweaks.values()].map((tw) => ({
-        key: tw.key,
-        label: (tw.element.react && tw.element.react.components[0] ? tw.element.react.components[0].name + " · " : "") + (tw.element.classes[0] ? "." + tw.element.classes[0] : tw.element.tag),
-        summary: summarize(tw).join(" · "),
-        status: tw.skipped ? "skipped" : tw.batchId ? "applying" : "draft",
-        reason: tw.skipped || undefined,
-      })),
-      tokens: designTokens().colors.slice(0, 24).map((c) => ({ name: c.name, value: toHex(c.value) })),
-    };
-    if (!el) return { ...base, selected: null };
-    const info = describe(el);
-    const cs = getComputedStyle(el);
-    remoteLayers = [];
-    const visible = (n) => n !== host && n.getClientRects().length > 0 && !/^(script|style|link|meta|noscript)$/i.test(n.tagName);
-    const path = [el];
-    while (path.length < 3 && path[0].parentElement && path[0].parentElement !== document.body) path.unshift(path[0].parentElement);
-    const layers = [];
-    const walk = (n, depth) => {
-      if (layers.length > 40) return;
-      remoteLayers.push(n);
-      const { name, text } = layerLabel(n);
-      layers.push({ depth, name, text, kind: layerKind(n), selected: n === el, changed: state.tweaks.has(elementKeys.get(n)) });
-      const kids = n === el || (path.includes(n) && n !== el) ? [...n.children].filter(visible).slice(0, 15) : [];
-      kids.forEach((k) => walk(k, depth + 1));
-    };
-    walk(path[0], 0);
-    const fields = {};
-    for (const p of ["flex-direction", "justify-content", "align-items", "row-gap", "column-gap", "width", "height", "min-width", "max-width", "font-size", "font-weight", "line-height", "letter-spacing", "color", "text-align", "background-color", "opacity", "box-shadow"]) {
-      fields[p] = remoteValue(el, t, p);
-    }
-    for (const g of Object.keys(REMOTE_GROUPS)) fields[g] = remoteGroup(el, t, g);
-    return {
-      ...base,
-      selected: {
-        name: (info.react && info.react.components[0] ? `<${info.react.components[0].name}> ` : "") + info.tag + (info.classes[0] ? "." + info.classes[0] : ""),
-        source: info.react && info.react.jsxSource,
-        isFlex: cs.display.includes("flex"),
-        isGrid: cs.display.includes("grid"),
-        hasText: (el.innerText || "").trim().length > 0,
-        hasGradient: /gradient\(/.test(cs.backgroundImage),
-        scope: t && t.scope && t.scope.kind === "viewport" ? "viewport" : "all",
-        note: t ? t.note : "",
-        warnings: t ? hiddenReasons(t).map((w) => w.text) : [],
-        fields,
-      },
-      layers,
-    };
-  }
-
-  let publishTimer = 0;
-  function publish() {
-    if (!state.remote && !state.remoteAvailable) return;
-    clearTimeout(publishTimer);
-    publishTimer = setTimeout(() => {
-      fetch(API + "/remote/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(snapshot()) }).catch(() => {});
-    }, 40);
-  }
-
-  function nudged(value, delta) {
-    const p = parseNumber(value);
-    if (!p) return null;
-    return shortNumber(p.n + delta) + (p.unit && p.unit !== "px" ? p.unit : "");
-  }
-
-  function runCommand(cmd) {
-    const el = state.selected && state.selected.isConnected ? state.selected : null;
-    const value = (prop, v) => (isColorProp(prop) ? parseColorInput(String(v)) : normalizeLength(String(v), prop));
-    switch (cmd.op) {
-      case "attach":
-        state.remote = true;
-        state.awaitingPane = false;
-        state.isOpen = true;
-        if (state.popup) dock(true);
-        break;
-      case "detach":
-        state.remote = false;
-        state.isOpen = false;
-        state.hovered = null;
-        break;
-      case "select":
-        if (remoteLayers[cmd.index]) select(remoteLayers[cmd.index]);
-        return;
-      case "pick":
-        state.isPicking = !!cmd.on;
-        break;
-      case "state":
-        return setEditState(cmd.value || "");
-      case "set":
-        if (el) setStyle(el, cmd.prop, value(cmd.prop, cmd.value));
-        return;
-      case "set-group": {
-        if (!el || !REMOTE_GROUPS[cmd.group]) return;
-        const parts = String(cmd.value).trim().split(/\s+/);
-        const [a, b = a, c = a, d = b] = parts;
-        REMOTE_GROUPS[cmd.group].forEach((p, i) => setStyle(el, p, value(p, [a, b, c, d][i])));
-        return;
-      }
-      case "nudge": {
-        if (!el) return;
-        const props = REMOTE_GROUPS[cmd.prop] || [cmd.prop];
-        const t = state.tweaks.get(keyOf(el));
-        for (const p of props) {
-          const current = (t && t.changes[changeKey(p)] && t.changes[changeKey(p)].to) || computed(el, p);
-          const next = nudged(p === "line-height" && current !== "normal" ? String(parseFloat(current) / parseFloat(computed(el, "font-size"))) : current, cmd.delta);
-          if (next !== null) setStyle(el, p, normalizeLength(next, p));
-        }
-        return;
-      }
-      case "solid":
-        if (el) makeSolid(el);
-        return;
-      case "scope": {
-        if (!el) return;
-        const t = tweakFor(el);
-        if (t.batchId) withdraw(t.batchId);
-        t.scope = cmd.value === "viewport" ? { kind: "viewport", width: innerWidth } : undefined;
-        cleanup(t);
-        persist();
-        break;
-      }
-      case "note": {
-        if (!el) return;
-        const t = tweakFor(el);
-        if (t.batchId) withdraw(t.batchId);
-        t.note = String(cmd.value || "");
-        cleanup(t);
-        persist();
-        break;
-      }
-      case "batch-note":
-        state.note = String(cmd.value || "");
-        persist();
-        break;
-      case "undo":
-        return undoPreview();
-      case "revert": {
-        const t = state.tweaks.get(cmd.key);
-        if (!t) return;
-        if (t.batchId) withdraw(t.batchId);
-        revertTweak(t);
-        persist();
-        break;
-      }
-      case "reset":
-        return resetAll();
-      case "send":
-        return void send([...state.tweaks.values()].filter((t) => !t.batchId));
-      case "undo-apply":
-        return void undoLastApply();
-      default:
-        return;
-    }
-    render();
-  }
-
-  try {
-    const events = new EventSource(API + "/remote/events");
-    events.onmessage = (e) => {
-      try {
-        runCommand(JSON.parse(e.data));
-      } catch {}
-    };
-  } catch {}
-
   function renderQuiet() {
     const count = launch.querySelector(".count");
     count.textContent = String(state.tweaks.size);
     count.classList.toggle("hidden", state.tweaks.size === 0);
-    if (!state.remote) renderChanges();
-    publish();
+    renderChanges();
   }
 
   function render() {
-    launch.classList.toggle("hidden", state.isOpen && !state.remote);
-    panel.classList.toggle("hidden", !state.isOpen || state.remote || state.awaitingPane);
-    launch.querySelector(".label").textContent = state.remote ? (state.isPicking ? "Picking · Claude Code" : "Paused · Claude Code") : "Tweak";
+    if (STUDIO) state.isOpen = true;
+    launch.classList.toggle("hidden", state.isOpen || !!STUDIO);
+    panel.classList.toggle("hidden", !state.isOpen);
     const count = launch.querySelector(".count");
     count.textContent = String(state.tweaks.size);
     count.classList.toggle("hidden", state.tweaks.size === 0);
-    if (state.isOpen && !state.remote && !state.awaitingPane) renderPanel();
-    publish();
+    if (state.isOpen) renderPanel();
   }
 
   function select(el) {
@@ -1898,6 +1697,7 @@
   }
 
   function toggle(open = !state.isOpen) {
+    if (STUDIO) return; // docked: the panel stays; Exit (⇱ or ✕) leaves the studio
     if (!open && state.popup) return dock(false);
     state.isOpen = open;
     if (!open) state.hovered = null;
@@ -1936,6 +1736,14 @@
       </style></head><body><div id="ui-tweaks-root"></div><script>${POPUP_SCRIPT}<\/script></body></html>`);
       doc.close();
     }
+    if (!doc.getElementById("ui-tweaks-style")) {
+      // A page that brought its own root (the studio) still needs the panel's styles.
+      const style = doc.createElement("style");
+      style.id = "ui-tweaks-style";
+      style.textContent = shadow.querySelector("style").textContent.replace(":host", ":root") +
+        "\n.panel { position: static; inset: auto; width: 100%; height: 100vh; border: 0; border-radius: 0; box-shadow: none; }";
+      doc.head.appendChild(style);
+    }
     const root = doc.getElementById("ui-tweaks-root");
     if (panel.ownerDocument !== doc || panel.parentNode !== root) root.replaceChildren(doc.adoptNode(panel));
     panel.classList.remove("left");
@@ -1945,7 +1753,17 @@
     render();
   }
 
+  function openStudio() {
+    location.href = `${API}/studio?path=${encodeURIComponent(location.pathname + location.search + location.hash)}`;
+  }
+
+  function leaveStudio() {
+    persist();
+    STUDIO.location.href = location.href;
+  }
+
   function dock(keepOpen = true) {
+    if (STUDIO) return leaveStudio();
     const win = state.popup;
     state.popup = null;
     shadow.appendChild(document.adoptNode(panel));
@@ -1957,7 +1775,7 @@
 
   // The person closed the pop-out window: the panel comes back closed.
   setInterval(() => {
-    if (state.popup && state.popup.closed) dock(false);
+    if (state.popup && state.popup !== STUDIO && state.popup.closed) dock(false);
   }, 500);
 
   // ---------- page interaction ----------
@@ -2032,6 +1850,8 @@
     const typing = e.composedPath().some((n) => n.tagName === "INPUT" || n.tagName === "TEXTAREA" || n.isContentEditable);
     if (e.altKey && e.code === "KeyT") {
       e.preventDefault();
+      if (STUDIO) return leaveStudio();
+      if (CAN_DOCK && !state.isOpen) return openStudio();
       toggle();
       return;
     }
@@ -2060,30 +1880,15 @@
     if (scroller) scroller.scrollTop += e.deltaY;
   }, { passive: false });
 
-  launch.addEventListener("click", () => {
-    if (state.remote) {
-      // While the pane holds the controls, the button pauses and resumes picking.
-      state.isPicking = !state.isPicking;
-      return render();
-    }
-    if (!state.remoteAvailable) return toggle(true);
-    // Ask the Claude Code pane to open; fall back to the in-page panel if it doesn't attach.
-    state.isOpen = true;
-    state.awaitingPane = true;
-    render();
-    toast("Opening the panel in Claude Code…");
-    setTimeout(() => {
-      if (!state.awaitingPane) return;
-      state.awaitingPane = false;
-      render();
-    }, 2500);
-  });
+  // Docked beside the page by default; the in-page panel where docking isn't possible.
+  launch.addEventListener("click", () => (CAN_DOCK ? openStudio() : toggle(true)));
   addEventListener("resize", () => state.isOpen && renderPanel());
 
   function mount() {
     document.body.appendChild(host);
     restore();
-    render();
+    if (STUDIO) attachPopup(STUDIO);
+    else render();
   }
   if (document.body) mount();
   else addEventListener("DOMContentLoaded", mount);

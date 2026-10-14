@@ -126,36 +126,27 @@ Nothing to do: the kit writes a `.gitignore` containing `*` inside `.ui-tweaks/`
 
 1. Start your dev server and open the app. Claude Code's built-in browser pane is a good place for it.
 2. Open a Claude Code session **in the project folder**. The mod watches the folder the session is in.
-3. Click **Tweak** (bottom right of the page), or run **`/tweak`** in Claude Code.
+3. Click **Tweak** (bottom right of the page), or press **Alt+T**.
 
-### The Claude Code pane (the default)
+### Docked mode (the default)
 
-With a session open in the project, **Tweak** opens the **UI Tweaks pane** in Claude Code. The page keeps only your app, the selection outline and the live preview; the controls are all in the pane.
+**Tweak** opens the studio at `/__ui-tweaks/studio`: your app in a frame on the left, the panel docked on the right, so nothing covers the page.
 
-- **Select** by clicking in the page, or in the pane's layers list. The page's button turns into a **Picking · Claude Code** chip; click it, or use **Picking: on/off** in the pane, to use the page normally.
-- **Laid out like Figma's right panel:** sections split by hairlines (Auto layout, Layout, Text, Fill, Stroke & corners, Effects, Apply to), two fields to a row with short prefixes (`W 420`, `H 52`, `↔ 8`).
-- **Numbers:** type a value and press Enter. Padding, margin, radius and border width take one to four values, as in CSS (`8`, `8 16`, `8 16 4 2`). A • before a field's prefix means you changed it.
-- **Small choices are toggles:** state, direction (→ ↓), text alignment, screen widths.
-- **Layers:** the path to the element; click it to open the full list.
-- **Colors:** type a hex value, or open ◇ and click one of your `:root` color tokens.
-- **Gradients:** **Replace with solid**, or change the base color. Exploring gradients is better done in a design tool.
-- **Also in the pane:** the Default / Hover / Active / Focus state, auto layout, the "only at N px" switch, notes, the list of changes with ↺, **Undo**, **Send to Claude**, **Reset** and **Undo last apply**.
+- **Width presets** in the toolbar: **Fit** (the space available), **390** (phone), **768** (tablet), **1280** (laptop). A preset wider than the space is laid out at its real width and scaled down to fit, so breakpoints behave as on the device. The studio remembers your choice.
+- **↻** reloads the app; **✕** (or **⇱** in the panel) leaves the studio and returns to the plain page.
+- Navigating inside the app keeps you in the studio; the toolbar shows the app's current path.
 
-Closing the pane hands the page back its own panel.
+Docked mode needs the studio and the app on one origin: it works with the Vite plugin and `ui-tweaks-serve`. With the `--api-only` sidecar (Next.js and others), **Tweak** opens the panel on the page instead.
 
-How it connects: the dev server writes its address to `.ui-tweaks/server.json`, and registers itself in `~/.ui-tweaks/servers/`, so a Claude Code session started in another folder still finds it (the most recently started dev server that answers). The pane reads what the page reports through the dev server and sends its commands back the same way (the page listens over server-sent events). A ● next to a field means you changed it.
+Everything below works the same docked or on the page.
 
-### The in-page panel
-
-Without a Claude Code session (or in Chrome on its own), **Tweak** opens the panel on the page. It has the same controls, plus color pickers, gradient-stop editing and drag-to-scrub.
-
-### Selecting (in-page panel)
+### Selecting
 
 - **Click** an element on the page, or pick it in the **layers list** at the top of the panel. The list shows the element in context, so you can reach a button next to a heading. Hovering a row outlines it on the page.
 - **V** turns picking off, so you can use the page normally (to get to another screen, for example). Press V again to resume.
 - **Esc** deselects, then closes.
 
-### Editing (in-page panel)
+### Editing
 
 | Section | Controls |
 | --- | --- |
@@ -173,7 +164,7 @@ Without a Claude Code session (or in Chrome on its own), **Tweak** opens the pan
 - **◇** next to a color field lists your `:root` color variables. Number fields suggest your length variables as you type.
 - A **⚠ warning** appears when a value can't show, for example width on an inline element or a background color under a gradient.
 - **↶** or **⌘Z / Ctrl+Z** undoes your last edit (a whole drag counts as one step).
-- **⧉** pops the panel into its own window, so it doesn't cover the page. Put the two side by side. It reconnects after page reloads; **⇲ Dock**, or closing the window, puts it back.
+- **⧉** (on the page) docks the panel into the studio; Shift-click it to pop the panel into its own window instead (needs a browser that allows pop-ups).
 
 Edits are previews until you send them, and they survive page reloads.
 
@@ -189,7 +180,6 @@ Press **Send to Claude**. The toast tells you what happened, e.g. "Applied 3 dir
 
 | Command | Does |
 | --- | --- |
-| `/tweak` | Opens the UI Tweaks pane for the page in the browser |
 | `/apply-tweaks` | Applies waiting tweaks with Haiku (normally automatic) |
 | `/apply-tweaks claude` | Sends waiting tweaks, e.g. ones Haiku skipped, to the main model |
 | `/apply-tweaks undo` | Undoes the last apply |
@@ -233,7 +223,7 @@ All inside `<project>/.ui-tweaks/`, which ignores itself in git:
 | `log.json` | What happened to each tweak and why (last 300) |
 | `history.json`, `history/slot-N.json` | Undo history: file copies for the last 10 applies |
 | `lock.json` | Which session is applying right now |
-| `server.json` | The dev server's address, for the Claude Code pane |
+| `server.json` | The dev server's address (also registered in `~/.ui-tweaks/servers/`), so the mod finds the project even when its session started in another folder |
 
 ## Setting it up for a team
 
@@ -289,13 +279,9 @@ Then remove the `uiTweaks` lines from `vite.config.ts`, or the script tag from y
 
 **A tweak was skipped.** The band and `.ui-tweaks/log.json` say why. Fix the cause (e.g. edit the gradient layers instead of a hidden background color), or press **Send to Claude** in the band.
 
-**The pane says "Open your app in the browser".** The page with the overlay isn't open, or the dev server restarted on another port; reload the page. The pane finds the dev server through `.ui-tweaks/server.json` in the session's folder, else through `~/.ui-tweaks/servers/`; restart the dev server after updating the kit so it registers.
+**Pop-out says it was blocked.** Allow pop-ups for the page, or use docked mode (plain **Tweak**), which needs no pop-up.
 
-**Tweak opened the panel on the page instead of the pane.** No Claude Code session with the mod was watching this dev server (the page waits about 2.5 s for the pane). Check the session is in the project folder, or run `/tweak`.
-
-**Pop-out says it was blocked.** Allow pop-ups for the page, or use a regular browser instead of Claude Code's built-in one.
-
-**The panel can't scroll.** Some apps cancel wheel events. The panel handles its own scrolling; if it still sticks, pop it out with ⧉.
+**The panel can't scroll.** Some apps cancel wheel events. The panel handles its own scrolling; docked mode avoids the problem entirely.
 
 **Undo refused.** The file changed after the apply (you, Claude or another tool edited it). Undo by hand with the **Diff** pane as a guide, or use git.
 

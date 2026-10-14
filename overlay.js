@@ -20,6 +20,8 @@
     hovered: null,
     tweaks: new Map(), // key -> tweak
     sentBatches: new Map(), // batch id -> tweak keys
+    undo: [], // preview edits, newest last: { stamp, at, el, key, prop | text, before }
+    lastApply: null, // Haiku's newest undoable apply, from the server
     note: "",
   };
   const elementKeys = new WeakMap();
@@ -312,8 +314,60 @@
     return state.tweaks.get(key);
   }
 
+  // Calls made in the same task (a linked group's four sides) share a stamp, so one undo takes them back together.
+  let stamp = 0, stampCounter = 0;
+  function actionStamp() {
+    if (!stamp) {
+      stamp = ++stampCounter;
+      queueMicrotask(() => (stamp = 0));
+    }
+    return stamp;
+  }
+
+  function recordUndo(entry) {
+    const last = state.undo[state.undo.length - 1];
+    const now = Date.now();
+    // A scrub is many edits of one property in a row: keep only its starting point.
+    if (last && last.key === entry.key && last.prop && last.prop === entry.prop && now - last.at < 1000) {
+      last.at = now;
+      return;
+    }
+    state.undo.push({ ...entry, stamp: actionStamp(), at: now });
+    if (state.undo.length > 200) state.undo.shift();
+  }
+
+  function undoPreview() {
+    const top = state.undo[state.undo.length - 1];
+    if (!top) return toast("Nothing to undo");
+    while (state.undo.length && state.undo[state.undo.length - 1].stamp === top.stamp) {
+      const entry = state.undo.pop();
+      const { prop, before, prevText } = entry;
+      // React may have remounted the node since; the tweak tracks the live one.
+      const el = (state.tweaks.get(entry.key) || entry).el;
+      const tweak = tweakFor(el);
+      if (tweak.batchId) withdraw(tweak.batchId);
+      if (prop) {
+        if (before) {
+          el.style.setProperty(prop, before.to, "important");
+          tweak.changes[prop] = before;
+        } else {
+          restoreProp(el, prop, tweak.changes[prop]);
+          delete tweak.changes[prop];
+        }
+      } else {
+        el.textContent = prevText;
+        tweak.text = before;
+      }
+      cleanup(tweak);
+    }
+    persist();
+    render();
+  }
+
   function setStyle(el, prop, value, quiet = false) {
+    if (value === (state.tweaks.get(keyOf(el))?.changes[prop]?.to ?? computed(el, prop))) return; // nothing changes
     const tweak = tweakFor(el);
+    recordUndo({ el, key: tweak.key, prop, before: tweak.changes[prop] ? { ...tweak.changes[prop] } : null });
     if (tweak.batchId) withdraw(tweak.batchId); // edited again after sending: take it back, it's a draft once more
     if (!(prop in tweak.changes)) {
       tweak.changes[prop] = {
@@ -978,7 +1032,14 @@
     pop.textContent = state.popup ? "⇲ Dock" : "⧉";
     pop.title = state.popup ? "Put the panel back on the page" : "Pop the panel out into its own window";
     pop.addEventListener("click", () => (state.popup ? dock() : popOut()));
-    bar.append(title, pick, pop, close);
+    const undo = document.createElement("button");
+    undo.className = "icon";
+    undo.textContent = "↶";
+    undo.title = "Undo the last preview edit (⌘Z / Ctrl+Z)";
+    undo.disabled = state.undo.length === 0;
+    undo.style.opacity = undo.disabled ? "0.35" : "1";
+    undo.addEventListener("click", undoPreview);
+    bar.append(title, undo, pick, pop, close);
     panel.append(bar);
 
     const scroll = document.createElement("div");
@@ -1139,7 +1200,7 @@
       if (t.batchId) {
         const pill = document.createElement("span");
         pill.className = "pill" + (t.skipped ? " warn" : "");
-        pill.textContent = t.skipped ? "skipped" : "with Claude";
+        pill.textContent = t.skipped ? "skipped" : "applying…";
         b.append(pill);
       }
       const s = document.createElement("span");
@@ -1157,6 +1218,35 @@
         render();
       });
       row.append(what, undo);
+      box.append(row);
+    }
+    if (state.lastApply) {
+      const row = document.createElement("div");
+      row.className = "change";
+      const what = document.createElement("div");
+      what.className = "what";
+      const b = document.createElement("b");
+      b.textContent = `Haiku applied ${state.lastApply.count} tweak${state.lastApply.count === 1 ? "" : "s"}`;
+      const s = document.createElement("span");
+      s.textContent = state.lastApply.files.join(", ");
+      what.append(b, s);
+      const undoApply = document.createElement("button");
+      undoApply.className = "btn ghost";
+      undoApply.textContent = "Undo apply";
+      undoApply.title = "Put those files back as they were before Haiku edited them";
+      undoApply.addEventListener("click", async () => {
+        undoApply.disabled = true;
+        try {
+          const res = await fetch(API + "/undo", { method: "POST" });
+          const body = await res.json();
+          toast(res.ok ? `Undid Haiku's apply: ${body.files.join(", ")} restored` : `Not undone: ${body.error}`);
+          if (res.ok) state.lastApply = null;
+        } catch (error) {
+          toast("Couldn't reach the tweaks server (" + error.message + ")");
+        }
+        renderChanges();
+      });
+      row.append(what, undoApply);
       box.append(row);
     }
     const general = document.createElement("textarea");
@@ -1179,6 +1269,7 @@
     reset.addEventListener("click", () => {
       [...state.sentBatches.keys()].forEach(withdraw);
       [...state.tweaks.values()].forEach(revertTweak);
+      state.undo = [];
       state.note = "";
       persist();
       render();
@@ -1228,7 +1319,7 @@
       state.note = "";
       persist();
       render();
-      toast("Sent to Claude. Apply it from the band above Claude's prompt.");
+      toast("Sent. Haiku is applying it to the source…");
     } catch (error) {
       toast("Couldn't reach the tweaks server. Use Copy instead. (" + error.message + ")");
     }
@@ -1246,7 +1337,11 @@
   async function poll() {
     try {
       const res = await fetch(API + "/status", { cache: "no-store" });
-      const { pendingIds, pendingTweaks = [], version } = await res.json();
+      const { pendingIds, pendingTweaks = [], version, lastApply = null } = await res.json();
+      if (JSON.stringify(lastApply) !== JSON.stringify(state.lastApply)) {
+        state.lastApply = lastApply;
+        if (state.isOpen) renderChanges();
+      }
       if (LIVE_RELOAD && version && lastVersion && version !== lastVersion) {
         persist();
         location.reload();
@@ -1269,6 +1364,7 @@
         }
         for (const [prop, change] of Object.entries(t.changes)) restoreProp(t.el, prop, change);
         state.tweaks.delete(t.key);
+        state.undo = state.undo.filter((u) => u.key !== t.key);
         applied++;
       }
       for (const id of [...state.sentBatches.keys()]) if (!pendingIds.includes(id)) state.sentBatches.delete(id);
@@ -1416,6 +1512,7 @@
       const after = t.textContent;
       if (after === before) return;
       const tweak = tweakFor(t);
+      recordUndo({ el: t, key: tweak.key, before: tweak.text ? { ...tweak.text } : null, prevText: before });
       tweak.text = { from: tweak.text ? tweak.text.from : before, to: after };
       if (tweak.text.from === after) tweak.text = null;
       if (tweak.batchId) withdraw(tweak.batchId);
@@ -1444,6 +1541,12 @@
       return;
     }
     if (!state.isOpen || typing) return;
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      e.stopPropagation();
+      undoPreview();
+      return;
+    }
     if (e.key === "Escape") {
       if (state.selected) select(null);
       else toggle(false);

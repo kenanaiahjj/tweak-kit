@@ -1,3 +1,4 @@
+import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { parseReport, settle, summarize } from '../hooks/register'
@@ -18,6 +19,7 @@ const PENDING = JSON.stringify({
 
 test('/apply-tweaks starts the Haiku applier on the waiting tweak ids', async ($, on) => {
   const spawns: { subagentType?: string; model?: string; prompt: string }[] = []
+  mock.clock(on)
   on('fs.read', () => ({ value: PENDING }))
   on('agent.spawn', ($, e) => {
     spawns.push({ subagentType: e.subagentType, model: e.model, prompt: e.prompt })
@@ -73,4 +75,49 @@ test("Haiku's report settles the file: applied tweaks leave, skipped ones keep t
 
   expect(summarize(settle(PENDING, ['tabc-0', 'tabc-1'], []))).toBe(null)
   expect(parseReport('no json here')).toBe(null)
+})
+
+// A tiny file system for the undo tests: path -> text.
+function fakeFs(on: On, files: Record<string, string>) {
+  // The engine hands hooks absolute paths; match the relative keys by suffix.
+  const key = (path: string) => Object.keys(files).find(k => path === k || path.endsWith('/' + k)) ?? path
+  on('fs.read', ($, e) => {
+    const text = files[key(e.path)]
+    if (text === undefined) throw new Error('ENOENT')
+    return { value: text }
+  })
+  on('fs.write', ($, e) => {
+    files[key(e.path)] = e.text
+    return { value: undefined } as never
+  })
+}
+
+const HISTORY = JSON.stringify({ entries: [{ id: 'h1', at: 1, by: 'haiku', count: 2, slot: '.ui-tweaks/history/slot-0.json', files: ['/p/src/styles.css'] }] })
+const SLOT = JSON.stringify({ id: 'h1', files: [{ path: '/p/src/styles.css', before: 'a { color: red }', after: 'a { color: blue }' }] })
+
+test("/apply-tweaks undo restores the files Haiku's last apply changed", async ($, on) => {
+  const files: Record<string, string> = {
+    '.ui-tweaks/history.json': HISTORY,
+    '.ui-tweaks/history/slot-0.json': SLOT,
+    '/p/src/styles.css': 'a { color: blue }',
+  }
+  fakeFs(on, files)
+
+  const result = await $.command.run({ command: 'apply-tweaks', args: 'undo' } as never)
+  expect(JSON.stringify(result)).toContain('styles.css restored')
+  expect(files['/p/src/styles.css']).toBe('a { color: red }')
+  expect(JSON.parse(files['.ui-tweaks/history.json'] ?? '{}').entries).toEqual([])
+})
+
+test('undo refuses a file that changed after Haiku edited it', async ($, on) => {
+  const files: Record<string, string> = {
+    '.ui-tweaks/history.json': HISTORY,
+    '.ui-tweaks/history/slot-0.json': SLOT,
+    '/p/src/styles.css': 'a { color: green }',
+  }
+  fakeFs(on, files)
+
+  const result = await $.command.run({ command: 'apply-tweaks', args: 'undo' } as never)
+  expect(JSON.stringify(result)).toContain('Not undone')
+  expect(files['/p/src/styles.css']).toBe('a { color: green }')
 })

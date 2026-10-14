@@ -35,6 +35,34 @@ async function writePending(root, pending) {
   await fs.writeFile(file, JSON.stringify(pending, null, 2) + "\n");
 }
 
+// Undo history written by the Claude Code mod: history.json lists Haiku's applies,
+// each apply's file copies sit in history/slot-N.json.
+async function readHistory(root) {
+  try {
+    return JSON.parse(await fs.readFile(path.join(tweaksDir(root), "history.json"), "utf8")).entries || [];
+  } catch {
+    return [];
+  }
+}
+
+/** Restores the files of the newest apply, unless one changed since; same rules as the mod's undo. */
+async function undoLastApply(root) {
+  const entries = await readHistory(root);
+  const last = entries[entries.length - 1];
+  if (!last) return { status: 404, body: { error: "There is no Haiku apply to undo." } };
+  const saved = JSON.parse(await fs.readFile(path.resolve(root, last.slot), "utf8"));
+  if (saved.id !== last.id) return { status: 409, body: { error: "The undo history is out of date." } };
+  const changed = [];
+  for (const f of saved.files) {
+    const now = await fs.readFile(path.resolve(root, f.path), "utf8").catch(() => null);
+    if (now !== f.after) changed.push(path.basename(f.path));
+  }
+  if (changed.length) return { status: 409, body: { error: `${changed.join(", ")} changed after Haiku edited it.`, changed } };
+  for (const f of saved.files) await fs.writeFile(path.resolve(root, f.path), f.before);
+  await fs.writeFile(path.join(tweaksDir(root), "history.json"), JSON.stringify({ entries: entries.slice(0, -1) }, null, 2) + "\n");
+  return { status: 200, body: { ok: true, files: saved.files.map((f) => path.basename(f.path)) } };
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -73,12 +101,18 @@ export function createTweaksHandler({ root, getVersion }) {
       }
       if (req.method === "GET" && url.pathname === `${PREFIX}/status`) {
         const pending = await readPending(root);
+        const last = (await readHistory(root)).slice(-1)[0];
         return send(res, 200, {
+          lastApply: last ? { id: last.id, count: last.count, files: last.files.map((f) => path.basename(f)) } : null,
           pendingIds: pending.batches.map((b) => b.id),
           // Per tweak, so the overlay can drop previews one at a time and show Haiku's skip reasons.
           pendingTweaks: pending.batches.flatMap((b) => (b.tweaks || []).map((t, i) => ({ id: t.id || `${b.id}-${i}`, skipped: t.skipped }))),
           version: getVersion ? getVersion() : null,
         });
+      }
+      if (req.method === "POST" && url.pathname === `${PREFIX}/undo`) {
+        const { status, body } = await undoLastApply(root);
+        return send(res, status, body);
       }
       if (req.method === "POST" && url.pathname === PREFIX) {
         const batch = JSON.parse(await readBody(req));

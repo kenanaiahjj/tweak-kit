@@ -132,7 +132,13 @@ Nothing to do: the kit writes a `.gitignore` containing `*` inside `.ui-tweaks/`
 
 **Tweak** opens the studio at `/__ui-tweaks/studio`: your app in a frame on the left, the panel docked on the right, so nothing covers the page.
 
-- **Device presets** in the toolbar: **Fit** (the space available), **390** (iPhone 14/15, 390 × 844), **768** (iPad portrait, 768 × 1024), **1280** (laptop, 1280 × 800). The app gets that exact screen size, so breakpoints and full-height layouts behave as on the device. A device bigger than the space is scaled down to fit (the toolbar shows the scale), and the studio remembers your choice.
+- **Devices** in the toolbar: **Fit** fills the space available; the **Device** menu sets an exact screen size, grouped by family:
+  - **iPhone:** Duo open (890 × 626) and folded (466 × 678), 18/17/16 Pro Max (440 × 956), Air (420 × 912), 18 Pro · 17 Pro · 17 (402 × 874), 16 · 15 (393 × 852), 17e · 14 · 13 (390 × 844), 16 Plus · 15 Plus (430 × 932), 13 mini (375 × 812), SE (375 × 667).
+  - **iPad:** mini (744 × 1133), Air 11″ (820 × 1180), Pro 11″ (834 × 1210), Pro 13″ (1032 × 1376), classic (768 × 1024).
+  - **Android:** Pixel (412 × 915), Galaxy Z Fold 5 folded (344 × 882).
+  - **Desktop:** Laptop (1280 × 800), MacBook Air 13″ (1470 × 956), 1440 × 900, 1920 × 1080.
+
+  **⟲** rotates the device. The app gets that exact screen size (CSS px), so breakpoints and full-height layouts behave as on the device; a device bigger than the space is scaled down to fit (the toolbar shows the scale). The studio remembers your choice.
 - **↻** reloads the app; **✕** (or **⇱** in the panel) leaves the studio and returns to the plain page.
 - Navigating inside the app keeps you in the studio; the toolbar shows the app's current path.
 

@@ -141,6 +141,9 @@ export function studioPage(appPath) {
   .toolbar button { height: 26px; padding: 0 7px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--text); font: inherit; cursor: pointer; flex: none; }
   .toolbar button:hover { background: #2c2c2c; }
   .toolbar button.on { background: var(--accent); color: #fff; }
+  .toolbar select { height: 26px; max-width: 220px; min-width: 0; padding: 0 6px; border: 1px solid var(--line); border-radius: 5px; background: #2c2c2c; color: var(--text); font: inherit; cursor: pointer; flex: 0 1 auto; }
+  .toolbar select.on { border-color: var(--accent); }
+  .toolbar button:disabled { opacity: .35; cursor: default; }
   .toolbar .sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; flex: none; }
   .toolbar .size { color: var(--dim); margin: 0 6px; font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
   .toolbar .path { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
@@ -161,10 +164,9 @@ export function studioPage(appPath) {
       <button class="exit" title="Leave docked mode">✕</button>
       <button class="reload" title="Reload the app">↻</button>
       <span class="sep"></span>
-      <button data-width="" title="Fill the space">Fit</button>
-      <button data-width="390" data-height="844" title="iPhone 14/15, 390 × 844">390</button>
-      <button data-width="768" data-height="1024" title="iPad, 768 × 1024">768</button>
-      <button data-width="1280" data-height="800" title="Laptop, 1280 × 800">1280</button>
+      <button class="fit" title="Fill the space">Fit</button>
+      <select class="device" title="Device size"></select>
+      <button class="rotate" title="Rotate the device">⟲</button>
       <span class="size"></span>
       <span class="path"></span>
     </div>
@@ -179,36 +181,86 @@ export function studioPage(appPath) {
   const pathLabel = document.querySelector(".path");
   frame.src = ${src};
   const wrap = document.querySelector(".wrap");
-  const KEY = "ui-tweaks:studio-width";
-  let width = "";
-  // A device is laid out at its real size (e.g. 390 × 844), then scaled down to fit the space.
+  const picker = document.querySelector(".device");
+  const fit = document.querySelector(".fit");
+  const rotate = document.querySelector(".rotate");
+  // Screen sizes in CSS px, portrait (the Duo opens wide, as it ships).
+  const DEVICES = [
+    ["iPhone", [
+      ["duo-open", "iPhone Duo, open", 890, 626],
+      ["duo-folded", "iPhone Duo, folded", 466, 678],
+      ["pro-max", "iPhone 18 / 17 / 16 Pro Max", 440, 956],
+      ["air", "iPhone Air", 420, 912],
+      ["pro", "iPhone 18 Pro · 17 Pro · 17", 402, 874],
+      ["i16", "iPhone 16 · 15", 393, 852],
+      ["i14", "iPhone 17e · 14 · 13", 390, 844],
+      ["plus", "iPhone 16 Plus · 15 Plus", 430, 932],
+      ["mini", "iPhone 13 mini", 375, 812],
+      ["se", "iPhone SE", 375, 667],
+    ]],
+    ["iPad", [
+      ["ipad-mini", "iPad mini", 744, 1133],
+      ["ipad-air", "iPad Air 11″", 820, 1180],
+      ["ipad-pro-11", "iPad Pro 11″", 834, 1210],
+      ["ipad-pro-13", "iPad Pro 13″", 1032, 1376],
+      ["ipad-classic", "iPad (classic)", 768, 1024],
+    ]],
+    ["Android", [
+      ["pixel", "Pixel", 412, 915],
+      ["zfold-folded", "Galaxy Z Fold 5, folded", 344, 882],
+    ]],
+    ["Desktop", [
+      ["laptop", "Laptop", 1280, 800],
+      ["mba-13", "MacBook Air 13″", 1470, 956],
+      ["desktop-1440", "Desktop 1440", 1440, 900],
+      ["desktop-1080", "Desktop 1080p", 1920, 1080],
+    ]],
+  ];
+  const BY_ID = Object.fromEntries(DEVICES.flatMap(([, list]) => list.map((d) => [d[0], d])));
+  picker.append(new Option("Device…", ""));
+  for (const [group, list] of DEVICES) {
+    const g = document.createElement("optgroup");
+    g.label = group;
+    for (const [id, name, w, h] of list) g.append(new Option(name + "  " + w + "×" + h, id));
+    picker.append(g);
+  }
+  const KEY = "ui-tweaks:studio-device";
+  let device = "";
+  let turned = false;
+  // A device is laid out at its real size, then scaled down to fit the space.
   function layout() {
-    const button = document.querySelector('[data-width="' + width + '"]');
-    const w = Number(width) || 0;
-    const h = Number(button && button.dataset.height) || 0;
-    canvas.classList.toggle("device", !!w);
-    if (!w) {
+    const d = BY_ID[device];
+    canvas.classList.toggle("device", !!d);
+    fit.classList.toggle("on", !d);
+    picker.classList.toggle("on", !!d);
+    picker.value = d ? device : "";
+    rotate.disabled = !d;
+    if (!d) {
       Object.assign(wrap.style, { width: "100%", height: "100%" });
       Object.assign(frame.style, { width: "100%", height: "100%", transform: "" });
       size.textContent = Math.round(canvas.clientWidth) + " × " + Math.round(canvas.clientHeight);
       return;
     }
+    const [w, h] = turned ? [d[3], d[2]] : [d[2], d[3]];
     const availW = canvas.clientWidth - 24, availH = canvas.clientHeight - 24;
     const scale = Math.min(1, availW / w, availH / h);
     Object.assign(frame.style, { width: w + "px", height: h + "px", transform: scale < 1 ? "scale(" + scale + ")" : "" });
     Object.assign(wrap.style, { width: w * scale + "px", height: h * scale + "px" });
     size.textContent = w + " × " + h + (scale < 1 ? " · " + Math.round(scale * 100) + "%" : "");
   }
-  function setWidth(w) {
-    width = w || "";
-    for (const b of document.querySelectorAll("[data-width]")) b.classList.toggle("on", b.dataset.width === width);
-    try { localStorage.setItem(KEY, width); } catch {}
+  function choose(id, isTurned = false) {
+    device = BY_ID[id] ? id : "";
+    turned = !!device && isTurned;
+    try { localStorage.setItem(KEY, JSON.stringify({ device, turned })); } catch {}
     layout();
   }
-  let saved = "";
-  try { saved = localStorage.getItem(KEY) || ""; } catch {}
-  setWidth(saved);
-  for (const b of document.querySelectorAll("[data-width]")) b.addEventListener("click", () => setWidth(b.dataset.width));
+  try {
+    const saved = JSON.parse(localStorage.getItem(KEY) || "{}");
+    choose(saved.device || "", saved.turned);
+  } catch { choose(""); }
+  fit.addEventListener("click", () => choose(""));
+  picker.addEventListener("change", () => choose(picker.value));
+  rotate.addEventListener("click", () => choose(device, !turned));
   new ResizeObserver(layout).observe(canvas);
   const appUrl = () => { try { return frame.contentWindow.location; } catch { return null; } };
   frame.addEventListener("load", () => {

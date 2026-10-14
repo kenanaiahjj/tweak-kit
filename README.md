@@ -8,8 +8,11 @@ Figma-style visual tweaks in the browser, applied to the real source by Claude C
    - **Design tokens:** ◇ next to a color field lists the `:root` color variables, and number fields suggest length variables.
    - **Warnings:** the panel tells you when a value can't show, e.g. width on an inline element or a color under a gradient.
 2. **Send to Claude** applies the tweaks:
-   - **Directly, with no model,** when it's simple: one value on a CSS rule only this element uses (one selector, one match on the page, its classes used once in the source), or a copy change on the element's JSX line. This is instant, and shorthands like `padding` are rewritten in place.
-   - **The rest goes to Haiku,** which the Claude Code mod (`claude-mod/`) starts in the background. Haiku's report isn't trusted: each tweak it says it applied is checked against the files it edited, and anything it skipped or that fails the check stays queued with a reason. **Send to Claude** in the band (or `/apply-tweaks claude`) hands those to the main model.
+   - **Directly, with no model,** for most tweaks, instantly:
+     - A value on a rule only this element uses is edited in place (shorthands like `padding` included).
+     - A value on a shared rule, or one no rule sets yet, becomes an override: the element's JSX gets a class of its own (e.g. `primary-button--t3f2a`), with a more specific rule right after the shared one, so the other elements keep their look.
+     - A copy change on the element's JSX line is edited in place.
+   - **The rest goes to Haiku:** notes, hover/active/focus states, width-only tweaks, style props, and shared rules in plain HTML projects. Haiku runs in the background, started by the Claude Code mod (`claude-mod/`); with several sessions open, a lock lets one apply at a time. Haiku's report isn't trusted: each tweak it says it applied is checked against the files it edited, and anything it skipped or that fails the check stays queued with a reason. **Send to Claude** in the band (or `/apply-tweaks claude`) hands those to the main model.
 3. Every apply can be undone, whether from **Undo apply** in the panel, **Undo** in the band, or `/apply-tweaks undo`. Each changed file is restored unless it has changed since. The band shows the files with +/− line counts and a **Diff** view. `.ui-tweaks/log.json` records what happened to each tweak and why.
 
 ## Install

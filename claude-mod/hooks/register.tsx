@@ -26,17 +26,22 @@ const STUCK_MS = 10 * 60 * 1000
 type HistoryEntry = { id: string; at: number; by: 'haiku' | 'direct'; count: number; slot: string; files: string[] }
 type SlotFile = { id: string; files: { path: string; before: string; after: string }[] }
 
-// Each file as it was before the running Haiku apply first edited it (one run at a time).
+// Each file as it was before the running Haiku apply edited it (one run at a time): the files the
+// tweaks point at are copied before Haiku starts, and any other file just before its first edit.
 const snapshots = new Map<string, string>()
 
-type Change = { prop?: string; to?: string }
+// Several sessions can have this mod loaded in one project: a lock file lets one apply at a time.
+const LOCK = '.ui-tweaks/lock.json'
+const me = `s${Math.random().toString(36).slice(2, 10)}`
+
+type Change = { prop?: string; to?: string; authoredIn?: { file?: string }[] }
 type Tweak = {
   id?: string
   changes?: Record<string, Change>
   text?: { from?: string; to?: string }
   note?: string
   skipped?: string
-  element?: { classes?: string[]; tag?: string }
+  element?: { classes?: string[]; tag?: string; react?: { jsxSource?: string } }
 }
 type Batch = { id: string; page?: { path?: string }; tweaks?: Tweak[] }
 type PendingFile = { version?: number; batches?: Batch[] }
@@ -256,7 +261,10 @@ async function refresh($: EngineInterface) {
   await syncLastApply($)
   const next = await readPending($)
   const current = await read($, run)
-  if (current !== null && (await $.clock.now()) - current.startedAt > STUCK_MS) await update($, run, () => null)
+  if (current !== null && (await $.clock.now()) - current.startedAt > STUCK_MS) {
+    await update($, run, () => null)
+    await releaseLock($)
+  }
   // Send to Claude in the browser applies right away: start Haiku on tweaks it has not tried yet.
   if (next !== null && (await read($, run)) === null) {
     const tried = await read($, attempted)
@@ -275,13 +283,51 @@ async function refresh($: EngineInterface) {
   if (isNew && latest === null) $.ui.toast(`UI tweaks arrived from the browser: ${next.changes} change(s)`)
 }
 
+async function takeLock($: EngineInterface): Promise<boolean> {
+  const now = await $.clock.now()
+  const held = await $.fs.read(LOCK).then(t => JSON.parse(t) as { owner?: string | null; at?: number }).catch(() => ({}) as { owner?: string | null; at?: number })
+  if (held.owner && held.owner !== me && now - (held.at ?? 0) < STUCK_MS) return false
+  await $.fs.write(LOCK, JSON.stringify({ owner: me, at: now }))
+  await $.clock.sleep(300)
+  // Another session may have written at the same moment: the last write wins, the other backs off.
+  const after = await $.fs.read(LOCK).then(t => JSON.parse(t) as { owner?: string }).catch(() => ({}) as { owner?: string })
+  return after.owner === me
+}
+
+async function releaseLock($: EngineInterface) {
+  const held = await $.fs.read(LOCK).then(t => JSON.parse(t) as { owner?: string }).catch(() => ({}) as { owner?: string })
+  if (held.owner === me) await $.fs.write(LOCK, JSON.stringify({ owner: null, at: 0 }))
+}
+
+/** Copies of the files the tweaks point at (their CSS rules and JSX lines), taken before Haiku edits. */
+async function snapshotTargets($: EngineInterface, ids: string[]) {
+  snapshots.clear()
+  const cwd = await $.session.cwd()
+  const abs = (p: string) => (p.startsWith('/') ? p : `${cwd}/${p}`)
+  const batches = (JSON.parse(await $.fs.read(FILE)) as PendingFile).batches ?? []
+  const files = new Set<string>()
+  for (const b of batches) {
+    ;(b.tweaks ?? []).forEach((t, i) => {
+      if (!ids.includes(tweakId(b, t, i))) return
+      for (const c of Object.values(t.changes ?? {})) for (const r of c.authoredIn ?? []) if (r.file && !r.file.startsWith('<')) files.add(abs(r.file))
+      const jsx = /^(.*):\d+$/.exec(t.element?.react?.jsxSource ?? '')
+      if (jsx?.[1]) files.add(abs(jsx[1]))
+    })
+  }
+  for (const f of files) {
+    const text = await $.fs.read(f).catch(() => null)
+    if (text !== null) snapshots.set(f, text)
+  }
+}
+
 async function applyWithHaiku($: EngineInterface, ids?: string[]): Promise<string> {
   const summary = await readPending($)
   if (summary === null) return `No UI tweaks are waiting (${FILE} is empty or missing).`
   if ((await read($, run)) !== null) return 'An apply is already running; wait for it to finish.'
   const todo = ids ?? summary.tweakIds.filter(id => !summary.skipped.some(s => s.id === id))
   if (todo.length === 0) return 'Haiku already skipped every waiting tweak; use "Send to Claude".'
-  snapshots.clear()
+  if (!(await takeLock($))) return 'Another Claude Code session is applying tweaks in this project.'
+  await snapshotTargets($, todo)
   const startedAt = await $.clock.now()
   await update($, run, () => ({ by: 'haiku' as const, tweakIds: todo, startedAt }))
   await update($, attempted, list => [...new Set([...list, ...todo])].slice(-500))
@@ -293,6 +339,7 @@ async function applyWithHaiku($: EngineInterface, ids?: string[]): Promise<strin
   })
   if ('deny' in started) {
     await update($, run, () => null)
+    await releaseLock($)
     return `Could not start Haiku: ${String(started.deny)}`
   }
   await update($, run, r => (r ? { ...r, agentId: started.agentId } : r))
@@ -316,6 +363,7 @@ async function finishHaiku($: EngineInterface, answer: string) {
   const files = await changedFiles($)
   const report = parseReport(answer)
   const runIds = (await read($, run))?.tweakIds ?? []
+  await releaseLock($)
   if (report === null) {
     await recordApply($, 0, files)
     await update($, run, () => null)

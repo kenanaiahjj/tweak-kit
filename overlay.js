@@ -291,6 +291,7 @@
             } catch {}
             found.push({
               selector: rule.selectorText.length > 200 ? matchingPart : rule.selectorText,
+              part: matchingPart, // the part of a selector list that matched this element
               matches,
               forState: isState || undefined,
               important: !!rule.style.getPropertyPriority(name),

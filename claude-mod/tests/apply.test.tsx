@@ -18,21 +18,39 @@ const PENDING = JSON.stringify({
   ],
 })
 
-test('/apply-tweaks starts the Haiku applier on the waiting tweak ids', async ($, on) => {
+test('/apply-tweaks takes the lock and starts the Haiku applier on the waiting tweak ids', async ($, on) => {
   const spawns: { subagentType?: string; model?: string; prompt: string }[] = []
-  mock.clock(on)
-  on('fs.read', () => ({ value: PENDING }))
+  const clock = mock.clock(on, { now: 1000 })
+  const files: Record<string, string> = { '.ui-tweaks/pending.json': PENDING }
+  fakeFs(on, files)
+  on('session.cwd', () => ({ value: '/p' }) as never)
   on('agent.spawn', ($, e) => {
     spawns.push({ subagentType: e.subagentType, model: e.model, prompt: e.prompt })
     return { model: 'haiku', agentId: 'agent-1' } as never
   })
 
-  const result = await $.command.run({ command: 'apply-tweaks', args: '' } as never)
+  const pending = $.command.run({ command: 'apply-tweaks', args: '' } as never)
+  await clock.advance(400) // the lock's settle wait
+  const result = await pending
   expect(JSON.stringify(result)).toContain('Haiku is applying 2 UI tweak(s)')
-  expect(spawns.length).toBe(1)
-  // subagentType is dropped here: the test never runs session.start, which registers ui-tweaks:applier.
   expect(spawns[0]?.model).toBe('haiku')
   expect(spawns[0]?.prompt).toContain('tabc-0, tabc-1')
+  const lock = Object.entries(files).find(([path]) => path.endsWith('.ui-tweaks/lock.json'))?.[1]
+  expect(JSON.parse(lock ?? '{}').owner).toMatch(/^s/)
+})
+
+test('another session holding the lock: nothing starts', async ($, on) => {
+  let started = false
+  mock.clock(on, { now: 1000 })
+  fakeFs(on, { '.ui-tweaks/pending.json': PENDING, '.ui-tweaks/lock.json': JSON.stringify({ owner: 'sOTHER', at: 900 }) })
+  on('agent.spawn', () => {
+    started = true
+    return { model: 'haiku', agentId: 'x' } as never
+  })
+
+  const result = await $.command.run({ command: 'apply-tweaks', args: '' } as never)
+  expect(JSON.stringify(result)).toContain('Another Claude Code session')
+  expect(started).toBe(false)
 })
 
 test('/apply-tweaks claude sends them to the main model after the command returns', async ($, on) => {

@@ -66,26 +66,55 @@ test("copy changes on the JSX line are applied", async () => {
   assert.match(out.files[0].after, /<h1>Your sports identity<\/h1>/);
 });
 
-test("shared selectors, shared classes, notes and states go to Haiku with a reason", async () => {
+test("notes, states, style props and unplaceable values go to Haiku with a reason", async () => {
   const root = await project();
   const out = await applyDirect(root, {
     tweaks: [
-      tweak("t-0", { color: { from: "red", to: "blue", authoredIn: [rule(".shared, .other", "color")] } }),
-      tweak("t-1", { color: { from: "red", to: "blue", authoredIn: [rule(".shared", "color")] } }),
-      tweak("t-2", { color: { from: "#111", to: "#222", authoredIn: [rule(".card", "color")] } }, { note: "make it pop" }),
-      tweak("t-3", { color: { from: "#111", to: "#222", state: "hover", authoredIn: [rule(".card", "color")] } }),
-      tweak("t-4", { gap: { from: "0px", to: "8px", authoredIn: [] } }),
+      tweak("t-0", { color: { from: "#111", to: "#222", authoredIn: [rule(".card", "color")] } }, { note: "make it pop" }),
+      tweak("t-1", { color: { from: "#111", to: "#222", state: "hover", authoredIn: [rule(".card", "color")] } }),
+      tweak("t-2", { "margin-bottom": { from: "0px", to: "8px", inlineBefore: "18px", authoredIn: [] } }),
+      tweak("t-3", { gap: { from: "0px", to: "8px", authoredIn: [] } }),
     ],
   });
   assert.equal(out.applied.length, 0);
   assert.deepEqual(out.remaining.map((t) => t.directSkip), [
-    ".shared, .other is a shared selector list",
-    ".shared is used 2 times in the source",
     "has a note",
     "changes a hover/active/focus state",
+    "set by the element's style prop",
     "not set by any rule yet",
   ]);
   assert.equal(out.files.length, 0);
+});
+
+test("a shared rule becomes an override: a class on the element and a more specific rule after the shared one", async () => {
+  const root = await project();
+  const el = { classes: ["shared"], selector: "span.shared:nth-of-type(1)", react: { jsxSource: "src/App.tsx:6" } };
+  const out = await applyDirect(root, {
+    tweaks: [
+      { id: "t-0", element: el, changes: { color: { from: "red", to: "blue", authoredIn: [rule(".shared, .other", "color", { part: ".shared", matches: 3 })] } } },
+    ],
+  });
+  assert.deepEqual(out.applied.map((a) => a.id), ["t-0"]);
+  const cls = out.files.find((f) => f.path.endsWith("App.tsx")).after.match(/className="shared (shared--t[0-9a-z]{4})"/)[1];
+  // Only the first span gets the class.
+  assert.match(out.files.find((f) => f.path.endsWith("App.tsx")).after, new RegExp(`<span className="shared ${cls}">A</span><span className="shared">B</span>`));
+  assert.match(out.files.find((f) => f.path.endsWith("styles.css")).after, new RegExp(`\\.shared, \\.other \\{ color: red; \\}\\n\\n\\.shared\\.${cls} \\{\\n  color: blue;\\n\\}`));
+});
+
+test("a second tweak on the same element reuses its override class and rule", async () => {
+  const root = await project();
+  await writeFile(path.join(root, "src/styles.css"), CSS.replace(".shared, .other { color: red; }", ".shared, .other { color: red; }\n\n.shared.shared--tab12 {\n  color: blue;\n}"));
+  await writeFile(path.join(root, "src/App.tsx"), JSX.replace('<span className="shared">A', '<span className="shared shared--tab12">A'));
+  const el = { classes: ["shared", "shared--tab12"], react: { jsxSource: "src/App.tsx:6" } };
+  const out = await applyDirect(root, {
+    tweaks: [{ id: "t-0", element: el, changes: {
+      color: { from: "blue", to: "green", authoredIn: [rule(".shared, .other", "color", { part: ".shared", matches: 3 })] },
+      "padding-top": { from: "0px", to: "4px", authoredIn: [] },
+    } }],
+  });
+  assert.equal(out.applied.length, 1);
+  assert.equal(out.files.length, 1); // the class is already on the element
+  assert.match(out.files[0].after, /\.shared\.shared--tab12 \{\n  color: green;\n  padding-top: 4px;\n\}/);
 });
 
 test("helpers", () => {
@@ -102,24 +131,21 @@ test("the original files are untouched until the server writes them", async () =
   assert.equal(await readFile(path.join(root, "src/styles.css"), "utf8"), CSS);
 });
 
-test("a tweak is split: simple properties are applied, the rest goes to Haiku", async () => {
+test("a tweak is split: values Haiku must do stay queued, the rest is applied", async () => {
   const root = await project();
   await writeFile(path.join(root, "src/styles.css"), CSS.replace(".hero h1 { font-size: 40px; }", ".hero h1 { font-size: 40px; color: var(--ink); }"));
   const out = await applyDirect(root, {
     tweaks: [tweak("t-0", {
       "font-size": { from: "40px", to: "44px", authoredIn: [rule(".hero h1", "font-size")] },
       color: { from: "#111", to: "#5b3df5", authoredIn: [rule(".hero h1", "color", { usesVariable: true })] },
+      "background-color": { from: "#fff", to: "#000", state: "hover", authoredIn: [] },
     })],
   });
-  assert.deepEqual(out.applied, [{ id: "t-0", props: ["font-size"], text: false, files: ["src/styles.css"] }]);
-  assert.deepEqual(Object.keys(out.remaining[0].changes), ["color"]);
-  assert.deepEqual(out.remaining[0].directApplied, ["font-size"]);
-  assert.match(out.files[0].after, /\.hero h1 \{ font-size: 44px; color: var\(--ink\); \}/);
-});
-
-test("a longhand reported by the browser finds the shorthand written in the file", async () => {
-  const root = await project();
-  const out = await applyDirect(root, { tweaks: [tweak("t-0", { "padding-top": { from: "12px", to: "14px", authoredIn: [rule(".card", "padding-top")] } })] });
-  assert.equal(out.applied.length, 1);
-  assert.match(out.files[0].after, /\.card \{ padding: 14px 20px 12px;/);
+  // font-size in place; the token color as an override on the h1 alone; the hover state for Haiku.
+  assert.deepEqual(out.applied.map((a) => a.props), [["font-size", "color"]]);
+  assert.deepEqual(Object.keys(out.remaining[0].changes), ["background-color"]);
+  assert.deepEqual(out.remaining[0].directApplied, ["font-size", "color"]);
+  const css = out.files.find((f) => f.path.endsWith("styles.css")).after;
+  assert.match(css, /\.hero h1 \{ font-size: 44px; color: var\(--ink\); \}\n\n\.hero h1\.[a-z0-9]+--t[0-9a-z]{4} \{\n  color: #5b3df5;\n\}/);
+  assert.match(out.files.find((f) => f.path.endsWith("App.tsx")).after, /<h1 className="[a-z0-9]+--t[0-9a-z]{4}">Your identity<\/h1>/);
 });

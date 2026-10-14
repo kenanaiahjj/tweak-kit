@@ -132,7 +132,7 @@ Nothing to do: the kit writes a `.gitignore` containing `*` inside `.ui-tweaks/`
 
 **Tweak** opens the studio at `/__ui-tweaks/studio`: your app in a frame on the left, the panel docked on the right, so nothing covers the page.
 
-- **Width presets** in the toolbar: **Fit** (the space available), **390** (phone), **768** (tablet), **1280** (laptop). A preset wider than the space is laid out at its real width and scaled down to fit, so breakpoints behave as on the device. The studio remembers your choice.
+- **Device presets** in the toolbar: **Fit** (the space available), **390** (iPhone 14/15, 390 × 844), **768** (iPad portrait, 768 × 1024), **1280** (laptop, 1280 × 800). The app gets that exact screen size, so breakpoints and full-height layouts behave as on the device. A device bigger than the space is scaled down to fit (the toolbar shows the scale), and the studio remembers your choice.
 - **↻** reloads the app; **✕** (or **⇱** in the panel) leaves the studio and returns to the plain page.
 - Navigating inside the app keeps you in the studio; the toolbar shows the app's current path.
 

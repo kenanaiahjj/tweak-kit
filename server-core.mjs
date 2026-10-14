@@ -144,11 +144,11 @@ export function studioPage(appPath) {
   .toolbar .sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; flex: none; }
   .toolbar .size { color: var(--dim); margin: 0 6px; font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
   .toolbar .path { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
-  .canvas { flex: 1; min-height: 0; overflow: hidden; display: flex; justify-content: center; align-items: flex-start; background: var(--bg); background-image: radial-gradient(#ffffff0d 1px, transparent 1px); background-size: 16px 16px; }
+  .canvas { flex: 1; min-height: 0; overflow: hidden; display: flex; justify-content: center; align-items: center; background: var(--bg); background-image: radial-gradient(#ffffff0d 1px, transparent 1px); background-size: 16px 16px; }
   .device { padding: 12px; }
   .wrap { flex: none; width: 100%; height: 100%; overflow: hidden; }
   iframe { display: block; width: 100%; height: 100%; border: 0; background: #fff; transform-origin: top left; }
-  .device .wrap { box-shadow: 0 0 0 1px var(--line), 0 12px 40px rgba(0,0,0,.45); border-radius: 4px; }
+  .device .wrap { box-shadow: 0 0 0 1px var(--line), 0 12px 40px rgba(0,0,0,.45); border-radius: 6px; }
   #ui-tweaks-root { width: 280px; flex: none; background: #1e1e1e; border-left: 1px solid var(--line); overflow: hidden; }
   .waiting { padding: 24px 18px; color: var(--dim); line-height: 1.5; text-align: center; }
   @media (max-width: 720px) { #ui-tweaks-root { width: 264px; } .toolbar .path { display: none; } }
@@ -162,9 +162,9 @@ export function studioPage(appPath) {
       <button class="reload" title="Reload the app">↻</button>
       <span class="sep"></span>
       <button data-width="" title="Fill the space">Fit</button>
-      <button data-width="390" title="Phone, 390px">390</button>
-      <button data-width="768" title="Tablet, 768px">768</button>
-      <button data-width="1280" title="Laptop, 1280px">1280</button>
+      <button data-width="390" data-height="844" title="iPhone 14/15, 390 × 844">390</button>
+      <button data-width="768" data-height="1024" title="iPad, 768 × 1024">768</button>
+      <button data-width="1280" data-height="800" title="Laptop, 1280 × 800">1280</button>
       <span class="size"></span>
       <span class="path"></span>
     </div>
@@ -181,21 +181,23 @@ export function studioPage(appPath) {
   const wrap = document.querySelector(".wrap");
   const KEY = "ui-tweaks:studio-width";
   let width = "";
-  // A device width wider than the space is laid out at its real width, then scaled to fit.
+  // A device is laid out at its real size (e.g. 390 × 844), then scaled down to fit the space.
   function layout() {
+    const button = document.querySelector('[data-width="' + width + '"]');
     const w = Number(width) || 0;
+    const h = Number(button && button.dataset.height) || 0;
     canvas.classList.toggle("device", !!w);
     if (!w) {
       Object.assign(wrap.style, { width: "100%", height: "100%" });
       Object.assign(frame.style, { width: "100%", height: "100%", transform: "" });
-      size.textContent = Math.round(canvas.clientWidth) + "px";
+      size.textContent = Math.round(canvas.clientWidth) + " × " + Math.round(canvas.clientHeight);
       return;
     }
     const availW = canvas.clientWidth - 24, availH = canvas.clientHeight - 24;
-    const scale = Math.min(1, availW / w);
-    Object.assign(frame.style, { width: w + "px", height: availH / scale + "px", transform: scale < 1 ? "scale(" + scale + ")" : "" });
-    Object.assign(wrap.style, { width: w * scale + "px", height: availH + "px" });
-    size.textContent = w + "px" + (scale < 1 ? " · " + Math.round(scale * 100) + "%" : "");
+    const scale = Math.min(1, availW / w, availH / h);
+    Object.assign(frame.style, { width: w + "px", height: h + "px", transform: scale < 1 ? "scale(" + scale + ")" : "" });
+    Object.assign(wrap.style, { width: w * scale + "px", height: h * scale + "px" });
+    size.textContent = w + " × " + h + (scale < 1 ? " · " + Math.round(scale * 100) + "%" : "");
   }
   function setWidth(w) {
     width = w || "";

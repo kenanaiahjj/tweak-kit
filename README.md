@@ -2,7 +2,7 @@
 
 Figma-style visual tweaks in your running app, written back to the real source code.
 
-Open your app, click **Tweak**, and it docks into a studio: your app in a frame on the left (at its real width, or a phone/tablet/laptop preset), a Figma-style panel on the right. Click any element and adjust spacing, size, auto layout, type, color, gradients, radius, border, shadow, and hover/active/focus states. When you're happy, press **Send to Claude**. Most tweaks are written to your CSS and JSX instantly, with no AI involved. The rest are applied by a small Haiku agent in Claude Code, which is checked, logged and undoable.
+Open your app and click **Tweak**: the studio opens as an infinite canvas of artboards, each your live app at one screen, state and device (iPhone Duo to 1080p), saved in `.ui-tweaks/canvas.json`, with a Figma-style panel docked on the right. Click any element and adjust spacing, size, auto layout, type, color, gradients, radius, border, shadow, and hover/active/focus states. When you're happy, press **Send to Claude**. Most tweaks are written to your CSS and JSX instantly, with no AI involved. The rest are applied by a small Haiku agent in Claude Code, which is checked, logged and undoable.
 
 It has two parts:
 

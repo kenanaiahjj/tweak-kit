@@ -128,27 +128,46 @@ Nothing to do: the kit writes a `.gitignore` containing `*` inside `.ui-tweaks/`
 2. Open a Claude Code session **in the project folder**. The mod watches the folder the session is in.
 3. Click **Tweak** (bottom right of the page), or press **Alt+T**.
 
-### Docked mode (the default)
+### The studio canvas (the default)
 
-**Tweak** opens the studio at `/__ui-tweaks/studio`: your app in a frame on the left, the panel docked on the right, so nothing covers the page.
+**Tweak** opens the studio at `/__ui-tweaks/studio`: an infinite canvas of **artboards** on the left, the panel docked on the right. An artboard is not a picture of a screen: it is your running app, framed at one **screen**, **state** and **device**. Change the code and every artboard showing it updates.
 
-- **Devices.** **Fit** shows one frame filling the space. **+ Device** adds a device; add as many as you like to see them **side by side**, each with its own menu, **⟲** (rotate) and **✕** (remove). All devices are scaled by one factor so they fit together, and each app gets its device's exact screen size (CSS px):
-  - **iPhone:** Duo open (890 × 626) and folded (466 × 678), 18/17/16 Pro Max (440 × 956), Air (420 × 912), 18 Pro · 17 Pro · 17 (402 × 874), 16 · 15 (393 × 852), 17e · 14 · 13 (390 × 844), 16 Plus · 15 Plus (430 × 932), 13 mini (375 × 812), SE (375 × 667).
-  - **iPad:** mini (744 × 1133), Air 11″ (820 × 1180), Pro 11″ (834 × 1210), Pro 13″ (1032 × 1376), classic (768 × 1024).
-  - **Android:** Pixel (412 × 915), Galaxy Z Fold 5 folded (344 × 882).
-  - **Desktop:** Laptop (1280 × 800), MacBook Air 13″ (1470 × 956), 1440 × 900, 1920 × 1080.
-- **One set of tweaks, every device.** A tweak previews in all frames at once. Click an element in any frame and the panel follows it there. Navigating in one frame takes the others along.
-- **Chrome** draws the status bar, notch or Dynamic Island, home indicator, punch-hole camera and the Duo's fold over each device, so you can see what they cover.
-- **Grid** overlays a column grid matched to each device (4 columns under 600px, 8 under 1024px, 12 above); **8pt** overlays an 8-point baseline.
-- **Compare**: hold it (or hold **\\** in the app) to see every device without your previews, as the source has it now.
-- **📷** saves a PNG of the devices and copies it. The browser asks to capture the tab each time (Chrome; Claude Code's built-in browser may not support it).
-- **☰ Pages** lists the app's routes (Next.js `app/` and `pages/`, router `path` definitions, HTML files) plus pages you've visited, with a dot on pages that have pending tweaks. Click one to go there. Apps that switch screens without changing the URL show only `/`.
-- **↻** reloads every device; **✕** (or **⇱** in the panel) leaves the studio and returns to the plain page.
-- Navigating inside the app keeps you in the studio; the toolbar shows the app's current path.
+**Moving around**
+- Two-finger scroll pans; pinch, or ⌘/Ctrl + scroll, zooms at the pointer (also over an artboard).
+- Drag the empty canvas, hold **Space**, or turn on **✋** to pan. **−** / **+**, **Fit** (⇧1) and **1:1** (⇧0) set the zoom; the **minimap** (bottom right) jumps anywhere.
 
-Docked mode needs the studio and the app on one origin: it works with the Vite plugin and `ui-tweaks-serve`. With the `--api-only` sidecar (Next.js and others), **Tweak** opens the panel on the page instead.
+**Artboards**
+- **+ Artboard** adds one (a copy of the selected artboard's screen, on the device you pick). **☰** lists the app's routes; click one to add an artboard for it.
+- Drag an artboard by its label to move it (snaps to 8px). On hover or when selected, its label shows the **device** menu, **⟲** rotate, **⧉** duplicate and **✕** remove (or press Delete). Double-click the **name** to rename it, or the **URL** to change which screen and state it shows.
+- Click into an artboard to tweak there; the panel follows. A tweak previews in **every** artboard showing that code.
+- Devices (CSS px): iPhone Duo open (890 × 626) and folded (466 × 678), 18/17/16 Pro Max (440 × 956), Air (420 × 912), 18 Pro · 17 Pro · 17 (402 × 874), 16 · 15 (393 × 852), 17e · 14 · 13 (390 × 844), 16 Plus · 15 Plus (430 × 932), 13 mini (375 × 812), SE (375 × 667); iPad mini, Air 11″, Pro 11″, Pro 13″, classic; Pixel, Galaxy Z Fold 5 folded; Laptop, MacBook Air 13″, 1440 × 900, 1920 × 1080.
+- **Chrome** draws status bars, notches and Dynamic Islands, home indicators and the Duo's fold; **Grid** (4/8/12 columns) and **8pt** overlay guides; hold **Compare** (or **\\** in the app) to see every artboard without your previews; **📷** saves a PNG of the selected artboard (the browser asks to capture the tab; Chrome).
 
-Everything below works the same docked or on the page.
+**`canvas.json`: the canvas is part of your project.** The layout lives in `.ui-tweaks/canvas.json`, the one file in `.ui-tweaks/` that git sees, so you can commit and share it:
+
+```json
+{
+  "artboards": [
+    { "id": "a1", "name": "Welcome", "device": "i16", "url": "/?fixture=new", "x": 0, "y": 0 },
+    { "id": "a7", "name": "Wallet · verified", "device": "i16", "url": "/?fixture=verified", "x": 960, "y": 1000 }
+  ],
+  "notes": [],
+  "arrows": []
+}
+```
+
+The studio saves it as you arrange things, and picks up changes made to it elsewhere within a couple of seconds, so you can ask Claude to "add artboards for the empty and error states" and watch them appear.
+
+**Screens and states: the dev hook.** Apps with URLs (Next.js, React Router) need nothing: an artboard's URL is the route. Apps that switch screens or data in memory need a small **dev-only** hook so each artboard can open a screen in a known state; ask Claude to add one. The convention:
+- `?screen=<name>` opens a screen.
+- `?fixture=<name>` loads a named, made-up data state (new user, verified, error…) **instead of** the saved one, and never writes it back, so artboards don't overwrite your real dev data or each other.
+- Both are ignored outside development.
+
+Example (OneQR): `src/dev-fixtures.ts` defines the fixtures `new`, `unverified`, `pending`, `verified`, `rejected` and `family`; `main.tsx` reads them in `loadState()` and skips saving while one is active.
+
+With the `--api-only` sidecar (Next.js and others, a different origin), **Tweak** opens the panel on the page instead of the studio.
+
+Everything below works the same in the studio or on the page.
 
 ### Selecting
 

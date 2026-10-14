@@ -1892,6 +1892,11 @@
     if (el && state.editState) el.setAttribute("data-ui-tweak-force", state.editState);
     updateStateSheet();
     state.expanded = {};
+    if (STUDIO && el) {
+      try {
+        STUDIO.__studio && STUDIO.__studio.focus(window.frameElement);
+      } catch {}
+    }
     if (STUDIO && el && !ownsPanel()) return attachPopup(STUDIO);
     render();
   }
@@ -2096,6 +2101,31 @@
   }
   document.addEventListener("keyup", onKeyUp, true);
   document.addEventListener("keydown", onAlt, true);
+
+  // On the studio's canvas, pinch-zoom (⌘/Ctrl + scroll) and Space-to-pan belong to the canvas, not the page.
+  if (STUDIO) {
+    const studio = () => {
+      try {
+        return STUDIO.__studio || null;
+      } catch {
+        return null;
+      }
+    };
+    addEventListener("wheel", (e) => {
+      if (!(e.ctrlKey || e.metaKey) || !studio()) return;
+      e.preventDefault();
+      studio().wheel({ ctrlKey: e.ctrlKey, metaKey: e.metaKey, deltaX: e.deltaX, deltaY: e.deltaY, clientX: e.clientX, clientY: e.clientY }, window.frameElement);
+    }, { passive: false });
+    const isTyping = (e) => e.composedPath().some((n) => n.tagName === "INPUT" || n.tagName === "TEXTAREA" || n.isContentEditable);
+    document.addEventListener("keydown", (e) => {
+      if (e.code !== "Space" || e.repeat || isTyping(e) || !studio()) return;
+      e.preventDefault();
+      studio().hand(true);
+    }, true);
+    document.addEventListener("keyup", (e) => {
+      if (e.code === "Space" && studio()) studio().hand(false);
+    }, true);
+  }
   addEventListener("blur", () => {
     state.measuring = false;
     compare(false);

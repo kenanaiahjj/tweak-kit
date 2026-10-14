@@ -4,7 +4,7 @@ Figma-style visual tweaks in the browser, applied to the real source by Claude C
 
 1. A dev-only overlay (`overlay.js`) adds a **Tweak** button to your page (Alt+T). Click an element and adjust its spacing, size, auto layout, type, color, radius, border, opacity or shadow. Drag a field's label to scrub its value (Shift for ×10). Double-click text to edit the copy. Changes preview live.
 2. **Send to Claude** writes the batch to `<project>/.ui-tweaks/pending.json`. That folder ignores itself in git. Each tweak records the element's JSX source line (React dev builds), the CSS rules that set each property (file, selector, media query), the before and after values, and the viewport width.
-3. The Claude Code mod (`claude-mod/`) shows a band above the prompt, "UI tweaks: N changes … [Apply with Claude]", and adds `/apply-tweaks`. Claude edits the CSS, Tailwind classes or JSX, then deletes the file. The overlay sees that and drops its previews.
+3. The Claude Code mod (`claude-mod/`) shows a band above the prompt: "UI tweaks: N changes … [Apply with Haiku] [Send to Claude]". **Apply with Haiku** (or `/apply-tweaks`) runs a small Haiku subagent that edits the CSS, Tailwind classes or JSX. It skips anything ambiguous and says why; **Send to Claude** (or `/apply-tweaks claude`) hands those to the main model. Applied tweaks leave the queue, and the overlay drops their previews.
 
 ## Install
 

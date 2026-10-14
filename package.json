@@ -6,13 +6,37 @@
   "license": "UNLICENSED",
   "private": true,
   "exports": {
-    "./vite": { "types": "./vite-plugin.d.mts", "default": "./vite-plugin.mjs" },
+    "./vite": {
+      "types": "./vite-plugin.d.mts",
+      "default": "./vite-plugin.mjs"
+    },
     "./server": "./server-core.mjs",
     "./overlay.js": "./overlay.js"
   },
-  "bin": { "ui-tweaks-serve": "./serve.mjs" },
-  "files": ["overlay.js", "server-core.mjs", "direct-apply.mjs", "serve.mjs", "vite-plugin.mjs", "vite-plugin.d.mts"],
-  "scripts": { "test": "node --test test/*.test.mjs" },
-  "peerDependencies": { "vite": ">=5" },
-  "peerDependenciesMeta": { "vite": { "optional": true } }
+  "bin": {
+    "ui-tweaks-serve": "./serve.mjs"
+  },
+  "files": [
+    "direct-apply.mjs",
+    "overlay.js",
+    "serve.mjs",
+    "server-core.mjs",
+    "vite-plugin.d.mts",
+    "vite-plugin.mjs"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "peerDependencies": {
+    "vite": ">=5"
+  },
+  "peerDependenciesMeta": {
+    "vite": {
+      "optional": true
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lmfventures/tweak-kit.git"
+  }
 }

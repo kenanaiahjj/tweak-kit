@@ -1,79 +1,61 @@
-# UI Tweak Kit
+# Tweak Kit
 
-Figma-style visual tweaks in the browser, applied to the real source by Claude Code.
+Figma-style visual tweaks in your running app, written back to the real source code.
 
-1. A dev-only overlay (`overlay.js`) adds a **Tweak** button to your page (Alt+T). Click an element, or pick it in the layers list, and adjust its spacing, size, auto layout, type, color, gradient fill, radius, border, opacity or shadow. Drag a field's label to scrub its value (Shift for ×10), double-click text to edit the copy, and ↶ / ⌘Z undoes. Changes preview live.
-   - **States:** switch to Hover, Active or Focus to edit that state. The page shows it while the element is selected.
-   - **Screen width:** "Only at N px" makes a tweak apply around that width only, as a media query.
-   - **Design tokens:** ◇ next to a color field lists the `:root` color variables, and number fields suggest length variables.
-   - **Warnings:** the panel tells you when a value can't show, e.g. width on an inline element or a color under a gradient.
-2. **Send to Claude** applies the tweaks:
-   - **Directly, with no model,** for most tweaks, instantly:
-     - A value on a rule only this element uses is edited in place (shorthands like `padding` included).
-     - A value on a shared rule, or one no rule sets yet, becomes an override: the element's JSX gets a class of its own (e.g. `primary-button--t3f2a`), with a more specific rule right after the shared one, so the other elements keep their look.
-     - A copy change on the element's JSX line is edited in place.
-   - **The rest goes to Haiku:** notes, hover/active/focus states, width-only tweaks, style props, and shared rules in plain HTML projects. Haiku runs in the background, started by the Claude Code mod (`claude-mod/`); with several sessions open, a lock lets one apply at a time. Haiku's report isn't trusted: each tweak it says it applied is checked against the files it edited, and anything it skipped or that fails the check stays queued with a reason. **Send to Claude** in the band (or `/apply-tweaks claude`) hands those to the main model.
-3. Every apply can be undone, whether from **Undo apply** in the panel, **Undo** in the band, or `/apply-tweaks undo`. Each changed file is restored unless it has changed since. The band shows the files with +/− line counts and a **Diff** view. `.ui-tweaks/log.json` records what happened to each tweak and why.
+Open your app in the browser, click any element, and adjust it in a panel: spacing, size, auto layout, type, color, gradients, radius, border, shadow, and hover/active/focus states. When you're happy, press **Send to Claude**. Most tweaks are written to your CSS and JSX instantly, with no AI involved. The rest are applied by a small Haiku agent in Claude Code, which is checked, logged and undoable.
 
-## Install
+It has two parts:
 
-**The Claude Code mod** (once per person, in a terminal session):
+| Part | What it is | Install |
+| --- | --- | --- |
+| **Browser kit** | The overlay panel plus a small dev-server piece that saves tweaks and applies the simple ones | per project, as a dev dependency |
+| **Claude Code mod** (`ui-tweaks`) | Applies the remaining tweaks with Haiku, and shows status, diff and undo above the Claude Code prompt | once per person |
+
+## Quick start
+
+**1. Install the Claude Code mod** (once). In a terminal, start `claude` and run:
 
 ```
 /plugin install ui-tweaks --marketplace lmfventures/tweak-kit
 ```
 
-Answer `y` to add the marketplace, then pick the user scope. It loads in every session after that, the desktop app included. (Working on the kit itself? Point `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json` at `claude-mod/` instead.)
+Answer `y`, then choose the user scope. It now loads in every Claude Code session, including the desktop app.
 
-**The browser kit** (once per project):
+**2. Add the kit to a project:**
 
 ```bash
 npm i -D github:lmfventures/tweak-kit
 ```
 
-## Hooking up a project
-
-**Vite (React, Vue, plain):** add the plugin. It runs only in `vite dev`:
+For a **Vite** project, add it to `vite.config.ts` (other setups are covered in the [guide](docs/guide.md#2-hook-up-a-project)):
 
 ```ts
-// vite.config.ts
-// Dev-only; skipped when the kit isn't installed.
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+// Dev-only overlay; skipped if the kit isn't installed.
 const uiTweaks = await import("ui-tweak-kit/vite").then((k) => k.default()).catch(() => null);
+
 export default defineConfig({ plugins: [react(), uiTweaks] });
 ```
 
-**Plain HTML/CSS:** serve the folder through the kit's static server. It injects the overlay and live-reloads the page:
+**3. Use it.** Run your dev server, open the app, click **Tweak** (or press Alt+T), edit, and press **Send to Claude**. Keep a Claude Code session open in the project folder so the mod can apply anything that needs Haiku.
 
-```bash
-npx ui-tweaks-serve path/to/site --port 5500
-```
+The repo is private, so you need read access to `lmfventures/tweak-kit` and git set up to reach GitHub.
 
-**Next.js or any other dev server:** run the sidecar, then add its script tag in dev:
+## Documentation
 
-```bash
-npx ui-tweaks-serve . --api-only --port 5599
-```
+- **[Guide](docs/guide.md)** covers requirements, installing, hooking up Vite / plain HTML / Next.js / other projects, using the panel, how tweaks get applied, undo, team setup, updating, uninstalling and troubleshooting.
 
-```tsx
-// app/layout.tsx, inside <body>
-{process.env.NODE_ENV === "development" && (
-  <script src="http://localhost:5599/__ui-tweaks/overlay.js" data-api="http://localhost:5599" data-root={process.cwd()} defer />
-)}
-```
+## Repository layout
 
-React 19 (Next 15+) no longer exposes JSX source lines. There, Claude maps elements by class names, component names and the matched CSS rules.
-
-## The mod
-
-`claude-mod/` is a Claude Code plugin. To load it in every session, add its folder to `CLAUDE_CODE_PLUGIN_DIRS` in the `env` block of `~/.claude/settings.json`.
-
-## Shortcuts
-
-| Key | Does |
+| Path | What |
 | --- | --- |
-| Alt+T | open/close the panel |
-| ⧉ in the panel bar | pop the panel into its own window (needs a browser that allows pop-ups, e.g. Chrome; Claude's built-in browser blocks them). It reconnects after page reloads; ⇲ Dock or closing the window puts it back. |
-| V | toggle picking (off = use the page normally) |
-| Esc | deselect, then close |
-| ↑/↓ in a field | ±1 (Shift ±10) |
-| double-click text | edit copy |
+| `overlay.js` | The in-page panel (vanilla JS, shadow DOM, no dependencies) |
+| `server-core.mjs` | Request handler: stores tweaks, applies simple ones, undo, history and log |
+| `direct-apply.mjs` | Applies tweaks to CSS/JSX without a model |
+| `vite-plugin.mjs` | Vite plugin (dev server only) |
+| `serve.mjs` | `ui-tweaks-serve`: static server for plain HTML, or `--api-only` sidecar for other dev servers |
+| `claude-mod/` | The Claude Code mod (`ui-tweaks`) |
+| `.claude-plugin/marketplace.json` | Makes this repo installable with `/plugin install` |
+| `test/` | `npm test` |

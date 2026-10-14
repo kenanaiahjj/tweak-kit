@@ -1,5 +1,13 @@
 {
   "name": "ui-tweak-kit",
-  "owner": { "name": "Kenanaiah" },
-  "plugins": [{ "name": "ui-tweaks", "source": "./claude-mod" }]
+  "description": "Figma-style visual tweaks in your running app, written back to the source by Claude Code",
+  "owner": {
+    "name": "Kenanaiah"
+  },
+  "plugins": [
+    {
+      "name": "ui-tweaks",
+      "source": "./claude-mod"
+    }
+  ]
 }

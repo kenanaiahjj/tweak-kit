@@ -133,9 +133,10 @@ Nothing to do: the kit writes a `.gitignore` containing `*` inside `.ui-tweaks/`
 With a session open in the project, **Tweak** opens the **UI Tweaks pane** in Claude Code. The page keeps only your app, the selection outline and the live preview; the controls are all in the pane.
 
 - **Select** by clicking in the page, or in the pane's layers list. The page's button turns into a **Picking · Claude Code** chip; click it, or use **Picking: on/off** in the pane, to use the page normally.
-- **Folders:** Layers, Layout, Size, Spacing, Text, Fill, Border, Shadow and Apply to open and close like DialKit's. Layers stays closed and shows the path to the element.
-- **Numbers are sliders:** label in the left column, a bar with the value at its right end (filled in Claude's accent color once you've changed it). Drag across the bar to set it, click it and use ←/→ to step (Shift: ×10), or double-click to type an exact value. Padding, margin, radius and border width take one to four values when typed, as in CSS (`8`, `8 16`, `8 16 4 2`).
-- **Small choices are buttons:** state, direction, text alignment, screen widths.
+- **Laid out like Figma's right panel:** sections split by hairlines (Auto layout, Layout, Text, Fill, Stroke & corners, Effects, Apply to), two fields to a row with short prefixes (`W 420`, `H 52`, `↔ 8`).
+- **Numbers:** type a value and press Enter. Padding, margin, radius and border width take one to four values, as in CSS (`8`, `8 16`, `8 16 4 2`). A • before a field's prefix means you changed it.
+- **Small choices are toggles:** state, direction (→ ↓), text alignment, screen widths.
+- **Layers:** the path to the element; click it to open the full list.
 - **Colors:** type a hex value, or open ◇ and click one of your `:root` color tokens.
 - **Gradients:** **Replace with solid**, or change the base color. Exploring gradients is better done in a design tool.
 - **Also in the pane:** the Default / Hover / Active / Focus state, auto layout, the "only at N px" switch, notes, the list of changes with ↺, **Undo**, **Send to Claude**, **Reset** and **Undo last apply**.

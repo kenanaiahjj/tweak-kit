@@ -21,25 +21,6 @@ const remotePages = atom({ plugin: 'ui-tweaks', key: 'remotePages' } as const, 0
 const paneOpen = atom({ plugin: 'ui-tweaks', key: 'paneOpen' } as const, false)
 // Which pane folders are open (true) or closed (false); absent means the folder's default.
 const folds = atom({ plugin: 'ui-tweaks', key: 'folds' } as const, {})
-// The field being typed into, after a double-click on its dial.
-const editing = atom({ plugin: 'ui-tweaks', key: 'editing' } as const, null)
-
-// Dial ranges: [min, max, step]; a range grows to fit a larger current value.
-const RANGES: Record<string, [number, number, number]> = {
-  'row-gap': [0, 64, 1],
-  'column-gap': [0, 64, 1],
-  width: [0, 800, 1],
-  height: [0, 400, 1],
-  'max-width': [0, 1200, 1],
-  padding: [0, 64, 1],
-  margin: [0, 64, 1],
-  'font-size': [8, 72, 1],
-  'line-height': [0.8, 2.4, 0.05],
-  'letter-spacing': [-2, 4, 0.05],
-  'border-radius': [0, 64, 1],
-  'border-width': [0, 8, 1],
-  opacity: [0, 1, 0.05],
-}
 const SIDE_GROUPS = new Set(['padding', 'margin', 'border-radius', 'border-width'])
 const LOG = '.ui-tweaks/log.json'
 
@@ -611,149 +592,107 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // A dial was dragged, stepped or double-clicked in the pane.
-  on('ui.message', { requestId: PANEL }, async ($, e) => {
-    const data = e.data as { prop?: string; value?: number; edit?: boolean }
-    if (!data.prop) return {}
-    if (data.edit) {
-      await update($, editing, () => data.prop ?? null)
-      return {}
-    }
-    const value = String(data.value)
-    void sendCommand($, SIDE_GROUPS.has(data.prop) ? { op: 'set-group', group: data.prop, value } : { op: 'set', prop: data.prop, value })
-    return {}
-  })
-
   on('ui.render', { component: 'Pane', requestId: PANEL }, async ($, e) => {
     if (e.surface !== 'desktop' && e.surface !== 'terminal') {
       const { Text } = $.ui.resolve(e)
       return <Text dimColor>The UI Tweaks panel runs in the Claude desktop app and the terminal; use the in-page panel here.</Text>
     }
-    const { Box, Button, Client, Input, Select, Text } = $.ui.resolve(e)
+    const { Box, Button, Input, Select, Text } = $.ui.resolve(e)
     const snap = await read($, remote)
     const pages = await read($, remotePages)
     const open = await read($, folds)
-    const typing = await read($, editing)
     const cmd = (c: PaneCommand) => void sendCommand($, c)
+
+    // Figma-like: a fixed-width column of sections split by hairlines, two fields to a row.
+    const width = Math.max(30, Math.min((e.props.bodyColumns ?? 44) - 2, 44))
+    const half = Math.floor((width - 1) / 2)
+    const rule = (key: string) => (
+      <Text key={key} color="promptBorder">
+        {'─'.repeat(width)}
+      </Text>
+    )
+    const title = (text: string, aside?: string) => (
+      <Box flexDirection="row" justifyContent="space-between">
+        <Text bold>{text}</Text>
+        {aside ? <Text color="subtle">{aside}</Text> : null}
+      </Box>
+    )
+    const section = (key: string, heading: unknown, ...rows: unknown[]) => [
+      rule(`rule-${key}`),
+      <Box key={`sec-${key}`} flexDirection="column" gap={1}>
+        {heading as never}
+        {rows.filter(Boolean) as never}
+      </Box>,
+    ]
 
     if (snap === null || pages === 0) {
       return (
-        <Box flexDirection="column" gap={1}>
+        <Box flexDirection="column" gap={1} paddingX={1} paddingY={1} width={width + 2}>
           <Text bold>UI Tweaks</Text>
-          <Text dimColor>Open your app in the browser (its dev server running the tweak kit), then click an element.</Text>
+          <Text color="subtle">Open your app in the browser (its dev server running the tweak kit), then click an element.</Text>
         </Box>
       )
     }
 
     const sel = snap.selected
     const f = (name: string) => sel?.fields[name] ?? { value: '', changed: false }
-    const isDesktop = e.surface === 'desktop'
-    // Every row: a fixed label column, then the control, so all controls line up.
-    const LABEL = 14
-    const CONTROL = 28
-    const row = (key: string, label: string, isChanged: boolean, control: unknown) => (
-      <Box key={key} flexDirection="row" alignItems="center">
-        <Box width={LABEL}>
-          <Text color={isChanged ? 'text' : 'subtle'}>{(isChanged ? '● ' : '') + label}</Text>
-        </Box>
-        {control as never}
+    const mark = (name: string) => (f(name).changed ? '•' : '')
+    const setValue = (prop: string, value: string) => cmd(SIDE_GROUPS.has(prop) ? { op: 'set-group', group: prop, value } : { op: 'set', prop, value })
+
+    // A field with a short prefix, as Figma's "W 420". Enter applies.
+    const field = (prop: string, prefix: string, w = half) => (
+      <Box key={`field-${prop}`} width={w}>
+        <Input key={`in-${prop}`} label={mark(prop) + prefix} value={f(prop).value} onSubmit={v => setValue(prop, v)} />
       </Box>
     )
-
-    // A collapsible folder, DialKit-style.
-    const folder = (id: string, title: string, isOpenByDefault: boolean, body: () => unknown, aside?: string) => {
-      const isOpen = open[id] ?? isOpenByDefault
-      return (
-        <Box key={`fold-${id}`} flexDirection="column">
-          <Button key={`fold-btn-${id}`} plain onPress={() => void update($, folds, o => ({ ...o, [id]: !isOpen }))}>
-            <Text bold>{isOpen ? '▾' : '▸'} {title}</Text>
-            {aside ? <Text dimColor> {aside}</Text> : ''}
-          </Button>
-          {isOpen ? <Box flexDirection="column" paddingLeft={2}>{body() as never}</Box> : null}
-        </Box>
-      )
-    }
-
-    // A number as a dial row; double-click it to type an exact value (sides: "8 16", as in CSS).
-    const dial = (prop: string, label: string) => {
-      const field = f(prop)
-      const first = parseFloat(field.value)
-      const value = Number.isFinite(first) ? first : null
-      const [min, baseMax, step] = RANGES[prop] ?? [0, 100, 1]
-      const max = value !== null && value > baseMax ? Math.ceil(value * 1.5) : baseMax
-      const isTyping = typing === prop
-      const colors = isDesktop
-        ? { track: '#ffffff12', fill: field.changed ? '#d977578c' : '#ffffff2e' }
-        : { fill: field.changed ? 'claude' : 'promptBorder' }
-      return (
-        <Box key={`dial-row-${prop}`} flexDirection="column">
-          {row(`dial-label-${prop}`, label, field.changed, (
-            <Client
-              key={`dial-${prop}`}
-              module="./dial.tsx"
-              width={CONTROL}
-              height={1}
-              props={{ prop, value, text: field.value || '—', min, max, step, changed: field.changed, ...colors }}
-            />
-          ))}
-          {isTyping && (
-            <Input
-              key={`type-${prop}`}
-              label={`${label} (Enter to apply)`}
-              value={field.value}
-              autoFocus
-              onSubmit={v => {
-                cmd(SIDE_GROUPS.has(prop) ? { op: 'set-group', group: prop, value: v } : { op: 'set', prop, value: v })
-                void update($, editing, () => null)
-              }}
-            />
-          )}
-        </Box>
-      )
-    }
-
-    // A few choices as buttons; the current one is the primary button.
-    const segment = (key: string, label: string, current: string, options: [string, string][], onPick: (value: string) => void) =>
-      row(`seg-${key}`, label, false, (
-        <Box flexDirection="row" gap={1}>
-          {options.map(([value, text]) => (
-            <Button key={`seg-${key}-${value || 'none'}`} label={text} variant={value === current ? 'primary' : 'secondary'} onPress={() => onPick(value)} />
-          ))}
-        </Box>
-      ))
-
-    const choose = (prop: string, label: string, options: string[]) =>
-      row(`sel-row-${prop}`, label, f(prop).changed, (
+    const pair = (key: string, left: unknown, right?: unknown) => (
+      <Box key={`pair-${key}`} flexDirection="row" gap={1}>
+        {left as never}
+        {(right ?? null) as never}
+      </Box>
+    )
+    const choose = (prop: string, prefix: string, options: string[], w = half) => (
+      <Box key={`choose-${prop}`} width={w}>
         <Select
           key={`sel-${prop}`}
+          label={mark(prop) + prefix}
           value={f(prop).value}
           options={(options.includes(f(prop).value) ? options : [f(prop).value, ...options]).map(o => ({ value: o, label: o }))}
-          onSelect={v => cmd({ op: 'set', prop, value: v })}
+          onSelect={v => setValue(prop, v)}
         />
-      ))
-
-    // A color: swatch, hex field, and the project's color tokens behind ◇.
-    const color = (prop: string, label: string, isGroup = false) => {
-      const field = f(prop)
-      const hex = field.value.split(' ')[0] ?? ''
+      </Box>
+    )
+    // Icon-style toggles: the current one is filled.
+    const toggles = (key: string, current: string, options: [string, string][], onPick: (value: string) => void) => (
+      <Box key={`tog-${key}`} flexDirection="row" gap={1}>
+        {options.map(([value, text]) => (
+          <Button key={`tog-${key}-${value || 'none'}`} label={text} variant={value === current ? 'primary' : 'secondary'} onPress={() => onPick(value)} />
+        ))}
+      </Box>
+    )
+    // A fill: swatch, hex, and the project's color tokens behind ◇.
+    const paint = (prop: string, extra?: unknown) => {
+      const hex = f(prop).value.split(' ')[0] ?? ''
       const tokensOpen = open[`tokens-${prop}`] ?? false
-      const set = (value: string) => cmd(isGroup ? { op: 'set-group', group: prop, value } : { op: 'set', prop, value })
       return (
-        <Box key={`color-${prop}`} flexDirection="column">
-          {row(`color-row-${prop}`, label, field.changed, (
-            <Box flexDirection="row" gap={1} alignItems="center">
-              <Text backgroundColor={hex.startsWith('#') ? hex : undefined} color="subtle">{hex.startsWith('#') ? '  ' : '∅ '}</Text>
-              <Input key={`in-${prop}`} value={field.value} onSubmit={set} />
-              {snap.tokens.length > 0 && (
-                <Button key={`tok-btn-${prop}`} label="◇" plain onPress={() => void update($, folds, o => ({ ...o, [`tokens-${prop}`]: !tokensOpen }))} />
-              )}
+        <Box key={`paint-${prop}`} flexDirection="column" gap={1}>
+          <Box flexDirection="row" gap={1} alignItems="center">
+            <Text backgroundColor={hex.startsWith('#') ? hex : undefined} color="subtle">
+              {hex.startsWith('#') ? '   ' : ' ∅ '}
+            </Text>
+            <Box width={half - 4}>
+              <Input key={`in-${prop}`} label={mark(prop)} value={f(prop).value} onSubmit={v => setValue(prop, v)} />
             </Box>
-          ))}
+            {snap.tokens.length > 0 && (
+              <Button key={`tok-btn-${prop}`} label="◇" plain onPress={() => void update($, folds, o => ({ ...o, [`tokens-${prop}`]: !tokensOpen }))} />
+            )}
+            {(extra ?? null) as never}
+          </Box>
           {tokensOpen && (
-            <Box flexDirection="row" flexWrap="wrap" columnGap={2} paddingLeft={LABEL}>
+            <Box flexDirection="row" flexWrap="wrap" columnGap={2} paddingLeft={4}>
               {snap.tokens.map(t => (
-                <Button key={`tok-${prop}-${t.name}`} plain onPress={() => set(`var(${t.name})`)}>
-                  <Text color={t.value}>■</Text> <Text color="subtle">{t.name.replace(/^--/, '')}</Text>
+                <Button key={`tok-${prop}-${t.name}`} plain onPress={() => setValue(prop, `var(${t.name})`)}>
+                  <Text color={t.value}>●</Text> <Text color="subtle">{t.name.replace(/^--/, '')}</Text>
                 </Button>
               ))}
             </Box>
@@ -762,43 +701,55 @@ export const register: Register = on => {
       )
     }
 
-    const width = Math.min(e.props.bodyColumns ?? LABEL + CONTROL + 4, LABEL + CONTROL + 4)
-    const crumbs = (snap.layers ?? []).filter(l => l.depth < (snap.layers ?? []).find(x => x.selected)!.depth || l.selected)
     const changed = snap.changes.length
+    const layersOpen = open.layers ?? false
+    const selectedDepth = (snap.layers ?? []).find(l => l.selected)?.depth ?? 0
+    const crumbs = (snap.layers ?? []).filter(l => l.depth < selectedDepth || l.selected).map(l => l.name.split('.')[1] ?? l.name)
 
     return (
-      <Box flexDirection="column" gap={1} width={width}>
+      <Box flexDirection="column" gap={1} paddingX={1} paddingY={1} width={width + 2}>
         <Box flexDirection="row" justifyContent="space-between" alignItems="center">
           <Text bold>UI Tweaks</Text>
           <Box flexDirection="row" gap={1}>
-            {snap.undoCount > 0 && <Button key="undo" label="Undo" hotkey="z" onPress={() => cmd({ op: 'undo' })} />}
-            <Button key="pick" label={snap.picking ? '⌖ Picking on' : '⌖ Picking off'} hotkey="p" onPress={() => cmd({ op: 'pick', on: !snap.picking })} />
+            {snap.undoCount > 0 && <Button key="undo" label="↶" hotkey="z" onPress={() => cmd({ op: 'undo' })} />}
+            <Button key="pick" label={snap.picking ? '⌖ Pick' : '⌖ Paused'} variant={snap.picking ? 'secondary' : 'primary'} hotkey="p" onPress={() => cmd({ op: 'pick', on: !snap.picking })} />
           </Box>
         </Box>
 
         {sel === null ? (
-          <Text color="subtle">Click an element in your app to tweak it.</Text>
+          <Box flexDirection="column" gap={1}>
+            {rule('rule-empty')}
+            <Text color="subtle">Click an element in your app to edit it.</Text>
+          </Box>
         ) : (
           <Box flexDirection="column" gap={1}>
+            {rule('rule-head')}
             <Box flexDirection="column">
-              <Text bold color="claude">{sel.name}</Text>
+              <Text bold color="claude">
+                {sel.name}
+              </Text>
               <Text color="subtle">
                 {sel.source ?? 'no JSX line'} · {snap.width}px
               </Text>
             </Box>
-
-            {folder('layers', 'Layers', false, () =>
-              (snap.layers ?? []).map((l, i) => (
-                <Button key={`layer-${i}`} plain onPress={() => cmd({ op: 'select', index: i })}>
-                  {'  '.repeat(l.depth)}
-                  <Text color={l.selected ? 'claude' : 'text'}>{l.kind === 'gradient' ? '◐' : l.kind === 'text' ? 'T' : l.kind === 'media' ? '▣' : l.kind === 'fill' ? '■' : '#'} {l.name}</Text>
-                  <Text color="subtle"> {l.text}</Text>
-                  {l.changed ? <Text color="suggestion"> ●</Text> : ''}
-                </Button>
-              )), crumbs.map(c => c.name.split('.')[1] ?? c.name).join(' › '))}
-
-            {segment('state', 'State', snap.editState, [['', 'Default'], ['hover', 'Hover'], ['active', 'Active'], ['focus-visible', 'Focus']], v => cmd({ op: 'state', value: v }))}
-
+            <Button key="layers" plain onPress={() => void update($, folds, o => ({ ...o, layers: !layersOpen }))}>
+              <Text color="subtle">{layersOpen ? '▾ ' : '▸ '}</Text>
+              <Text color="subtle">{crumbs.slice(0, -1).join(' › ')}{crumbs.length > 1 ? ' › ' : ''}</Text>
+              <Text>{crumbs.at(-1) ?? ''}</Text>
+            </Button>
+            {layersOpen && (
+              <Box flexDirection="column" paddingLeft={2}>
+                {(snap.layers ?? []).map((l, i) => (
+                  <Button key={`layer-${i}`} plain onPress={() => cmd({ op: 'select', index: i })}>
+                    {'  '.repeat(l.depth)}
+                    <Text color={l.selected ? 'claude' : 'subtle'}>{l.kind === 'gradient' ? '◐' : l.kind === 'text' ? 'T' : l.kind === 'media' ? '▣' : l.kind === 'fill' ? '■' : '#'} </Text>
+                    <Text color={l.selected ? 'claude' : 'text'}>{l.name}</Text>
+                    {l.changed ? <Text color="suggestion"> •</Text> : ''}
+                  </Button>
+                ))}
+              </Box>
+            )}
+            {toggles('state', snap.editState, [['', 'Default'], ['hover', 'Hover'], ['active', 'Active'], ['focus-visible', 'Focus']], v => cmd({ op: 'state', value: v }))}
             {sel.warnings.map(w => (
               <Text key={`warn-${w}`} color="warning">
                 ⚠ {w}
@@ -806,65 +757,68 @@ export const register: Register = on => {
             ))}
 
             {(sel.isFlex || sel.isGrid) &&
-              folder('layout', sel.isFlex ? 'Auto layout' : 'Grid', true, () => [
-                sel.isFlex ? segment('direction', 'Direction', f('flex-direction').value, [['row', '→ Row'], ['column', '↓ Column']], v => cmd({ op: 'set', prop: 'flex-direction', value: v })) : null,
-                choose('justify-content', 'Justify', ['flex-start', 'center', 'flex-end', 'space-between', 'space-around', 'space-evenly']),
-                choose('align-items', 'Align', ['stretch', 'flex-start', 'center', 'flex-end', 'baseline']),
-                dial('row-gap', 'Row gap'),
-                dial('column-gap', 'Column gap'),
-              ])}
+              section(
+                'layout',
+                title(sel.isFlex ? 'Auto layout' : 'Grid'),
+                sel.isFlex ? toggles('direction', f('flex-direction').value, [['row', '→'], ['column', '↓']], v => setValue('flex-direction', v)) : null,
+                pair('align', choose('justify-content', 'Justify', ['flex-start', 'center', 'flex-end', 'space-between', 'space-around', 'space-evenly']), choose('align-items', 'Align', ['stretch', 'flex-start', 'center', 'flex-end', 'baseline'])),
+                pair('gap', field('column-gap', '↔'), field('row-gap', '↕')),
+              )}
 
-            {folder('size', 'Size', true, () => [dial('width', 'Width'), dial('height', 'Height'), dial('max-width', 'Max width')])}
-
-            {folder('spacing', 'Spacing', true, () => [dial('padding', 'Padding'), dial('margin', 'Margin')])}
+            {section(
+              'frame',
+              title('Layout'),
+              pair('size', field('width', 'W'), field('height', 'H')),
+              pair('max', field('max-width', 'Max W'), field('opacity', 'Opacity')),
+              field('padding', 'Padding', width),
+              field('margin', 'Margin', width),
+            )}
 
             {sel.hasText &&
-              folder('text', 'Text', true, () => [
-                dial('font-size', 'Size'),
-                choose('font-weight', 'Weight', ['300', '400', '500', '600', '700', '800']),
-                dial('line-height', 'Line height'),
-                dial('letter-spacing', 'Letter spacing'),
-                segment('align', 'Align', f('text-align').value, [['left', 'Left'], ['center', 'Center'], ['right', 'Right']], v => cmd({ op: 'set', prop: 'text-align', value: v })),
-                color('color', 'Color'),
-              ])}
+              section(
+                'text',
+                title('Text'),
+                pair('type', field('font-size', 'Size'), choose('font-weight', 'Weight', ['300', '400', '500', '600', '700', '800'])),
+                pair('lines', field('line-height', 'Line'), field('letter-spacing', 'Letter')),
+                toggles('text-align', f('text-align').value, [['left', 'Left'], ['center', 'Center'], ['right', 'Right']], v => setValue('text-align', v)),
+                paint('color'),
+              )}
 
-            {folder('fill', 'Fill', true, () => [
-              sel.hasGradient ? (
-                row('gradient', '◐ Gradient', false, <Button key="solid" label="Replace with solid" onPress={() => cmd({ op: 'solid' })} />)
-              ) : null,
-              color('background-color', sel.hasGradient ? 'Base color' : 'Background'),
-              dial('opacity', 'Opacity'),
-            ])}
+            {section(
+              'fill',
+              title('Fill', sel.hasGradient ? '◐ gradient' : undefined),
+              sel.hasGradient ? <Button key="solid" label="Replace gradient with solid" onPress={() => cmd({ op: 'solid' })} /> : null,
+              paint('background-color'),
+            )}
 
-            {folder('border', 'Border', false, () => [dial('border-radius', 'Radius'), dial('border-width', 'Width'), color('border-color', 'Color', true)], `${f('border-radius').value} radius`)}
+            {section('stroke', title('Stroke & corners'), pair('stroke', field('border-radius', 'Radius'), field('border-width', 'Width')), paint('border-color'))}
 
-            {folder('effects', 'Shadow', false, () =>
-              row('shadow', 'box-shadow', f('box-shadow').changed, (
-                <Input key="in-box-shadow" value={f('box-shadow').value} onSubmit={v => cmd({ op: 'set', prop: 'box-shadow', value: v })} />
-              )))}
+            {section('effects', title('Effects'), field('box-shadow', 'Shadow', width))}
 
-            {folder('apply', 'Apply to', sel.scope === 'viewport' || sel.note !== '', () => [
-              segment('scope', 'Widths', sel.scope, [['all', 'All'], ['viewport', `Only ${snap.width}px`]], v => cmd({ op: 'scope', value: v })),
-              row('note', 'Note', sel.note !== '', <Input key="in-note" placeholder='e.g. "every card like this"' value={sel.note} onSubmit={v => cmd({ op: 'note', value: v })} />),
-            ], sel.scope === 'viewport' ? `only ${snap.width}px` : sel.note ? 'note' : undefined)}
+            {section(
+              'apply',
+              title('Apply to'),
+              toggles('scope', sel.scope, [['all', 'All widths'], ['viewport', `Only ${snap.width}px`]], v => cmd({ op: 'scope', value: v })),
+              <Box key="note" width={width}>
+                <Input key="in-note" label="Note" placeholder='e.g. "every card like this"' value={sel.note} onSubmit={v => cmd({ op: 'note', value: v })} />
+              </Box>,
+            )}
           </Box>
         )}
 
+        {rule('rule-changes')}
         <Box flexDirection="column" gap={1}>
-          {changed > 0 && (
-            <Box flexDirection="column">
-              {snap.changes.map(c => (
-                <Box key={`chg-${c.key}`} flexDirection="row" gap={1}>
-                  <Button key={`rev-${c.key}`} label="↺" plain onPress={() => cmd({ op: 'revert', key: c.key })} />
-                  <Text>
-                    {c.label}
-                    {c.status === 'applying' ? <Text color="suggestion"> · applying…</Text> : ''}
-                    {c.status === 'skipped' ? <Text color="warning"> · skipped: {c.reason ?? ''}</Text> : ''}
-                  </Text>
-                </Box>
-              ))}
+          {title(changed ? `Changes` : 'No changes yet', changed ? String(changed) : undefined)}
+          {snap.changes.map(c => (
+            <Box key={`chg-${c.key}`} flexDirection="row" gap={1}>
+              <Button key={`rev-${c.key}`} label="↺" plain onPress={() => cmd({ op: 'revert', key: c.key })} />
+              <Text>
+                {c.label}
+                {c.status === 'applying' ? <Text color="suggestion"> · applying…</Text> : ''}
+                {c.status === 'skipped' ? <Text color="warning"> · skipped: {c.reason ?? ''}</Text> : ''}
+              </Text>
             </Box>
-          )}
+          ))}
           <Box flexDirection="row" gap={1}>
             <Button key="send" label={changed ? `Send ${changed} to Claude` : 'Send to Claude'} variant="primary" hotkey="s" onPress={() => cmd({ op: 'send' })} />
             {changed > 0 && <Button key="reset" label="Reset" onPress={() => cmd({ op: 'reset' })} />}

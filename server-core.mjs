@@ -176,6 +176,14 @@ export function studioPage(appPath) {
   .toolbar select { height: 26px; min-width: 0; max-width: 170px; padding: 0 6px; border: 1px solid var(--line); border-radius: 5px; background: #2c2c2c; cursor: pointer; flex: 0 1 auto; }
   .sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; flex: none; }
   .zoom { min-width: 44px; text-align: center; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .modes { display: flex; gap: 2px; background: #2c2c2c; border-radius: 6px; padding: 2px; flex: none; }
+  .modes button { height: 22px; }
+  .canvas-tools, .focus-tools { display: flex; align-items: center; gap: 2px; min-width: 0; }
+  .canvas-tools[hidden], .focus-tools[hidden] { display: none; }
+  .focus-name { font-weight: 600; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 4px; }
+  .viewport.focus .dots, .viewport.focus .minimap { display: none; }
+  .viewport.focus .ab-head { display: none; }
+  .ab.hidden { display: none; }
   .note { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); background: #2c2c2c; border: 1px solid var(--line); padding: 7px 12px; border-radius: 7px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10; }
   .note.show { opacity: 1; }
   .body { flex: 1; min-height: 0; display: flex; }
@@ -235,16 +243,28 @@ export function studioPage(appPath) {
     <div class="toolbar">
       <button class="exit" title="Leave the studio">✕</button>
       <button class="reload" title="Reload every artboard">↻</button>
-      <button class="pages-toggle" title="Pages: add an artboard for a route">☰</button>
       <span class="sep"></span>
-      <select class="add" title="Add an artboard"></select>
-      <button class="hand-btn" title="Hand: drag to pan (or hold Space)">✋</button>
+      <span class="modes"><button class="mode-canvas" title="Canvas: every artboard (⇧C)">▦ Canvas</button><button class="mode-focus" title="Focus: one screen alone (⇧F)">▢ Focus</button></span>
       <span class="sep"></span>
-      <button class="zoom-out" title="Zoom out (⌘−)">−</button>
-      <span class="zoom">100%</span>
-      <button class="zoom-in" title="Zoom in (⌘+)">+</button>
-      <button class="zoom-fit" title="Zoom to fit everything (⇧1)">Fit</button>
-      <button class="zoom-100" title="Actual size (⇧0)">1:1</button>
+      <span class="canvas-tools">
+        <button class="pages-toggle" title="Pages: add an artboard for a route">☰</button>
+        <select class="add" title="Add an artboard"></select>
+        <button class="hand-btn" title="Hand: drag to pan (or hold Space)">✋</button>
+        <span class="sep"></span>
+        <button class="zoom-out" title="Zoom out (⌘−)">−</button>
+        <span class="zoom">100%</span>
+        <button class="zoom-in" title="Zoom in (⌘+)">+</button>
+        <button class="zoom-fit" title="Zoom to fit everything (⇧1)">Fit</button>
+        <button class="zoom-100" title="Actual size (⇧0)">1:1</button>
+      </span>
+      <span class="focus-tools" hidden>
+        <button class="prev" title="Previous artboard (←)">‹</button>
+        <span class="focus-name"></span>
+        <button class="next" title="Next artboard (→)">›</button>
+        <select class="focus-device" title="Device"></select>
+        <button class="focus-turn" title="Rotate">⟲</button>
+        <span class="zoom focus-zoom"></span>
+      </span>
       <span class="sep"></span>
       <button class="chrome" title="Status bar, notch or Dynamic Island, home indicator">Chrome</button>
       <button class="grid" title="Column grid">Grid</button>
@@ -307,7 +327,7 @@ export function studioPage(appPath) {
   const $ = (s) => document.querySelector(s);
   const viewport = $(".viewport"), world = $(".world"), minimap = $(".minimap");
   const VIEW_KEY = "ui-tweaks:studio-view";
-  let view = { chrome: true, grid: false, base: false, pages: false, cam: null };
+  let view = { chrome: true, grid: false, base: false, pages: false, cam: null, mode: "canvas", focus: null };
   try { view = { ...view, ...JSON.parse(localStorage.getItem(VIEW_KEY) || "{}") }; } catch {}
   const saveView = () => { try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch {} };
 
@@ -349,6 +369,7 @@ export function studioPage(appPath) {
   // ---------- camera ----------
   let cam = view.cam || { x: 60, y: 80, z: 0.5 };
   function applyCam() {
+    if (isFocus()) return layoutFocus();
     world.style.transform = "translate(" + cam.x + "px," + cam.y + "px) scale(" + cam.z + ")";
     world.style.setProperty("--iz", String(1 / cam.z));
     const dots = $(".dots");
@@ -360,6 +381,41 @@ export function studioPage(appPath) {
     saveView();
     drawMinimap();
   }
+  // Focus: one artboard alone, at actual size (100%) on its device. Centered when it fits; scroll or drag
+  // to see the rest when it doesn't. The canvas camera is kept for when you switch back.
+  let focusPan = { x: 0, y: 0, id: null };
+  function layoutFocus() {
+    const a = canvas.artboards.find((x) => x.id === focusedId());
+    if (!a) return;
+    const [w, h] = size(a);
+    const vw = viewport.clientWidth, vh = viewport.clientHeight, pad = 24;
+    const clamp = (v, size, room) => (size + pad * 2 <= room ? (room - size) / 2 : Math.min(pad, Math.max(room - size - pad, v)));
+    if (focusPan.id !== a.id + ":" + w + "x" + h) focusPan = { x: (vw - w) / 2, y: pad, id: a.id + ":" + w + "x" + h };
+    focusPan.x = clamp(focusPan.x, w, vw);
+    focusPan.y = clamp(focusPan.y, h, vh);
+    world.style.transform = "translate(" + focusPan.x + "px," + focusPan.y + "px) translate(" + -a.x + "px," + -a.y + "px)";
+    world.style.setProperty("--iz", "1");
+    $(".focus-zoom").textContent = w + "×" + h + " · 100%";
+  }
+
+  function setMode(mode, id) {
+    view.mode = mode;
+    if (id) view.focus = id;
+    if (mode === "focus" && !canvas.artboards.some((a) => a.id === view.focus)) view.focus = focusedId();
+    saveView();
+    render();
+    applyCam();
+  }
+  function step(dir) {
+    const list = canvas.artboards;
+    const i = list.findIndex((a) => a.id === focusedId());
+    view.focus = list[(i + dir + list.length) % list.length].id;
+    select(view.focus);
+    saveView();
+    render();
+    applyCam();
+  }
+
   function zoomAt(z, mx, my) {
     z = Math.min(4, Math.max(0.05, z));
     cam = { x: mx - ((mx - cam.x) * z) / cam.z, y: my - ((my - cam.y) * z) / cam.z, z };
@@ -383,6 +439,12 @@ export function studioPage(appPath) {
   // Trackpad: two fingers pan, pinch (or ⌘/Ctrl + scroll) zooms at the pointer.
   function onWheel(e) {
     e.preventDefault();
+    if (isFocus()) {
+      if (e.ctrlKey || e.metaKey) return;
+      focusPan.x -= e.deltaX;
+      focusPan.y -= e.deltaY;
+      return layoutFocus();
+    }
     if (e.ctrlKey || e.metaKey) {
       const r = viewport.getBoundingClientRect();
       zoomAt(cam.z * Math.exp(-e.deltaY * 0.01), e.clientX - r.left, e.clientY - r.top);
@@ -402,11 +464,19 @@ export function studioPage(appPath) {
   viewport.addEventListener("pointerdown", (e) => {
     const onEmpty = e.target === viewport || e.target === world || e.target.classList.contains("shield") || e.target.classList.contains("dots");
     if (!onEmpty) return;
-    if (!hand && !$(".hand-btn").classList.contains("on")) select(null);
-    const start = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y };
+    if (!hand && !$(".hand-btn").classList.contains("on") && !isFocus()) select(null);
+    const start = { x: e.clientX, y: e.clientY, cx: isFocus() ? focusPan.x : cam.x, cy: isFocus() ? focusPan.y : cam.y };
     viewport.setPointerCapture(e.pointerId);
     viewport.classList.add("panning");
-    const move = (ev) => { cam = { ...cam, x: start.cx + ev.clientX - start.x, y: start.cy + ev.clientY - start.y }; applyCam(); };
+    const move = (ev) => {
+      if (isFocus()) {
+        focusPan.x = start.cx + ev.clientX - start.x;
+        focusPan.y = start.cy + ev.clientY - start.y;
+        return layoutFocus();
+      }
+      cam = { ...cam, x: start.cx + ev.clientX - start.x, y: start.cy + ev.clientY - start.y };
+      applyCam();
+    };
     const up = () => { viewport.classList.remove("panning"); viewport.removeEventListener("pointermove", move); viewport.removeEventListener("pointerup", up); };
     viewport.addEventListener("pointermove", move);
     viewport.addEventListener("pointerup", up);
@@ -418,7 +488,11 @@ export function studioPage(appPath) {
     if ((e.metaKey || e.ctrlKey) && e.key === "-") { e.preventDefault(); zoomAt(cam.z / 1.25, ...center()); }
     if (e.shiftKey && e.code === "Digit1") fitTo(canvas.artboards);
     if (e.shiftKey && e.code === "Digit0") zoomAt(1, ...center());
-    if ((e.key === "Backspace" || e.key === "Delete") && selected) removeArtboard(selected);
+    if (e.shiftKey && e.code === "KeyF") setMode("focus");
+    if (e.shiftKey && e.code === "KeyC") setMode("canvas");
+    if (isFocus() && e.key === "ArrowLeft") step(-1);
+    if (isFocus() && e.key === "ArrowRight") step(1);
+    if (!isFocus() && (e.key === "Backspace" || e.key === "Delete") && selected) removeArtboard(selected);
   });
   addEventListener("keyup", (e) => { if (e.code === "Space") setHand(false); });
   // The app's frames forward pinch-zoom and Space to the canvas (the overlay calls these).
@@ -443,6 +517,8 @@ export function studioPage(appPath) {
     const d = BY_ID[a.device] || BY_ID.i16;
     return a.turned ? [d[3], d[2]] : [d[2], d[3]];
   }
+  const isFocus = () => view.mode === "focus";
+  const focusedId = () => (canvas.artboards.some((a) => a.id === view.focus) ? view.focus : (canvas.artboards.find((a) => a.id === selected) || canvas.artboards[0] || {}).id);
   const newId = () => "a" + Math.random().toString(36).slice(2, 8);
 
   function chrome(a) {
@@ -502,6 +578,8 @@ export function studioPage(appPath) {
     });
     edit(".name", "name");
     edit(".url", "url");
+    f.head.querySelector("span:nth-child(3)").title = "Double-click to focus this screen";
+    f.head.querySelector("span:nth-child(3)").addEventListener("dblclick", (e) => { e.stopPropagation(); setMode("focus", a.id); });
     f.head.querySelector(".dev").addEventListener("change", (e) => { a.device = e.target.value; a.turned = false; save(); render(); });
     f.head.querySelector(".turn").addEventListener("click", () => { a.turned = !a.turned; save(); render(); });
     f.head.querySelector(".dup").addEventListener("click", () => duplicate(a));
@@ -542,8 +620,20 @@ export function studioPage(appPath) {
       f.layer.innerHTML = overlays(w) + chrome(a);
       head(a, f);
     });
+    const focus = isFocus(), fid = focusedId();
+    for (const [id, f] of frames) f.el.classList.toggle("hidden", focus && id !== fid);
+    viewport.classList.toggle("focus", focus);
+    $(".mode-canvas").classList.toggle("on", !focus);
+    $(".mode-focus").classList.toggle("on", focus);
+    $(".canvas-tools").hidden = focus;
+    $(".focus-tools").hidden = !focus;
+    if (focus) {
+      const a = canvas.artboards.find((x) => x.id === fid);
+      $(".focus-name").textContent = a ? a.name : "";
+      $(".focus-device").innerHTML = options(a && a.device);
+    }
     for (const [cls, key] of [[".chrome", "chrome"], [".grid", "grid"], [".base", "base"], [".pages-toggle", "pages"]]) $(cls).classList.toggle("on", !!view[key]);
-    $(".pages").hidden = !view.pages;
+    $(".pages").hidden = !view.pages || focus;
     $(".add").innerHTML = '<option value="">+ Artboard</option>' + options("");
     saveView();
     drawMinimap();
@@ -640,6 +730,27 @@ export function studioPage(appPath) {
   }
 
   // ---------- toolbar ----------
+  $(".mode-canvas").addEventListener("click", () => setMode("canvas"));
+  $(".mode-focus").addEventListener("click", () => setMode("focus", selected || view.focus));
+  $(".prev").addEventListener("click", () => step(-1));
+  $(".next").addEventListener("click", () => step(1));
+  $(".focus-device").addEventListener("change", (e) => {
+    const a = canvas.artboards.find((x) => x.id === focusedId());
+    if (!a) return;
+    a.device = e.target.value;
+    a.turned = false;
+    save();
+    render();
+    applyCam();
+  });
+  $(".focus-turn").addEventListener("click", () => {
+    const a = canvas.artboards.find((x) => x.id === focusedId());
+    if (!a) return;
+    a.turned = !a.turned;
+    save();
+    render();
+    applyCam();
+  });
   $(".add").addEventListener("change", (e) => { if (e.target.value) addArtboard({ device: e.target.value, name: BY_ID[e.target.value][1] }); });
   $(".hand-btn").addEventListener("click", (e) => { e.currentTarget.classList.toggle("on"); setHand(hand); });
   $(".zoom-in").addEventListener("click", () => zoomAt(cam.z * 1.25, ...center()));
@@ -694,7 +805,7 @@ export function studioPage(appPath) {
     }
   });
 
-  new ResizeObserver(() => drawMinimap()).observe(viewport);
+  new ResizeObserver(() => { drawMinimap(); if (isFocus()) { render(); applyCam(); } }).observe(viewport);
   (async () => {
     try {
       const data = await fetch("/__ui-tweaks/canvas", { cache: "no-store" }).then((r) => r.json());

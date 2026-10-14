@@ -132,6 +132,8 @@ Nothing to do: the kit writes a `.gitignore` containing `*` inside `.ui-tweaks/`
 
 **Tweak** opens the studio at `/__ui-tweaks/studio`: an infinite canvas of **artboards** on the left, the panel docked on the right. An artboard is not a picture of a screen: it is your running app, framed at one **screen**, **state** and **device**. Change the code and every artboard showing it updates.
 
+**Canvas and Focus.** The toolbar switches between **▦ Canvas** (every artboard, ⇧C) and **▢ Focus** (⇧F): one screen alone, on its device, at actual size (100%). In Focus, **‹ ›** (or ←/→) step through the artboards, the device menu and **⟲** apply to the screen in view, and you scroll or drag to see a device bigger than the space. Double-click an artboard's size label to focus it. Switching back returns the canvas exactly as you left it; the other artboards keep running, so switching is instant.
+
 **Moving around**
 - Two-finger scroll pans; pinch, or ⌘/Ctrl + scroll, zooms at the pointer (also over an artboard).
 - Drag the empty canvas, hold **Space**, or turn on **✋** to pan. **−** / **+**, **Fit** (⇧1) and **1:1** (⇧0) set the zoom; the **minimap** (bottom right) jumps anywhere.

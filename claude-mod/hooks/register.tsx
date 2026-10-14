@@ -34,6 +34,11 @@ type SlotFile = { id: string; files: { path: string; before: string; after: stri
 // tweaks point at are copied before Haiku starts, and any other file just before its first edit.
 const snapshots = new Map<string, string>()
 
+// The project whose tweaks this session handles: the session's folder when a dev server with the kit
+// runs there, else the most recently started dev server that answers (a session started elsewhere).
+let projectRoot: string | null = null
+const inProject = (rel: string) => (projectRoot !== null && !rel.startsWith('/') ? `${projectRoot}/${rel}` : rel)
+
 // Several sessions can have this mod loaded in one project: a lock file lets one apply at a time.
 const LOCK = '.ui-tweaks/lock.json'
 const me = `s${Math.random().toString(36).slice(2, 10)}`
@@ -163,7 +168,7 @@ export function claudePrompt(summary: PendingTweaks): string {
 
 async function readPending($: EngineInterface): Promise<PendingTweaks | null> {
   try {
-    return summarize(await $.fs.read(FILE))
+    return summarize(await $.fs.read(inProject(FILE)))
   } catch {
     return null
   }
@@ -171,7 +176,7 @@ async function readPending($: EngineInterface): Promise<PendingTweaks | null> {
 
 async function readHistory($: EngineInterface): Promise<HistoryEntry[]> {
   try {
-    return (JSON.parse(await $.fs.read(HISTORY)) as { entries?: HistoryEntry[] }).entries ?? []
+    return (JSON.parse(await $.fs.read(inProject(HISTORY))) as { entries?: HistoryEntry[] }).entries ?? []
   } catch {
     return []
   }
@@ -185,7 +190,7 @@ async function syncLastApply($: EngineInterface) {
   let next: LastApply | null = null
   if (last) {
     if (!statsById.has(last.id)) {
-      const saved = JSON.parse(await $.fs.read(last.slot).catch(() => '{"files":[]}')) as SlotFile
+      const saved = JSON.parse(await $.fs.read(inProject(last.slot)).catch(() => '{"files":[]}')) as SlotFile
       statsById.set(last.id, saved.files.map(f => ({ path: f.path, ...lineStats(f.before, f.after) })))
     }
     next = { id: last.id, by: last.by, count: last.count, files: statsById.get(last.id) ?? [] }
@@ -210,11 +215,11 @@ async function appendLog($: EngineInterface, items: LogItem[]) {
   if (items.length === 0) return
   let entries: unknown[] = []
   try {
-    entries = (JSON.parse(await $.fs.read(LOG)) as { entries?: unknown[] }).entries ?? []
+    entries = (JSON.parse(await $.fs.read(inProject(LOG))) as { entries?: unknown[] }).entries ?? []
   } catch {
     // No log yet.
   }
-  await $.fs.write(LOG, JSON.stringify({ entries: [...entries, ...items].slice(-300) }, null, 2) + '\n')
+  await $.fs.write(inProject(LOG), JSON.stringify({ entries: [...entries, ...items].slice(-300) }, null, 2) + '\n')
 }
 
 async function recordApply($: EngineInterface, count: number, files: SlotFile['files']) {
@@ -224,9 +229,9 @@ async function recordApply($: EngineInterface, count: number, files: SlotFile['f
   const slot = `.ui-tweaks/history/slot-${(lastSlot + 1) % SLOTS}.json`
   const at = await $.clock.now()
   const id = `h${at.toString(36)}`
-  await $.fs.write(slot, JSON.stringify({ id, files } satisfies SlotFile))
+  await $.fs.write(inProject(slot), JSON.stringify({ id, files } satisfies SlotFile))
   const next = [...entries.filter(e => e.slot !== slot), { id, at, by: 'haiku' as const, count, slot, files: files.map(f => f.path) }]
-  await $.fs.write(HISTORY, JSON.stringify({ entries: next.slice(-SLOTS) }, null, 2) + '\n')
+  await $.fs.write(inProject(HISTORY), JSON.stringify({ entries: next.slice(-SLOTS) }, null, 2) + '\n')
   await syncLastApply($)
 }
 
@@ -235,7 +240,7 @@ async function undoLastApply($: EngineInterface): Promise<string> {
   const entries = await readHistory($)
   const last = entries.at(-1)
   if (!last) return 'There is no apply to undo.'
-  const saved = JSON.parse(await $.fs.read(last.slot)) as SlotFile
+  const saved = JSON.parse(await $.fs.read(inProject(last.slot))) as SlotFile
   if (saved.id !== last.id) return 'The undo history is out of date; nothing was changed.'
   const changed: string[] = []
   for (const f of saved.files) if ((await $.fs.read(f.path).catch(() => null)) !== f.after) changed.push(f.path)
@@ -243,7 +248,7 @@ async function undoLastApply($: EngineInterface): Promise<string> {
     return `Not undone: ${changed.map(p => p.split('/').at(-1)).join(', ')} changed after the apply. Undo by hand or with Claude.`
   }
   for (const f of saved.files) await $.fs.write(f.path, f.before)
-  await $.fs.write(HISTORY, JSON.stringify({ entries: entries.slice(0, -1) }, null, 2) + '\n')
+  await $.fs.write(inProject(HISTORY), JSON.stringify({ entries: entries.slice(0, -1) }, null, 2) + '\n')
   await syncLastApply($)
 
   if ((await read($, diffView))?.id === last.id) await $.ui.close({ id: DIFF_PANE })
@@ -254,14 +259,15 @@ async function undoLastApply($: EngineInterface): Promise<string> {
 async function openDiff($: EngineInterface) {
   const last = (await readHistory($)).at(-1)
   if (!last) return
-  const saved = JSON.parse(await $.fs.read(last.slot)) as SlotFile
-  const cwd = await $.session.cwd()
+  const saved = JSON.parse(await $.fs.read(inProject(last.slot))) as SlotFile
+  const cwd = projectRoot ?? (await $.session.cwd())
   const rel = (p: string) => (p.startsWith(cwd + '/') ? p.slice(cwd.length + 1) : p)
   await update($, diffView, () => ({ id: last.id, files: saved.files.map(f => ({ path: rel(f.path), diff: unifiedDiff(rel(f.path), f.before, f.after) })) }))
   await $.ui.open({ id: DIFF_PANE, title: 'UI tweaks: last apply' })
 }
 
 async function refresh($: EngineInterface) {
+  await devServer($)
   await syncLastApply($)
   const next = await readPending($)
   const current = await read($, run)
@@ -289,26 +295,26 @@ async function refresh($: EngineInterface) {
 
 async function takeLock($: EngineInterface): Promise<boolean> {
   const now = await $.clock.now()
-  const held = await $.fs.read(LOCK).then(t => JSON.parse(t) as { owner?: string | null; at?: number }).catch(() => ({}) as { owner?: string | null; at?: number })
+  const held = await $.fs.read(inProject(LOCK)).then(t => JSON.parse(t) as { owner?: string | null; at?: number }).catch(() => ({}) as { owner?: string | null; at?: number })
   if (held.owner && held.owner !== me && now - (held.at ?? 0) < STUCK_MS) return false
-  await $.fs.write(LOCK, JSON.stringify({ owner: me, at: now }))
+  await $.fs.write(inProject(LOCK), JSON.stringify({ owner: me, at: now }))
   await $.clock.sleep(300)
   // Another session may have written at the same moment: the last write wins, the other backs off.
-  const after = await $.fs.read(LOCK).then(t => JSON.parse(t) as { owner?: string }).catch(() => ({}) as { owner?: string })
+  const after = await $.fs.read(inProject(LOCK)).then(t => JSON.parse(t) as { owner?: string }).catch(() => ({}) as { owner?: string })
   return after.owner === me
 }
 
 async function releaseLock($: EngineInterface) {
-  const held = await $.fs.read(LOCK).then(t => JSON.parse(t) as { owner?: string }).catch(() => ({}) as { owner?: string })
-  if (held.owner === me) await $.fs.write(LOCK, JSON.stringify({ owner: null, at: 0 }))
+  const held = await $.fs.read(inProject(LOCK)).then(t => JSON.parse(t) as { owner?: string }).catch(() => ({}) as { owner?: string })
+  if (held.owner === me) await $.fs.write(inProject(LOCK), JSON.stringify({ owner: null, at: 0 }))
 }
 
 /** Copies of the files the tweaks point at (their CSS rules and JSX lines), taken before Haiku edits. */
 async function snapshotTargets($: EngineInterface, ids: string[]) {
   snapshots.clear()
-  const cwd = await $.session.cwd()
+  const cwd = projectRoot ?? (await $.session.cwd())
   const abs = (p: string) => (p.startsWith('/') ? p : `${cwd}/${p}`)
-  const batches = (JSON.parse(await $.fs.read(FILE)) as PendingFile).batches ?? []
+  const batches = (JSON.parse(await $.fs.read(inProject(FILE))) as PendingFile).batches ?? []
   const files = new Set<string>()
   for (const b of batches) {
     ;(b.tweaks ?? []).forEach((t, i) => {
@@ -379,7 +385,7 @@ async function finishHaiku($: EngineInterface, answer: string) {
   let tweaks = new Map<string, Tweak>()
   let text = ''
   try {
-    text = await $.fs.read(FILE)
+    text = await $.fs.read(inProject(FILE))
     const batches = (JSON.parse(text) as PendingFile).batches ?? []
     tweaks = new Map(batches.flatMap(b => (b.tweaks ?? []).map((t, i) => [tweakId(b, t, i), t] as const)))
   } catch {
@@ -395,7 +401,7 @@ async function finishHaiku($: EngineInterface, answer: string) {
   }
   await recordApply($, applied.length, files)
   await update($, run, () => null)
-  if (text) await $.fs.write(FILE, settle(text, applied, skipped))
+  if (text) await $.fs.write(inProject(FILE), settle(text, applied, skipped))
 
   const at = await $.clock.now()
   const label = (id: string) => {
@@ -426,14 +432,45 @@ let remoteVersion = -1
 let polling = false
 let wasOpen = false
 
+type ServerEntry = { url?: string; root?: string; at?: number }
+
+async function answers($: EngineInterface, url: string): Promise<boolean> {
+  const res = await $.http.fetch(`${url}/__ui-tweaks/status`).catch(() => null)
+  return res?.ok ?? false
+}
+
+/** Finds the dev server (and so the project): the session's folder first, then the registry in ~/.ui-tweaks/servers. */
 async function devServer($: EngineInterface): Promise<string | null> {
   const now = await $.clock.now()
-  if (serverUrl === null && serverCheckedAt !== 0 && now - serverCheckedAt < 3000) return null
-  if (serverUrl === null) {
-    serverCheckedAt = now
-    serverUrl = await $.fs.read(SERVER).then(t => (JSON.parse(t) as { url?: string }).url ?? null).catch(() => null)
+  if (serverUrl !== null) return serverUrl
+  if (serverCheckedAt !== 0 && now - serverCheckedAt < 3000) return null
+  serverCheckedAt = now
+  const cwd = await $.session.cwd().catch(() => null)
+  const own = await $.fs.read(cwd ? `${cwd}/${SERVER}` : SERVER).then(t => JSON.parse(t) as ServerEntry).catch(() => null)
+  if (own?.url && (await answers($, own.url))) {
+    serverUrl = own.url
+    projectRoot = own.root ?? cwd
+    return serverUrl
   }
-  return serverUrl
+  const home = await $.env.get('HOME').catch(() => undefined)
+  if (!home) return null
+  const dir = `${home}/.ui-tweaks/servers`
+  const entries = await $.fs.list(dir).catch(() => [])
+  const servers: ServerEntry[] = []
+  for (const entry of entries) {
+    if (!entry.name.endsWith('.json')) continue
+    const server = await $.fs.read(`${dir}/${entry.name}`).then(t => JSON.parse(t) as ServerEntry).catch(() => null)
+    if (server?.url && server.root) servers.push(server)
+  }
+  servers.sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
+  for (const server of servers) {
+    if (await answers($, server.url!)) {
+      serverUrl = server.url!
+      projectRoot = server.root!
+      return serverUrl
+    }
+  }
+  return null
 }
 
 export type PaneCommand = Record<string, string | number | boolean> & { op: string }
@@ -466,6 +503,7 @@ async function pollRemote($: EngineInterface) {
     const res = await $.http.fetch(`${url}/__ui-tweaks/remote/state?since=${remoteVersion}`).catch(() => null)
     if (!res?.ok) {
       serverUrl = null // the dev server moved or stopped: look again
+      projectRoot = null
       return
     }
     const body = JSON.parse(res.text) as { version: number; unchanged?: boolean; snapshot?: RemoteSnapshot | null; pages: number }

@@ -1,7 +1,9 @@
 // Shared request handler for the UI Tweaks overlay.
 // Serves the overlay script and stores batches of tweaks in <root>/.ui-tweaks/pending.json,
 // which the Claude Code "ui-tweaks" mod watches.
-import { promises as fs } from "node:fs";
+import { promises as fs, unlinkSync } from "node:fs";
+import { createHash } from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyDirect } from "./direct-apply.mjs";
@@ -116,12 +118,26 @@ function send(res, status, body, type = "application/json") {
   res.end(typeof body === "string" ? body : JSON.stringify(body));
 }
 
-/** Tells the Claude Code mod where this dev server is: <root>/.ui-tweaks/server.json. */
+/**
+ * Tells the Claude Code mod where this dev server is: <root>/.ui-tweaks/server.json, and a registry
+ * entry in ~/.ui-tweaks/servers/ for sessions started in another folder. The entry goes when we exit
+ * cleanly; the mod checks a server answers before using it, so a stale entry is harmless.
+ */
 export async function announceServer(root, url) {
   const dir = tweaksDir(root);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, ".gitignore"), "*\n");
-  await fs.writeFile(path.join(dir, "server.json"), JSON.stringify({ url, pid: process.pid, at: Date.now() }) + "\n");
+  const entry = JSON.stringify({ url, root, pid: process.pid, at: Date.now() }) + "\n";
+  await fs.writeFile(path.join(dir, "server.json"), entry);
+  const registry = path.join(os.homedir(), ".ui-tweaks", "servers");
+  const file = path.join(registry, createHash("sha1").update(root).digest("hex").slice(0, 12) + ".json");
+  await fs.mkdir(registry, { recursive: true });
+  await fs.writeFile(file, entry);
+  process.once("exit", () => {
+    try {
+      unlinkSync(file);
+    } catch {}
+  });
 }
 
 /**

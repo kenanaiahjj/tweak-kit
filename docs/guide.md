@@ -140,7 +140,7 @@ With a session open in the project, **Tweak** opens the **UI Tweaks pane** in Cl
 
 Closing the pane hands the page back its own panel.
 
-How it connects: the dev server writes its address to `.ui-tweaks/server.json`. The pane reads what the page reports through the dev server and sends its commands back the same way (the page listens over server-sent events). A ● next to a field means you changed it.
+How it connects: the dev server writes its address to `.ui-tweaks/server.json`, and registers itself in `~/.ui-tweaks/servers/`, so a Claude Code session started in another folder still finds it (the most recently started dev server that answers). The pane reads what the page reports through the dev server and sends its commands back the same way (the page listens over server-sent events). A ● next to a field means you changed it.
 
 ### The in-page panel
 
@@ -286,7 +286,7 @@ Then remove the `uiTweaks` lines from `vite.config.ts`, or the script tag from y
 
 **A tweak was skipped.** The band and `.ui-tweaks/log.json` say why. Fix the cause (e.g. edit the gradient layers instead of a hidden background color), or press **Send to Claude** in the band.
 
-**The pane says "Open your app in the browser".** The page with the overlay isn't open, or the dev server restarted on another port; reload the page. The pane finds the dev server through `.ui-tweaks/server.json`, so the session must be in the project folder.
+**The pane says "Open your app in the browser".** The page with the overlay isn't open, or the dev server restarted on another port; reload the page. The pane finds the dev server through `.ui-tweaks/server.json` in the session's folder, else through `~/.ui-tweaks/servers/`; restart the dev server after updating the kit so it registers.
 
 **Tweak opened the panel on the page instead of the pane.** No Claude Code session with the mod was watching this dev server (the page waits about 2.5 s for the pane). Check the session is in the project folder, or run `/tweak`.
 

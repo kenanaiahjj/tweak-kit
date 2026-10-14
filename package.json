@@ -11,7 +11,8 @@
     "./overlay.js": "./overlay.js"
   },
   "bin": { "ui-tweaks-serve": "./serve.mjs" },
-  "files": ["overlay.js", "server-core.mjs", "serve.mjs", "vite-plugin.mjs", "vite-plugin.d.mts"],
+  "files": ["overlay.js", "server-core.mjs", "direct-apply.mjs", "serve.mjs", "vite-plugin.mjs", "vite-plugin.d.mts"],
+  "scripts": { "test": "node --test test/*.test.mjs" },
   "peerDependencies": { "vite": ">=5" },
   "peerDependenciesMeta": { "vite": { "optional": true } }
 }

@@ -2,9 +2,15 @@
 
 Figma-style visual tweaks in the browser, applied to the real source by Claude Code.
 
-1. A dev-only overlay (`overlay.js`) adds a **Tweak** button to your page (Alt+T). Click an element and adjust its spacing, size, auto layout, type, color, radius, border, opacity or shadow. Drag a field's label to scrub its value (Shift for ×10). Double-click text to edit the copy. Changes preview live.
-2. **Send to Claude** writes the batch to `<project>/.ui-tweaks/pending.json`. That folder ignores itself in git. Each tweak records the element's JSX source line (React dev builds), the CSS rules that set each property (file, selector, media query), the before and after values, and the viewport width.
-3. The Claude Code mod (`claude-mod/`) shows a band above the prompt: "UI tweaks: N changes … [Apply with Haiku] [Send to Claude]". **Apply with Haiku** (or `/apply-tweaks`) runs a small Haiku subagent that edits the CSS, Tailwind classes or JSX. It skips anything ambiguous and says why; **Send to Claude** (or `/apply-tweaks claude`) hands those to the main model. Applied tweaks leave the queue, and the overlay drops their previews.
+1. A dev-only overlay (`overlay.js`) adds a **Tweak** button to your page (Alt+T). Click an element, or pick it in the layers list, and adjust its spacing, size, auto layout, type, color, gradient fill, radius, border, opacity or shadow. Drag a field's label to scrub its value (Shift for ×10), double-click text to edit the copy, and ↶ / ⌘Z undoes. Changes preview live.
+   - **States:** switch to Hover, Active or Focus to edit that state. The page shows it while the element is selected.
+   - **Screen width:** "Only at N px" makes a tweak apply around that width only, as a media query.
+   - **Design tokens:** ◇ next to a color field lists the `:root` color variables, and number fields suggest length variables.
+   - **Warnings:** the panel tells you when a value can't show, e.g. width on an inline element or a color under a gradient.
+2. **Send to Claude** applies the tweaks:
+   - **Directly, with no model,** when it's simple: one value on a CSS rule only this element uses (one selector, one match on the page, its classes used once in the source), or a copy change on the element's JSX line. This is instant, and shorthands like `padding` are rewritten in place.
+   - **The rest goes to Haiku,** which the Claude Code mod (`claude-mod/`) starts in the background. Haiku's report isn't trusted: each tweak it says it applied is checked against the files it edited, and anything it skipped or that fails the check stays queued with a reason. **Send to Claude** in the band (or `/apply-tweaks claude`) hands those to the main model.
+3. Every apply can be undone, whether from **Undo apply** in the panel, **Undo** in the band, or `/apply-tweaks undo`. Each changed file is restored unless it has changed since. The band shows the files with +/− line counts and a **Diff** view. `.ui-tweaks/log.json` records what happened to each tweak and why.
 
 ## Install
 

@@ -16,6 +16,7 @@
   const state = {
     isOpen: false,
     isPicking: true,
+    editState: "", // "", "hover", "active" or "focus-visible": which state edits apply to
     selected: null, // Element
     hovered: null,
     tweaks: new Map(), // key -> tweak
@@ -249,10 +250,15 @@
     }
   }
 
-  function matchedRules(el, prop) {
+  const FORCE = (st) => `[data-ui-tweak-force~="${st}"]`;
+  const STATE_SHEET_ID = "ui-tweaks-states";
+
+  // With `st` ("hover", ...), rules for that state come first, then the element's base rules.
+  function matchedRules(el, prop, st = "") {
     const names = [prop, ...(SHORTHANDS[prop] || [])];
     const found = [];
     for (const sheet of document.styleSheets) {
+      if (sheet.ownerNode && sheet.ownerNode.id === STATE_SHEET_ID) continue;
       let rules;
       try {
         rules = sheet.cssRules;
@@ -263,9 +269,12 @@
       collectRules(rules, sheet, [], all);
       all.forEach(({ rule, conditions }, order) => {
         let matchingPart = null;
+        let isState = false;
         for (const part of rule.selectorText.split(",")) {
           try {
-            if (el.matches(part.trim())) {
+            const forState = st && part.includes(`:${st}`);
+            if (el.matches(forState ? part.trim().split(`:${st}`).join(FORCE(st)) : part.trim())) {
+              if (forState) isState = true;
               if (!matchingPart || selectorSpecificity(part) > selectorSpecificity(matchingPart)) matchingPart = part.trim();
             }
           } catch {}
@@ -276,8 +285,15 @@
         for (const name of names) {
           const value = rule.style.getPropertyValue(name);
           if (value) {
+            let matches;
+            try {
+              matches = document.querySelectorAll(rule.selectorText).length;
+            } catch {}
             found.push({
               selector: rule.selectorText.length > 200 ? matchingPart : rule.selectorText,
+              matches,
+              forState: isState || undefined,
+              important: !!rule.style.getPropertyPriority(name),
               property: name,
               value: value.trim() + (rule.style.getPropertyPriority(name) ? " !important" : ""),
               file: sheetSource(sheet),
@@ -290,8 +306,9 @@
         }
       });
     }
-    found.sort((a, b) => b.specificity - a.specificity || b.order - a.order);
-    return found.slice(0, 3).map(({ specificity, order, ...rest }) => rest);
+    // The cascade: state rules (when asked), then !important, then specificity, then order.
+    found.sort((a, b) => !!b.forState - !!a.forState || b.important - a.important || b.specificity - a.specificity || b.order - a.order);
+    return found.slice(0, 3).map(({ specificity, order, important, ...rest }) => rest);
   }
 
   function describe(el) {
@@ -348,11 +365,12 @@
       if (tweak.batchId) withdraw(tweak.batchId);
       if (prop) {
         if (before) {
-          el.style.setProperty(prop, before.to, "important");
           tweak.changes[prop] = before;
+          applyChange(el, prop, before);
         } else {
-          restoreProp(el, prop, tweak.changes[prop]);
+          const gone = tweak.changes[prop];
           delete tweak.changes[prop];
+          clearChange(el, prop, gone);
         }
       } else {
         el.textContent = prevText;
@@ -364,24 +382,104 @@
     render();
   }
 
+  // A change is keyed by its property, plus ":state" while editing a hover/active/focus state.
+  const changeKey = (prop) => (state.editState ? `${prop}:${state.editState}` : prop);
+  const changeProp = (key, change) => (change && change.prop) || key;
+
+  function applyChange(el, key, change) {
+    if (change.state) return updateStateSheet();
+    const prop = changeProp(key, change);
+    if (el.style.getPropertyValue(prop) !== change.to || el.style.getPropertyPriority(prop) !== "important") el.style.setProperty(prop, change.to, "important");
+  }
+
+  function clearChange(el, key, change) {
+    if (change && change.state) return updateStateSheet();
+    restoreProp(el, changeProp(key, change), change);
+  }
+
+  // State previews: our state changes as real :hover/:active rules, plus copies of the page's own
+  // state rules keyed to a force attribute, so the selected element can show a state while you edit it.
+  let stateSheetText = "";
+  function updateStateSheet() {
+    const lines = [];
+    const st = state.editState;
+    if (st && state.selected) {
+      for (const sheet of document.styleSheets) {
+        if (sheet.ownerNode && sheet.ownerNode.id === STATE_SHEET_ID) continue;
+        let rules;
+        try {
+          rules = sheet.cssRules;
+        } catch {
+          continue;
+        }
+        const all = [];
+        collectRules(rules, sheet, [], all);
+        for (const { rule } of all) {
+          if (!rule.selectorText.includes(`:${st}`)) continue;
+          const parts = rule.selectorText.split(",").filter((p) => p.includes(`:${st}`)).map((p) => p.trim().split(`:${st}`).join(FORCE(st)));
+          try {
+            if (!parts.some((p) => state.selected.matches(p))) continue;
+          } catch {
+            continue;
+          }
+          lines.push(`${parts.join(", ")} { ${rule.style.cssText} }`);
+        }
+      }
+    }
+    for (const t of state.tweaks.values()) {
+      const byState = {};
+      for (const [key, c] of Object.entries(t.changes)) if (c.state && c.to !== undefined) (byState[c.state] ||= []).push(`${c.prop}: ${c.to} !important;`);
+      if (!Object.keys(byState).length) continue;
+      if (t.el.dataset.uiTweak !== t.key) t.el.dataset.uiTweak = t.key;
+      for (const [s, decls] of Object.entries(byState)) {
+        const sel = `[data-ui-tweak="${t.key}"]`;
+        lines.push(`${sel}:${s}, ${sel}${FORCE(s)} { ${decls.join(" ")} }`);
+      }
+    }
+    const text = lines.join("\n");
+    if (text === stateSheetText) return;
+    stateSheetText = text;
+    let tag = document.getElementById(STATE_SHEET_ID);
+    if (!tag) {
+      tag = document.createElement("style");
+      tag.id = STATE_SHEET_ID;
+      document.head.appendChild(tag);
+    }
+    tag.textContent = text;
+  }
+
+  function setEditState(st) {
+    if (state.selected) {
+      if (st) state.selected.setAttribute("data-ui-tweak-force", st);
+      else state.selected.removeAttribute("data-ui-tweak-force");
+    }
+    state.editState = st;
+    updateStateSheet();
+    render();
+  }
+
   function setStyle(el, prop, value, quiet = false) {
-    if (value === (state.tweaks.get(keyOf(el))?.changes[prop]?.to ?? computed(el, prop))) return; // nothing changes
+    const key = changeKey(prop);
+    if (value === (state.tweaks.get(keyOf(el))?.changes[key]?.to ?? computed(el, prop))) return; // nothing changes
     const tweak = tweakFor(el);
-    recordUndo({ el, key: tweak.key, prop, before: tweak.changes[prop] ? { ...tweak.changes[prop] } : null });
+    recordUndo({ el, key: tweak.key, prop: key, before: tweak.changes[key] ? { ...tweak.changes[key] } : null });
     if (tweak.batchId) withdraw(tweak.batchId); // edited again after sending: take it back, it's a draft once more
-    if (!(prop in tweak.changes)) {
-      tweak.changes[prop] = {
+    if (!(key in tweak.changes)) {
+      tweak.changes[key] = {
+        prop,
+        state: state.editState || undefined,
         from: computed(el, prop),
-        authoredIn: matchedRules(el, prop),
-        inlineBefore: el.style.getPropertyValue(prop) || undefined,
+        authoredIn: matchedRules(el, prop, state.editState),
+        inlineBefore: state.editState ? undefined : el.style.getPropertyValue(prop) || undefined,
       };
     }
-    if (value === "" || value === tweak.changes[prop].from) {
-      restoreProp(el, prop, tweak.changes[prop]);
-      delete tweak.changes[prop];
+    const change = tweak.changes[key];
+    if (value === "" || value === change.from) {
+      delete tweak.changes[key];
+      clearChange(el, key, change);
     } else {
-      el.style.setProperty(prop, value, "important");
-      tweak.changes[prop].to = value;
+      change.to = value;
+      applyChange(el, key, change);
     }
     cleanup(tweak);
     persist();
@@ -399,17 +497,14 @@
   }
 
   function revertTweak(tweak) {
-    for (const [prop, change] of Object.entries(tweak.changes)) restoreProp(tweak.el, prop, change);
-    if (tweak.text) tweak.el.textContent = tweak.text.from;
+    const changes = Object.entries(tweak.changes);
     state.tweaks.delete(tweak.key);
+    for (const [key, change] of changes) clearChange(tweak.el, key, change);
+    if (tweak.text) tweak.el.textContent = tweak.text.from;
   }
 
   function reapply(tweak) {
-    for (const [prop, change] of Object.entries(tweak.changes)) {
-      if (change.to !== undefined && tweak.el.style.getPropertyValue(prop) !== change.to) {
-        tweak.el.style.setProperty(prop, change.to, "important");
-      }
-    }
+    for (const [key, change] of Object.entries(tweak.changes)) if (change.to !== undefined) applyChange(tweak.el, key, change);
   }
 
   // React may remount nodes; find them again by selector and re-apply the preview.
@@ -433,6 +528,7 @@
         changes: t.changes,
         text: t.text,
         note: t.note,
+        scope: t.scope,
         batchId: t.batchId,
         sentId: t.sentId,
         skipped: t.skipped,
@@ -454,7 +550,7 @@
           const el = document.querySelector(d.selector);
           if (!el) return true;
           const tweak = tweakFor(el);
-          Object.assign(tweak, { changes: d.changes, text: d.text, note: d.note, batchId: d.batchId, sentId: d.sentId, skipped: d.skipped });
+          Object.assign(tweak, { changes: d.changes, text: d.text, note: d.note, scope: d.scope, batchId: d.batchId, sentId: d.sentId, skipped: d.skipped });
           reapply(tweak);
           if (d.text && d.text.to !== undefined) el.textContent = d.text.to;
           return false;
@@ -552,6 +648,12 @@
     .change .what { flex: 1; min-width: 0; cursor: pointer; }
     .change .what b { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .change .what span { color: var(--dim); display: block; line-height: 1.4; word-break: break-word; }
+    .warn { margin: 0; padding: 8px 12px; background: #3a2a10; color: #ffc46b; font-size: 10.5px; line-height: 1.45; white-space: pre-line; border-bottom: 1px solid var(--line); }
+    .token-toggle { height: 22px; padding: 0 6px; color: var(--dim); }
+    .token-list { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; max-height: 120px; overflow-y: auto; }
+    .token { display: flex; align-items: center; gap: 4px; background: var(--bg2); border: 0; border-radius: 4px; color: var(--text); font-size: 10px; padding: 3px 6px; cursor: pointer; }
+    .token:hover { background: #3a3a3a; }
+    .token i { width: 10px; height: 10px; border-radius: 2px; border: 1px solid rgba(255,255,255,.2); }
     .pill.warn { background: #5a3a12; color: #ffc46b; }
     .pill { font-size: 9.5px; padding: 1px 5px; border-radius: 3px; background: #3d2f66; color: #c7b8ff; margin-left: 4px; font-weight: 600; }
     .foot { display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--line); }
@@ -641,7 +743,7 @@
     const wrap = document.createElement("div");
     wrap.className = "field";
     const tweak = state.tweaks.get(keyOf(el));
-    if (tweak && tweak.changes[prop]) wrap.classList.add("changed");
+    if (tweak && tweak.changes[changeKey(prop)]) wrap.classList.add("changed");
     const lab = document.createElement("label");
     lab.textContent = label;
     lab.title = prop;
@@ -697,14 +799,97 @@
     });
     input.title = `${prop}: ${raw}`;
     wrap.append(lab, input);
+    const lengths = designTokens().lengths;
+    if (lengths.length && PX_PROPS.has(prop)) {
+      // Design tokens as suggestions: pick one to use the variable instead of a raw number.
+      const list = document.createElement("datalist");
+      list.id = `uit-len-${prop}`;
+      for (const t of lengths) {
+        const o = document.createElement("option");
+        o.value = `var(${t.name})`;
+        o.label = t.value;
+        list.append(o);
+      }
+      input.setAttribute("list", list.id);
+      input.addEventListener("input", (e) => {
+        if (!e.inputType || e.inputType === "insertReplacementText") commit(input.value);
+      });
+      wrap.append(list);
+    }
     return wrap;
+  }
+
+  // CSS variables declared on :root / html, split into colors and lengths.
+  let tokenCache = null, tokenCacheKey = "";
+  function designTokens() {
+    const cacheKey = [...document.styleSheets].map((s) => (s.ownerNode && s.ownerNode.dataset && s.ownerNode.dataset.viteDevId) || s.href || "").join("|") + document.styleSheets.length;
+    if (tokenCache && cacheKey === tokenCacheKey) return tokenCache;
+    const names = new Set();
+    for (const sheet of document.styleSheets) {
+      if (sheet.ownerNode && sheet.ownerNode.id === STATE_SHEET_ID) continue;
+      let rules;
+      try {
+        rules = sheet.cssRules;
+      } catch {
+        continue;
+      }
+      const all = [];
+      collectRules(rules, sheet, [], all);
+      for (const { rule } of all) {
+        if (!rule.selectorText.split(",").some((p) => /^(:root|html)$/.test(p.trim()))) continue;
+        for (let i = 0; i < rule.style.length; i++) if (rule.style[i].startsWith("--")) names.add(rule.style[i]);
+      }
+    }
+    const root = getComputedStyle(document.documentElement);
+    const colors = [], lengths = [];
+    for (const name of names) {
+      const value = root.getPropertyValue(name).trim();
+      if (!value) continue;
+      if (/^-?[\d.]+(px|rem|em)$/.test(value)) lengths.push({ name, value });
+      else if (!/^(inherit|initial|unset|currentcolor|none)$/i.test(value) && CSS.supports("color", value)) colors.push({ name, value });
+    }
+    tokenCache = { colors: colors.slice(0, 80), lengths: lengths.slice(0, 80) };
+    tokenCacheKey = cacheKey;
+    return tokenCache;
+  }
+
+  // Changes that cannot show, with why: the panel warns as you edit, and Claude gets them too.
+  function opaqueGradient(image) {
+    const layers = splitTopLevel(image).filter((l) => /gradient\(/.test(l));
+    const last = layers[layers.length - 1];
+    const colors = (last && last.match(COLOR_TOKEN)) || [];
+    return colors.length > 0 && colors.every((c) => rgbaOf(c).a >= 0.99);
+  }
+
+  function hiddenReasons(t) {
+    const out = [];
+    const cs = getComputedStyle(t.el);
+    const parentDisplay = t.el.parentElement ? getComputedStyle(t.el.parentElement).display : "";
+    for (const [key, c] of Object.entries(t.changes)) {
+      if (c.state) continue;
+      const p = changeProp(key, c);
+      let text = null;
+      if (cs.display === "inline" && /^(width|height|min-width|max-width|min-height|max-height|margin-top|margin-bottom)$/.test(p)) {
+        text = `${p} has no effect on an inline element (display: inline)`;
+      } else if (/^(row-gap|column-gap|gap|justify-content|align-items|flex-direction)$/.test(p) && !/flex|grid/.test(cs.display)) {
+        text = `${p} has no effect: this element is not a flex or grid container`;
+      } else if (/^(top|right|bottom|left)$/.test(p) && cs.position === "static") {
+        text = `${p} has no effect while position is static`;
+      } else if (p === "z-index" && cs.position === "static" && !/flex|grid/.test(parentDisplay)) {
+        text = "z-index has no effect while position is static";
+      } else if (p === "background-color" && opaqueGradient(cs.backgroundImage)) {
+        text = "background-color is hidden under the gradient fill; edit the gradient layers instead";
+      }
+      if (text) out.push({ prop: p, text });
+    }
+    return out;
   }
 
   function colorField(el, prop) {
     const wrap = document.createElement("div");
     wrap.className = "field";
     const tweak = state.tweaks.get(keyOf(el));
-    if (tweak && tweak.changes[prop]) wrap.classList.add("changed");
+    if (tweak && tweak.changes[changeKey(prop)]) wrap.classList.add("changed");
     const value = computed(el, prop);
     const sw = document.createElement("span");
     sw.className = "swatch";
@@ -736,14 +921,40 @@
     });
     sw.append(fill, picker);
     wrap.append(sw, text);
-    return wrap;
+    const colors = designTokens().colors;
+    if (!colors.length) return wrap;
+    const box = document.createElement("div");
+    const toggle = document.createElement("button");
+    toggle.className = "icon token-toggle";
+    toggle.textContent = "◇";
+    toggle.title = "Use a color token";
+    const list = document.createElement("div");
+    list.className = "token-list hidden";
+    for (const t of colors) {
+      const b = document.createElement("button");
+      b.className = "token";
+      b.title = `var(${t.name}) · ${t.value}`;
+      const chip = document.createElement("i");
+      chip.style.background = t.value;
+      const name = document.createElement("span");
+      name.textContent = t.name.replace(/^--/, "");
+      b.append(chip, name);
+      b.addEventListener("click", () => setStyle(el, prop, `var(${t.name})`));
+      list.append(b);
+    }
+    toggle.addEventListener("click", () => list.classList.toggle("hidden"));
+    const current = state.tweaks.get(keyOf(el))?.changes[changeKey(prop)]?.to;
+    if (current && current.startsWith("var(")) text.value = current;
+    wrap.append(toggle);
+    box.append(wrap, list);
+    return box;
   }
 
   function selectField(el, prop, label, options) {
     const wrap = document.createElement("div");
     wrap.className = "field";
     const tweak = state.tweaks.get(keyOf(el));
-    if (tweak && tweak.changes[prop]) wrap.classList.add("changed");
+    if (tweak && tweak.changes[changeKey(prop)]) wrap.classList.add("changed");
     const lab = document.createElement("label");
     lab.textContent = label;
     lab.title = prop;
@@ -1078,7 +1289,28 @@
         crumbs.append(b);
       });
       head.append(name, meta, crumbs, layersTree(el));
+      const states = document.createElement("div");
+      states.className = "seg";
+      states.style.marginTop = "8px";
+      for (const [st, label] of [["", "Default"], ["hover", "Hover"], ["active", "Active"], ["focus-visible", "Focus"]]) {
+        const b = document.createElement("button");
+        b.textContent = label;
+        b.title = st ? `Edit the :${st} state (shown on the page while selected)` : "Edit the resting look";
+        if (state.editState === st) b.classList.add("on");
+        b.addEventListener("click", () => setEditState(st));
+        states.append(b);
+      }
+      head.append(states);
       scroll.append(head);
+
+      const current = state.tweaks.get(keyOf(el));
+      const warnings = current && el.isConnected ? hiddenReasons(current) : [];
+      if (warnings.length) {
+        const warn = document.createElement("div");
+        warn.className = "warn";
+        warn.textContent = warnings.map((w) => "⚠ " + w.text).join("\n");
+        scroll.append(warn);
+      }
 
       const isFlex = cs.display.includes("flex");
       const isGrid = cs.display.includes("grid");
@@ -1152,7 +1384,26 @@
         renderChanges();
       });
       note.addEventListener("keydown", (e) => e.stopPropagation());
-      scroll.append(section("Note", note));
+      const scope = document.createElement("div");
+      scope.className = "seg";
+      scope.style.marginBottom = "6px";
+      const isNarrow = !!(tweak && tweak.scope && tweak.scope.kind === "viewport");
+      for (const [kind, label] of [["all", "All screen widths"], ["viewport", `Only at ${innerWidth}px`]]) {
+        const b = document.createElement("button");
+        b.textContent = label;
+        b.title = kind === "all" ? "Change it everywhere" : "Change it only around this screen width (Claude adds a media query)";
+        if ((kind === "viewport") === isNarrow) b.classList.add("on");
+        b.addEventListener("click", () => {
+          const t = tweakFor(el);
+          if (t.batchId) withdraw(t.batchId);
+          t.scope = kind === "viewport" ? { kind, width: innerWidth } : undefined;
+          cleanup(t);
+          persist();
+          render();
+        });
+        scope.append(b);
+      }
+      scroll.append(section("Apply to", scope, note));
     }
 
     const changes = document.createElement("div");
@@ -1165,7 +1416,8 @@
   }
 
   function summarize(tweak) {
-    const parts = Object.entries(tweak.changes).map(([p, c]) => `${p} ${short(c.from)} → ${short(c.to)}`);
+    const parts = Object.entries(tweak.changes).map(([k, c]) => `${c.state ? ":" + c.state + " " : ""}${changeProp(k, c)} ${short(c.from)} → ${short(c.to)}`);
+    if (tweak.scope && tweak.scope.kind === "viewport") parts.push(`only at ${tweak.scope.width}px wide`);
     if (tweak.text) parts.push(`text → "${tweak.text.to.slice(0, 30)}"`);
     if (tweak.note) parts.push(`note: ${tweak.note.slice(0, 40)}`);
     return parts;
@@ -1226,20 +1478,20 @@
       const what = document.createElement("div");
       what.className = "what";
       const b = document.createElement("b");
-      b.textContent = `Haiku applied ${state.lastApply.count} tweak${state.lastApply.count === 1 ? "" : "s"}`;
+      b.textContent = `${state.lastApply.by === "direct" ? "Applied" : "Haiku applied"} ${state.lastApply.count} tweak${state.lastApply.count === 1 ? "" : "s"}`;
       const s = document.createElement("span");
       s.textContent = state.lastApply.files.join(", ");
       what.append(b, s);
       const undoApply = document.createElement("button");
       undoApply.className = "btn ghost";
       undoApply.textContent = "Undo apply";
-      undoApply.title = "Put those files back as they were before Haiku edited them";
+      undoApply.title = "Put those files back as they were before this apply";
       undoApply.addEventListener("click", async () => {
         undoApply.disabled = true;
         try {
           const res = await fetch(API + "/undo", { method: "POST" });
           const body = await res.json();
-          toast(res.ok ? `Undid Haiku's apply: ${body.files.join(", ")} restored` : `Not undone: ${body.error}`);
+          toast(res.ok ? `Undid the apply: ${body.files.join(", ")} restored` : `Not undone: ${body.error}`);
           if (res.ok) state.lastApply = null;
         } catch (error) {
           toast("Couldn't reach the tweaks server (" + error.message + ")");
@@ -1299,7 +1551,9 @@
       note: state.note || undefined,
       tweaks: list.map((t) => ({
         element: t.element,
-        changes: Object.fromEntries(Object.entries(t.changes).map(([p, c]) => [p, { from: c.from, to: c.to, authoredIn: c.authoredIn, inlineBefore: c.inlineBefore }])),
+        changes: Object.fromEntries(Object.entries(t.changes).map(([k, c]) => [k, { prop: changeProp(k, c), state: c.state, from: c.from, to: c.to, authoredIn: c.authoredIn, inlineBefore: c.inlineBefore }])),
+        scope: t.scope && t.scope.kind === "viewport" ? t.scope : undefined,
+        warnings: t.el.isConnected ? hiddenReasons(t).map((w) => w.text) : undefined,
         text: t.text || undefined,
         note: t.note || undefined,
       })),
@@ -1319,7 +1573,12 @@
       state.note = "";
       persist();
       render();
-      toast("Sent. Haiku is applying it to the source…");
+      const direct = (body.direct || []).length, queued = (body.queued || []).length;
+      toast(
+        queued === 0 ? `Applied ${direct} directly ✓`
+        : direct === 0 ? "Sent. Haiku is applying it to the source…"
+        : `Applied ${direct} directly · Haiku is doing the other ${queued}…`,
+      );
     } catch (error) {
       toast("Couldn't reach the tweaks server. Use Copy instead. (" + error.message + ")");
     }
@@ -1362,8 +1621,8 @@
           }
           continue;
         }
-        for (const [prop, change] of Object.entries(t.changes)) restoreProp(t.el, prop, change);
         state.tweaks.delete(t.key);
+        for (const [key, change] of Object.entries(t.changes)) clearChange(t.el, key, change);
         state.undo = state.undo.filter((u) => u.key !== t.key);
         applied++;
       }
@@ -1397,7 +1656,10 @@
   }
 
   function select(el) {
+    if (state.selected && state.selected !== el) state.selected.removeAttribute("data-ui-tweak-force");
     state.selected = el;
+    if (el && state.editState) el.setAttribute("data-ui-tweak-force", state.editState);
+    updateStateSheet();
     state.expanded = {};
     render();
   }

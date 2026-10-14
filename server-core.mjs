@@ -4,6 +4,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { applyDirect } from "./direct-apply.mjs";
 
 const KIT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const OVERLAY_PATH = path.join(KIT_DIR, "overlay.js");
@@ -45,11 +46,40 @@ async function readHistory(root) {
   }
 }
 
+const SLOTS = 10;
+
+/** Records an apply for undo, in the same format the Claude Code mod writes. */
+export async function recordHistory(root, { by, count, files }) {
+  if (!files.length) return null;
+  const dir = tweaksDir(root);
+  const entries = await readHistory(root);
+  const lastSlot = Number((/(\d+)\.json$/.exec(entries.length ? entries[entries.length - 1].slot : "") || [])[1] ?? -1);
+  const slot = `.ui-tweaks/history/slot-${(lastSlot + 1) % SLOTS}.json`;
+  const at = Date.now();
+  const id = `h${at.toString(36)}`;
+  await fs.mkdir(path.join(dir, "history"), { recursive: true });
+  await fs.writeFile(path.resolve(root, slot), JSON.stringify({ id, files }));
+  const next = [...entries.filter((e) => e.slot !== slot), { id, at, by, count, slot, files: files.map((f) => f.path) }].slice(-SLOTS);
+  await fs.writeFile(path.join(dir, "history.json"), JSON.stringify({ entries: next }, null, 2) + "\n");
+  return id;
+}
+
+/** Appends outcomes to .ui-tweaks/log.json (newest last, last 300 kept). */
+export async function appendLog(root, items) {
+  if (!items.length) return;
+  const file = path.join(tweaksDir(root), "log.json");
+  let log = [];
+  try {
+    log = JSON.parse(await fs.readFile(file, "utf8")).entries || [];
+  } catch {}
+  await fs.writeFile(file, JSON.stringify({ entries: [...log, ...items].slice(-300) }, null, 2) + "\n");
+}
+
 /** Restores the files of the newest apply, unless one changed since; same rules as the mod's undo. */
 async function undoLastApply(root) {
   const entries = await readHistory(root);
   const last = entries[entries.length - 1];
-  if (!last) return { status: 404, body: { error: "There is no Haiku apply to undo." } };
+  if (!last) return { status: 404, body: { error: "There is no apply to undo." } };
   const saved = JSON.parse(await fs.readFile(path.resolve(root, last.slot), "utf8"));
   if (saved.id !== last.id) return { status: 409, body: { error: "The undo history is out of date." } };
   const changed = [];
@@ -57,7 +87,7 @@ async function undoLastApply(root) {
     const now = await fs.readFile(path.resolve(root, f.path), "utf8").catch(() => null);
     if (now !== f.after) changed.push(path.basename(f.path));
   }
-  if (changed.length) return { status: 409, body: { error: `${changed.join(", ")} changed after Haiku edited it.`, changed } };
+  if (changed.length) return { status: 409, body: { error: `${changed.join(", ")} changed after the apply.`, changed } };
   for (const f of saved.files) await fs.writeFile(path.resolve(root, f.path), f.before);
   await fs.writeFile(path.join(tweaksDir(root), "history.json"), JSON.stringify({ entries: entries.slice(0, -1) }, null, 2) + "\n");
   return { status: 200, body: { ok: true, files: saved.files.map((f) => path.basename(f.path)) } };
@@ -103,7 +133,7 @@ export function createTweaksHandler({ root, getVersion }) {
         const pending = await readPending(root);
         const last = (await readHistory(root)).slice(-1)[0];
         return send(res, 200, {
-          lastApply: last ? { id: last.id, count: last.count, files: last.files.map((f) => path.basename(f)) } : null,
+          lastApply: last ? { id: last.id, by: last.by, count: last.count, files: last.files.map((f) => path.basename(f)) } : null,
           pendingIds: pending.batches.map((b) => b.id),
           // Per tweak, so the overlay can drop previews one at a time and show Haiku's skip reasons.
           pendingTweaks: pending.batches.flatMap((b) => (b.tweaks || []).map((t, i) => ({ id: t.id || `${b.id}-${i}`, skipped: t.skipped }))),
@@ -122,10 +152,24 @@ export function createTweaksHandler({ root, getVersion }) {
         batch.id = `t${Date.now().toString(36)}`;
         batch.createdAt = new Date().toISOString();
         batch.tweaks.forEach((t, i) => (t.id = `${batch.id}-${i}`));
-        const pending = await readPending(root);
-        pending.batches.push(batch);
-        await writePending(root, pending);
-        return send(res, 200, { ok: true, id: batch.id });
+        // Simple tweaks go straight into the source; the rest wait for Haiku.
+        const direct = await applyDirect(root, batch);
+        for (const f of direct.files) await fs.writeFile(f.path, f.after);
+        await fs.mkdir(tweaksDir(root), { recursive: true });
+        await fs.writeFile(path.join(tweaksDir(root), ".gitignore"), "*\n");
+        await recordHistory(root, { by: "direct", count: direct.applied.length, files: direct.files });
+        const label = (t) => (t.element && (t.element.classes[0] ? "." + t.element.classes[0] : t.element.tag)) || "?";
+        const byId = new Map(batch.tweaks.map((t) => [t.id, t]));
+        await appendLog(root, [
+          ...direct.applied.map((a) => ({ at: batch.createdAt, id: a.id, element: label(byId.get(a.id)), by: "direct", outcome: "applied", props: [...a.props, ...(a.text ? ["text"] : [])], files: a.files })),
+          ...direct.remaining.map((t) => ({ at: batch.createdAt, id: t.id, element: label(t), by: "direct", outcome: "sent to Haiku", props: Object.keys(t.changes || {}), reason: t.directSkip })),
+        ]);
+        if (direct.remaining.length) {
+          const pending = await readPending(root);
+          pending.batches.push({ ...batch, tweaks: direct.remaining });
+          await writePending(root, pending);
+        }
+        return send(res, 200, { ok: true, id: batch.id, direct: direct.applied.map((a) => a.id), queued: direct.remaining.map((t) => t.id) });
       }
       if (req.method === "DELETE" && url.pathname.startsWith(`${PREFIX}/`)) {
         const id = url.pathname.slice(PREFIX.length + 1);

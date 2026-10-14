@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { LastApply, PendingTweaks, SkippedTweak } from '../types'
+import type { FileStat, LastApply, PendingTweaks, SkippedTweak } from '../types'
+import { lineStats, unifiedDiff } from './diff'
 
 // Written by the ui-tweak-kit overlay (POST /__ui-tweaks) in the project being served.
 const FILE = '.ui-tweaks/pending.json'
@@ -12,6 +13,9 @@ const run = atom({ plugin: 'ui-tweaks', key: 'run' } as const, null)
 const attempted = atom({ plugin: 'ui-tweaks', key: 'attempted' } as const, [])
 const lastApply = atom({ plugin: 'ui-tweaks', key: 'lastApply' } as const, null)
 const dismissedApply = atom({ plugin: 'ui-tweaks', key: 'dismissedApply' } as const, null)
+const diffView = atom({ plugin: 'ui-tweaks', key: 'diffView' } as const, null)
+const DIFF_PANE = 'ui-tweaks-diff'
+const LOG = '.ui-tweaks/log.json'
 
 // Undo history, shared with the kit's dev server (POST /__ui-tweaks/undo):
 // history.json lists the applies; each one's file copies sit in a reused slot file.
@@ -19,13 +23,21 @@ const HISTORY = '.ui-tweaks/history.json'
 const SLOTS = 10
 const STUCK_MS = 10 * 60 * 1000
 
-type HistoryEntry = { id: string; at: number; by: 'haiku'; count: number; slot: string; files: string[] }
+type HistoryEntry = { id: string; at: number; by: 'haiku' | 'direct'; count: number; slot: string; files: string[] }
 type SlotFile = { id: string; files: { path: string; before: string; after: string }[] }
 
 // Each file as it was before the running Haiku apply first edited it (one run at a time).
 const snapshots = new Map<string, string>()
 
-type Tweak = { id?: string; changes?: Record<string, unknown>; text?: unknown; note?: string; skipped?: string }
+type Change = { prop?: string; to?: string }
+type Tweak = {
+  id?: string
+  changes?: Record<string, Change>
+  text?: { from?: string; to?: string }
+  note?: string
+  skipped?: string
+  element?: { classes?: string[]; tag?: string }
+}
 type Batch = { id: string; page?: { path?: string }; tweaks?: Tweak[] }
 type PendingFile = { version?: number; batches?: Batch[] }
 
@@ -83,6 +95,32 @@ export function settle(text: string, applied: string[], skipped: SkippedTweak[])
   return JSON.stringify({ ...file, batches }, null, 2) + '\n'
 }
 
+const occurrences = (text: string, needle: string) => (needle ? text.split(needle).length - 1 : 0)
+
+/** Ways a value may be written in source: as given, either case, and #abc for #aabbcc. */
+function spellings(value: string): string[] {
+  const v = value.trim()
+  const out = new Set([v, v.toLowerCase(), v.toUpperCase()])
+  const hex = /^#([0-9a-f])\1([0-9a-f])\2([0-9a-f])\3$/i.exec(v)
+  if (hex) out.add(`#${hex[1]}${hex[2]}${hex[3]}`.toLowerCase())
+  return [...out]
+}
+
+/**
+ * Checks a tweak Haiku reported as applied against the files it actually changed:
+ * every new value (and new copy) must appear more often after the edit than before.
+ * Returns null when it holds, or why not.
+ */
+export function verifyTweak(tweak: Tweak, files: { before: string; after: string }[]): string | null {
+  if (files.length === 0) return 'Haiku reported it applied, but no file changed'
+  const grew = (value: string) => spellings(value).some(v => files.some(f => occurrences(f.after, v) > occurrences(f.before, v)))
+  for (const [key, change] of Object.entries(tweak.changes ?? {})) {
+    if (change.to !== undefined && !grew(change.to)) return `${change.prop ?? key} → ${change.to} is not in the edited files`
+  }
+  if (tweak.text?.to && !grew(tweak.text.to.trim())) return `the new text "${tweak.text.to.trim()}" is not in the edited files`
+  return null
+}
+
 const APPLIER_PROMPT = `You apply visual UI tweaks to source code. Be brief; do not explain your process.
 
 Read ${FILE}. It holds batches of tweaks; each tweak has an id, element.react.jsxSource (file:line of the JSX), element.classes, and changes: { "<css-prop>": { from, to, authoredIn: [{ file, selector, property, value, conditions }] } } with the most specific rule first, plus optional text: { from, to } (a copy edit) and note (my instruction).
@@ -93,6 +131,10 @@ For each tweak, edit the source so the element renders each \`to\` value:
 - Collapse four equal sides or corners into one shorthand. Leave other code alone.
 
 - Follow the note when it is a clear change to this element (new copy, a value); a note may be the whole tweak.
+- A change with a "state" ("hover", "active", "focus-visible"; its key is "<prop>:<state>") belongs in that state's rule, e.g. .btn:hover. Edit the one in authoredIn when it is a state rule, else add it right after the element's own rule.
+- scope { kind: "viewport", width } means: only around that screen width. Put the change in a media query that holds at that width, reusing a breakpoint the file already uses.
+- directApplied lists properties already written to the source: leave them alone.
+- warnings say a value cannot show (e.g. hidden under a gradient): skip that tweak with the warning as the reason, unless its note says what to do.
 
 Skip a tweak, editing nothing for it, when: you cannot find its source; the new value would be hidden by another property (e.g. background-color under a background-image gradient); its note reaches beyond this element or is unclear; or you are unsure. Give a one-line reason.
 
@@ -126,19 +168,47 @@ async function readHistory($: EngineInterface): Promise<HistoryEntry[]> {
   }
 }
 
+// Line counts per apply id: slot files can be large, so each is read once.
+const statsById = new Map<string, FileStat[]>()
+
 async function syncLastApply($: EngineInterface) {
   const last = (await readHistory($)).at(-1)
-  const next: LastApply | null = last ? { id: last.id, count: last.count, files: last.files } : null
+  let next: LastApply | null = null
+  if (last) {
+    if (!statsById.has(last.id)) {
+      const saved = JSON.parse(await $.fs.read(last.slot).catch(() => '{"files":[]}')) as SlotFile
+      statsById.set(last.id, saved.files.map(f => ({ path: f.path, ...lineStats(f.before, f.after) })))
+    }
+    next = { id: last.id, by: last.by, count: last.count, files: statsById.get(last.id) ?? [] }
+  }
   if (JSON.stringify(next) !== JSON.stringify(await read($, lastApply))) await update($, lastApply, () => next)
 }
 
-async function recordApply($: EngineInterface, count: number) {
+/** The files the running Haiku apply changed, from the copies taken before its edits. */
+async function changedFiles($: EngineInterface): Promise<SlotFile['files']> {
   const files: SlotFile['files'] = []
   for (const [path, before] of snapshots) {
     const after = await $.fs.read(path).catch(() => null)
     if (after !== null && after !== before) files.push({ path, before, after })
   }
   snapshots.clear()
+  return files
+}
+
+type LogItem = { at: number; id: string; element: string; by: 'haiku'; outcome: string; props?: string[]; reason?: string; files?: string[] }
+
+async function appendLog($: EngineInterface, items: LogItem[]) {
+  if (items.length === 0) return
+  let entries: unknown[] = []
+  try {
+    entries = (JSON.parse(await $.fs.read(LOG)) as { entries?: unknown[] }).entries ?? []
+  } catch {
+    // No log yet.
+  }
+  await $.fs.write(LOG, JSON.stringify({ entries: [...entries, ...items].slice(-300) }, null, 2) + '\n')
+}
+
+async function recordApply($: EngineInterface, count: number, files: SlotFile['files']) {
   if (files.length === 0) return
   const entries = await readHistory($)
   const lastSlot = Number(/(\d+)\.json$/.exec(entries.at(-1)?.slot ?? '')?.[1] ?? -1)
@@ -155,19 +225,31 @@ async function recordApply($: EngineInterface, count: number) {
 async function undoLastApply($: EngineInterface): Promise<string> {
   const entries = await readHistory($)
   const last = entries.at(-1)
-  if (!last) return 'There is no Haiku apply to undo.'
+  if (!last) return 'There is no apply to undo.'
   const saved = JSON.parse(await $.fs.read(last.slot)) as SlotFile
   if (saved.id !== last.id) return 'The undo history is out of date; nothing was changed.'
   const changed: string[] = []
   for (const f of saved.files) if ((await $.fs.read(f.path).catch(() => null)) !== f.after) changed.push(f.path)
   if (changed.length) {
-    return `Not undone: ${changed.map(p => p.split('/').at(-1)).join(', ')} changed after Haiku edited it. Undo by hand or with Claude.`
+    return `Not undone: ${changed.map(p => p.split('/').at(-1)).join(', ')} changed after the apply. Undo by hand or with Claude.`
   }
   for (const f of saved.files) await $.fs.write(f.path, f.before)
   await $.fs.write(HISTORY, JSON.stringify({ entries: entries.slice(0, -1) }, null, 2) + '\n')
   await syncLastApply($)
 
-  return `Undid Haiku's last apply: ${saved.files.map(f => f.path.split('/').at(-1)).join(', ')} restored.`
+  if ((await read($, diffView))?.id === last.id) await $.ui.close({ id: DIFF_PANE })
+
+  return `Undid the last apply: ${saved.files.map(f => f.path.split('/').at(-1)).join(', ')} restored.`
+}
+
+async function openDiff($: EngineInterface) {
+  const last = (await readHistory($)).at(-1)
+  if (!last) return
+  const saved = JSON.parse(await $.fs.read(last.slot)) as SlotFile
+  const cwd = await $.session.cwd()
+  const rel = (p: string) => (p.startsWith(cwd + '/') ? p.slice(cwd.length + 1) : p)
+  await update($, diffView, () => ({ id: last.id, files: saved.files.map(f => ({ path: rel(f.path), diff: unifiedDiff(rel(f.path), f.before, f.after) })) }))
+  await $.ui.open({ id: DIFF_PANE, title: 'UI tweaks: last apply' })
 }
 
 async function refresh($: EngineInterface) {
@@ -231,21 +313,55 @@ async function applyWithClaude($: EngineInterface): Promise<string> {
 }
 
 async function finishHaiku($: EngineInterface, answer: string) {
+  const files = await changedFiles($)
   const report = parseReport(answer)
-  await recordApply($, report?.applied.length ?? 0)
-  await update($, run, () => null)
+  const runIds = (await read($, run))?.tweakIds ?? []
   if (report === null) {
+    await recordApply($, 0, files)
+    await update($, run, () => null)
     $.ui.toast('Haiku finished without a report; the tweaks are still waiting.')
     return
   }
+
+  // Trust the files, not the report: a tweak counts as applied only if its new values are in them.
+  let tweaks = new Map<string, Tweak>()
+  let text = ''
   try {
-    await $.fs.write(FILE, settle(await $.fs.read(FILE), report.applied, report.skipped))
+    text = await $.fs.read(FILE)
+    const batches = (JSON.parse(text) as PendingFile).batches ?? []
+    tweaks = new Map(batches.flatMap(b => (b.tweaks ?? []).map((t, i) => [tweakId(b, t, i), t] as const)))
   } catch {
-    // The file is gone: nothing left to settle.
+    // The file is gone: nothing to check against.
   }
+  const applied: string[] = []
+  const skipped = [...report.skipped]
+  for (const id of report.applied) {
+    const tweak = tweaks.get(id)
+    const why = tweak ? verifyTweak(tweak, files) : null
+    if (why) skipped.push({ id, reason: `Not verified: ${why}` })
+    else applied.push(id)
+  }
+  await recordApply($, applied.length, files)
+  await update($, run, () => null)
+  if (text) await $.fs.write(FILE, settle(text, applied, skipped))
+
+  const at = await $.clock.now()
+  const label = (id: string) => {
+    const el = tweaks.get(id)?.element
+    return el ? (el.classes?.[0] ? '.' + el.classes[0] : (el.tag ?? '?')) : '?'
+  }
+  const fileNames = files.map(f => f.path.split('/').at(-1) ?? f.path)
+  const unreported = runIds.filter(id => !applied.includes(id) && !skipped.some(s => s.id === id))
+  await appendLog($, [
+    ...applied.map(id => ({ at, id, element: label(id), by: 'haiku' as const, outcome: 'applied', files: fileNames })),
+    ...skipped.map(s => ({ at, id: s.id, element: label(s.id), by: 'haiku' as const, outcome: 'skipped', reason: s.reason })),
+    ...unreported.map(id => ({ at, id, element: label(id), by: 'haiku' as const, outcome: 'not reported' })),
+  ])
   await refresh($)
-  const skipped = report.skipped.length ? `, skipped ${report.skipped.length}` : ''
-  $.ui.toast(`Haiku applied ${report.applied.length} UI tweak(s)${skipped}`)
+
+  const summary = `Haiku applied ${applied.length} UI tweak(s)` + (skipped.length ? `, skipped ${skipped.length}` : '')
+  $.ui.toast(summary)
+  if (skipped.length) void $.ui.notify(`${summary}: ${skipped[0]!.reason}`, { title: 'UI tweaks' })
 }
 
 export const register: Register = on => {
@@ -301,6 +417,18 @@ export const register: Register = on => {
     return next(e)
   })
 
+  on('ui.render', { component: 'Pane', requestId: DIFF_PANE }, async ($, e) => {
+    const { Box, Code, Text } = $.ui.resolve(e)
+    const view = await read($, diffView)
+    if (view === null) return <Text dimColor>No apply to show.</Text>
+
+    return (
+      <Box flexDirection="column">
+        {view.files.map(f => (f.diff ? <Code format="diff" source={f.diff} path={f.path} /> : <Text dimColor>{f.path}: no changes</Text>))}
+      </Box>
+    )
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const summary = await read($, pending)
@@ -310,14 +438,18 @@ export const register: Register = on => {
 
     if (summary === null && current === null) {
       if (last === null || last.id === (await read($, dismissedApply))) return next(e)
-      const names = last.files.map(f => f.split('/').at(-1)).join(', ')
       return (
         <Box>
           <Text color="magenta">◆ </Text>
           <Text>
-            Haiku applied {last.count} UI tweak{last.count === 1 ? '' : 's'}{' '}
+            {last.by === 'direct' ? 'Applied' : 'Haiku applied'} {last.count} UI tweak{last.count === 1 ? '' : 's'}:{' '}
           </Text>
-          <Text dimColor>({names}) </Text>
+          {last.files.map(f => (
+            <Text>
+              {f.path.split('/').at(-1)} <Text color="green">+{f.added}</Text> <Text color="red">−{f.removed}</Text>{'  '}
+            </Text>
+          ))}
+          <Button key="diff" label="Diff" hotkey="d" onPress={() => void openDiff($)} />
           <Button key="undo" label="Undo" hotkey="u" onPress={() => void undoLastApply($).then(text => $.ui.toast(text))} />
           <Button key="dismiss" label="Dismiss" plain onPress={() => void update($, dismissedApply, () => last.id)} />
         </Box>

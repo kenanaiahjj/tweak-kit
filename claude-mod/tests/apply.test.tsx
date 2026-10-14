@@ -1,7 +1,8 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { parseReport, settle, summarize } from '../hooks/register'
+import { lineStats, unifiedDiff } from '../hooks/diff'
+import { parseReport, settle, summarize, verifyTweak } from '../hooks/register'
 
 const PENDING = JSON.stringify({
   version: 1,
@@ -120,4 +121,23 @@ test('undo refuses a file that changed after Haiku edited it', async ($, on) => 
   const result = await $.command.run({ command: 'apply-tweaks', args: 'undo' } as never)
   expect(JSON.stringify(result)).toContain('Not undone')
   expect(files['/p/src/styles.css']).toBe('a { color: green }')
+})
+
+test('verifyTweak trusts the files, not the report', () => {
+  const before = '.a { color: #111; font-size: 15px; }\n'
+  const tweak = { changes: { color: { prop: 'color', to: '#222222' }, 'font-size': { prop: 'font-size', to: '16px' } } }
+  expect(verifyTweak(tweak, [{ before, after: '.a { color: #222; font-size: 16px; }\n' }])).toBe(null)
+  expect(verifyTweak(tweak, [{ before, after: '.a { color: #222; font-size: 15px; }\n' }])).toContain('font-size → 16px')
+  expect(verifyTweak(tweak, [])).toContain('no file changed')
+  expect(verifyTweak({ text: { from: 'Go', to: 'Start' } }, [{ before: '<b>Go</b>', after: '<b>Start</b>' }])).toBe(null)
+})
+
+test('line stats and unified diffs', () => {
+  const before = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'].join('\n')
+  const after = ['a', 'b', 'C', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k'].join('\n')
+  expect(lineStats(before, after)).toEqual({ added: 2, removed: 1 })
+  const diff = unifiedDiff('x.css', before, after)
+  // Changes 8 lines apart get a hunk each, with 3 lines of context.
+  expect(diff.split('\n').filter(l => l.startsWith('@@'))).toEqual(['@@ -1,6 +1,6 @@', '@@ -8,3 +8,4 @@'])
+  expect(diff).toContain('-c\n+C')
 })

@@ -1,17 +1,19 @@
-// One DialKit-style row for the UI Tweaks pane: label left, value right, a bar filling behind them.
-// Drag across the row to set the value, ←/→ to step it (Shift: ×10), double-click to type one.
+// One slider for the UI Tweaks pane: a faint track, a fill up to the value, the value at its right end.
+// Drag across it to set the value, ←/→ to step it (Shift: ×10), double-click to type one.
 // Drawn by the surface; it posts { prop, value } (or { prop, edit: true }) to the mod's ui.message hook.
 import type { ClientModule } from 'claude-code'
 
 export type DialProps = {
   prop: string
-  label: string
   value: number | null
   text: string
   min: number
   max: number
   step: number
   changed: boolean
+  /** Track and fill colors: the pane picks them per surface. */
+  track?: string
+  fill: string
 }
 
 type DialState = { ref: { props: DialProps }; preview: number | null; dragging: boolean; lastDown: number }
@@ -76,14 +78,14 @@ const Dial: ClientModule<DialProps, DialState> = (props, surface) => {
   const shown = state?.dragging ? state.preview : props.value
   const span = props.max - props.min || 1
   const fraction = shown === null ? 0 : Math.min(1, Math.max(0, (shown - props.min) / span))
-  const fill = Math.round(fraction * surface.columns)
+  const fill = Math.max(shown === null ? 0 : 1, Math.round(fraction * surface.columns))
   const text = state?.dragging && shown !== null ? String(shown) : props.text
 
   return (
     <Box width="100%" height={1}>
-      <Box position="absolute" top={0} left={0} width={fill} height={1} backgroundColor={props.changed ? 'suggestion' : 'promptBorder'} />
-      <Box position="absolute" top={0} left={0} width="100%" height={1} flexDirection="row" justifyContent="space-between" paddingX={1}>
-        <Text color={props.changed ? 'text' : 'subtle'}>{props.label}</Text>
+      <Box position="absolute" top={0} left={0} width="100%" height={1} backgroundColor={props.track} />
+      <Box position="absolute" top={0} left={0} width={fill} height={1} backgroundColor={props.fill} />
+      <Box position="absolute" top={0} left={0} width="100%" height={1} flexDirection="row" justifyContent="flex-end" paddingRight={1}>
         <Text bold={props.changed}>{text}</Text>
       </Box>
     </Box>

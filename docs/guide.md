@@ -134,7 +134,7 @@ With a session open in the project, **Tweak** opens the **UI Tweaks pane** in Cl
 
 - **Select** by clicking in the page, or in the pane's layers list. The page's button turns into a **Picking · Claude Code** chip; click it, or use **Picking: on/off** in the pane, to use the page normally.
 - **Folders:** Layers, Layout, Size, Spacing, Text, Fill, Border, Shadow and Apply to open and close like DialKit's. Layers stays closed and shows the path to the element.
-- **Numbers are dials:** label on the left, value on the right, a bar filling behind. Drag across the row to set it, click it and use ←/→ to step (Shift: ×10), or double-click to type an exact value. Padding, margin, radius and border width take one to four values when typed, as in CSS (`8`, `8 16`, `8 16 4 2`).
+- **Numbers are sliders:** label in the left column, a bar with the value at its right end (filled in Claude's accent color once you've changed it). Drag across the bar to set it, click it and use ←/→ to step (Shift: ×10), or double-click to type an exact value. Padding, margin, radius and border width take one to four values when typed, as in CSS (`8`, `8 16`, `8 16 4 2`).
 - **Small choices are buttons:** state, direction, text alignment, screen widths.
 - **Colors:** type a hex value, or open ◇ and click one of your `:root` color tokens.
 - **Gradients:** **Replace with solid**, or change the base color. Exploring gradients is better done in a design tool.

@@ -647,6 +647,18 @@ export const register: Register = on => {
 
     const sel = snap.selected
     const f = (name: string) => sel?.fields[name] ?? { value: '', changed: false }
+    const isDesktop = e.surface === 'desktop'
+    // Every row: a fixed label column, then the control, so all controls line up.
+    const LABEL = 14
+    const CONTROL = 28
+    const row = (key: string, label: string, isChanged: boolean, control: unknown) => (
+      <Box key={key} flexDirection="row" alignItems="center">
+        <Box width={LABEL}>
+          <Text color={isChanged ? 'text' : 'subtle'}>{(isChanged ? '● ' : '') + label}</Text>
+        </Box>
+        {control as never}
+      </Box>
+    )
 
     // A collapsible folder, DialKit-style.
     const folder = (id: string, title: string, isOpenByDefault: boolean, body: () => unknown, aside?: string) => {
@@ -670,19 +682,24 @@ export const register: Register = on => {
       const [min, baseMax, step] = RANGES[prop] ?? [0, 100, 1]
       const max = value !== null && value > baseMax ? Math.ceil(value * 1.5) : baseMax
       const isTyping = typing === prop
+      const colors = isDesktop
+        ? { track: '#ffffff12', fill: field.changed ? '#d977578c' : '#ffffff2e' }
+        : { fill: field.changed ? 'claude' : 'promptBorder' }
       return (
         <Box key={`dial-row-${prop}`} flexDirection="column">
-          <Client
-            key={`dial-${prop}`}
-            module="./dial.tsx"
-            width="100%"
-            height={1}
-            props={{ prop, label: (field.changed ? '● ' : '') + label, value, text: field.value || '—', min, max, step, changed: field.changed }}
-          />
+          {row(`dial-label-${prop}`, label, field.changed, (
+            <Client
+              key={`dial-${prop}`}
+              module="./dial.tsx"
+              width={CONTROL}
+              height={1}
+              props={{ prop, value, text: field.value || '—', min, max, step, changed: field.changed, ...colors }}
+            />
+          ))}
           {isTyping && (
             <Input
               key={`type-${prop}`}
-              label={label}
+              label={`${label} (Enter to apply)`}
               value={field.value}
               autoFocus
               onSubmit={v => {
@@ -696,24 +713,24 @@ export const register: Register = on => {
     }
 
     // A few choices as buttons; the current one is the primary button.
-    const segment = (key: string, label: string, current: string, options: [string, string][], onPick: (value: string) => void) => (
-      <Box key={`seg-${key}`} flexDirection="row" gap={1} alignItems="center">
-        <Text color="subtle">{label}</Text>
-        {options.map(([value, text]) => (
-          <Button key={`seg-${key}-${value || 'none'}`} label={text} variant={value === current ? 'primary' : 'secondary'} onPress={() => onPick(value)} />
-        ))}
-      </Box>
-    )
+    const segment = (key: string, label: string, current: string, options: [string, string][], onPick: (value: string) => void) =>
+      row(`seg-${key}`, label, false, (
+        <Box flexDirection="row" gap={1}>
+          {options.map(([value, text]) => (
+            <Button key={`seg-${key}-${value || 'none'}`} label={text} variant={value === current ? 'primary' : 'secondary'} onPress={() => onPick(value)} />
+          ))}
+        </Box>
+      ))
 
-    const choose = (prop: string, label: string, options: string[]) => (
-      <Select
-        key={`sel-${prop}`}
-        label={(f(prop).changed ? '● ' : '') + label}
-        value={f(prop).value}
-        options={(options.includes(f(prop).value) ? options : [f(prop).value, ...options]).map(o => ({ value: o, label: o }))}
-        onSelect={v => cmd({ op: 'set', prop, value: v })}
-      />
-    )
+    const choose = (prop: string, label: string, options: string[]) =>
+      row(`sel-row-${prop}`, label, f(prop).changed, (
+        <Select
+          key={`sel-${prop}`}
+          value={f(prop).value}
+          options={(options.includes(f(prop).value) ? options : [f(prop).value, ...options]).map(o => ({ value: o, label: o }))}
+          onSelect={v => cmd({ op: 'set', prop, value: v })}
+        />
+      ))
 
     // A color: swatch, hex field, and the project's color tokens behind ◇.
     const color = (prop: string, label: string, isGroup = false) => {
@@ -723,15 +740,17 @@ export const register: Register = on => {
       const set = (value: string) => cmd(isGroup ? { op: 'set-group', group: prop, value } : { op: 'set', prop, value })
       return (
         <Box key={`color-${prop}`} flexDirection="column">
-          <Box flexDirection="row" gap={1} alignItems="center">
-            <Text backgroundColor={hex.startsWith('#') ? hex : undefined} color="subtle">{hex.startsWith('#') ? '   ' : ' ∅ '}</Text>
-            <Input key={`in-${prop}`} label={(field.changed ? '● ' : '') + label} value={field.value} onSubmit={set} />
-            {snap.tokens.length > 0 && (
-              <Button key={`tok-btn-${prop}`} label="◇" plain onPress={() => void update($, folds, o => ({ ...o, [`tokens-${prop}`]: !tokensOpen }))} />
-            )}
-          </Box>
+          {row(`color-row-${prop}`, label, field.changed, (
+            <Box flexDirection="row" gap={1} alignItems="center">
+              <Text backgroundColor={hex.startsWith('#') ? hex : undefined} color="subtle">{hex.startsWith('#') ? '  ' : '∅ '}</Text>
+              <Input key={`in-${prop}`} value={field.value} onSubmit={set} />
+              {snap.tokens.length > 0 && (
+                <Button key={`tok-btn-${prop}`} label="◇" plain onPress={() => void update($, folds, o => ({ ...o, [`tokens-${prop}`]: !tokensOpen }))} />
+              )}
+            </Box>
+          ))}
           {tokensOpen && (
-            <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
+            <Box flexDirection="row" flexWrap="wrap" columnGap={2} paddingLeft={LABEL}>
               {snap.tokens.map(t => (
                 <Button key={`tok-${prop}-${t.name}`} plain onPress={() => set(`var(${t.name})`)}>
                   <Text color={t.value}>■</Text> <Text color="subtle">{t.name.replace(/^--/, '')}</Text>
@@ -743,16 +762,17 @@ export const register: Register = on => {
       )
     }
 
+    const width = Math.min(e.props.bodyColumns ?? LABEL + CONTROL + 4, LABEL + CONTROL + 4)
     const crumbs = (snap.layers ?? []).filter(l => l.depth < (snap.layers ?? []).find(x => x.selected)!.depth || l.selected)
     const changed = snap.changes.length
 
     return (
-      <Box flexDirection="column" gap={1}>
+      <Box flexDirection="column" gap={1} width={width}>
         <Box flexDirection="row" justifyContent="space-between" alignItems="center">
           <Text bold>UI Tweaks</Text>
           <Box flexDirection="row" gap={1}>
             {snap.undoCount > 0 && <Button key="undo" label="Undo" hotkey="z" onPress={() => cmd({ op: 'undo' })} />}
-            <Button key="pick" label={snap.picking ? '⌖ Picking' : '⌖ Paused'} variant={snap.picking ? 'primary' : 'secondary'} hotkey="p" onPress={() => cmd({ op: 'pick', on: !snap.picking })} />
+            <Button key="pick" label={snap.picking ? '⌖ Picking on' : '⌖ Picking off'} hotkey="p" onPress={() => cmd({ op: 'pick', on: !snap.picking })} />
           </Box>
         </Box>
 
@@ -763,7 +783,7 @@ export const register: Register = on => {
             <Box flexDirection="column">
               <Text bold color="claude">{sel.name}</Text>
               <Text color="subtle">
-                {sel.source ?? 'no JSX line'} · {snap.page} at {snap.width}px
+                {sel.source ?? 'no JSX line'} · {snap.width}px
               </Text>
             </Box>
 
@@ -810,10 +830,7 @@ export const register: Register = on => {
 
             {folder('fill', 'Fill', true, () => [
               sel.hasGradient ? (
-                <Box key="gradient" flexDirection="row" gap={1} alignItems="center">
-                  <Text color="subtle">◐ Gradient fill</Text>
-                  <Button key="solid" label="Replace with solid" onPress={() => cmd({ op: 'solid' })} />
-                </Box>
+                row('gradient', '◐ Gradient', false, <Button key="solid" label="Replace with solid" onPress={() => cmd({ op: 'solid' })} />)
               ) : null,
               color('background-color', sel.hasGradient ? 'Base color' : 'Background'),
               dial('opacity', 'Opacity'),
@@ -821,13 +838,14 @@ export const register: Register = on => {
 
             {folder('border', 'Border', false, () => [dial('border-radius', 'Radius'), dial('border-width', 'Width'), color('border-color', 'Color', true)], `${f('border-radius').value} radius`)}
 
-            {folder('effects', 'Shadow', false, () => (
-              <Input key="in-box-shadow" label={(f('box-shadow').changed ? '● ' : '') + 'box-shadow'} value={f('box-shadow').value} onSubmit={v => cmd({ op: 'set', prop: 'box-shadow', value: v })} />
-            ))}
+            {folder('effects', 'Shadow', false, () =>
+              row('shadow', 'box-shadow', f('box-shadow').changed, (
+                <Input key="in-box-shadow" value={f('box-shadow').value} onSubmit={v => cmd({ op: 'set', prop: 'box-shadow', value: v })} />
+              )))}
 
             {folder('apply', 'Apply to', sel.scope === 'viewport' || sel.note !== '', () => [
               segment('scope', 'Widths', sel.scope, [['all', 'All'], ['viewport', `Only ${snap.width}px`]], v => cmd({ op: 'scope', value: v })),
-              <Input key="in-note" label="Note" placeholder='e.g. "apply to every card like this"' value={sel.note} onSubmit={v => cmd({ op: 'note', value: v })} />,
+              row('note', 'Note', sel.note !== '', <Input key="in-note" placeholder='e.g. "every card like this"' value={sel.note} onSubmit={v => cmd({ op: 'note', value: v })} />),
             ], sel.scope === 'viewport' ? `only ${snap.width}px` : sel.note ? 'note' : undefined)}
           </Box>
         )}

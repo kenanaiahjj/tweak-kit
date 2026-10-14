@@ -183,7 +183,7 @@ function applyEdits(text, edits) {
 
 // ---------- ownership ----------
 
-async function sourceFiles(root) {
+export async function sourceFiles(root) {
   const out = [];
   const walk = async (dir) => {
     for (const entry of await fs.readdir(dir, { withFileTypes: true }).catch(() => [])) {

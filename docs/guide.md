@@ -132,14 +132,18 @@ Nothing to do: the kit writes a `.gitignore` containing `*` inside `.ui-tweaks/`
 
 **Tweak** opens the studio at `/__ui-tweaks/studio`: your app in a frame on the left, the panel docked on the right, so nothing covers the page.
 
-- **Devices** in the toolbar: **Fit** fills the space available; the **Device** menu sets an exact screen size, grouped by family:
+- **Devices.** **Fit** shows one frame filling the space. **+ Device** adds a device; add as many as you like to see them **side by side**, each with its own menu, **⟲** (rotate) and **✕** (remove). All devices are scaled by one factor so they fit together, and each app gets its device's exact screen size (CSS px):
   - **iPhone:** Duo open (890 × 626) and folded (466 × 678), 18/17/16 Pro Max (440 × 956), Air (420 × 912), 18 Pro · 17 Pro · 17 (402 × 874), 16 · 15 (393 × 852), 17e · 14 · 13 (390 × 844), 16 Plus · 15 Plus (430 × 932), 13 mini (375 × 812), SE (375 × 667).
   - **iPad:** mini (744 × 1133), Air 11″ (820 × 1180), Pro 11″ (834 × 1210), Pro 13″ (1032 × 1376), classic (768 × 1024).
   - **Android:** Pixel (412 × 915), Galaxy Z Fold 5 folded (344 × 882).
   - **Desktop:** Laptop (1280 × 800), MacBook Air 13″ (1470 × 956), 1440 × 900, 1920 × 1080.
-
-  **⟲** rotates the device. The app gets that exact screen size (CSS px), so breakpoints and full-height layouts behave as on the device; a device bigger than the space is scaled down to fit (the toolbar shows the scale). The studio remembers your choice.
-- **↻** reloads the app; **✕** (or **⇱** in the panel) leaves the studio and returns to the plain page.
+- **One set of tweaks, every device.** A tweak previews in all frames at once. Click an element in any frame and the panel follows it there. Navigating in one frame takes the others along.
+- **Chrome** draws the status bar, notch or Dynamic Island, home indicator, punch-hole camera and the Duo's fold over each device, so you can see what they cover.
+- **Grid** overlays a column grid matched to each device (4 columns under 600px, 8 under 1024px, 12 above); **8pt** overlays an 8-point baseline.
+- **Compare**: hold it (or hold **\\** in the app) to see every device without your previews, as the source has it now.
+- **📷** saves a PNG of the devices and copies it. The browser asks to capture the tab each time (Chrome; Claude Code's built-in browser may not support it).
+- **☰ Pages** lists the app's routes (Next.js `app/` and `pages/`, router `path` definitions, HTML files) plus pages you've visited, with a dot on pages that have pending tweaks. Click one to go there. Apps that switch screens without changing the URL show only `/`.
+- **↻** reloads every device; **✕** (or **⇱** in the panel) leaves the studio and returns to the plain page.
 - Navigating inside the app keeps you in the studio; the toolbar shows the app's current path.
 
 Docked mode needs the studio and the app on one origin: it works with the Vite plugin and `ui-tweaks-serve`. With the `--api-only` sidecar (Next.js and others), **Tweak** opens the panel on the page instead.
@@ -170,6 +174,9 @@ Everything below works the same docked or on the page.
 - **◇** next to a color field lists your `:root` color variables. Number fields suggest your length variables as you type.
 - A **⚠ warning** appears when a value can't show, for example width on an inline element or a background color under a gradient.
 - **↶** or **⌘Z / Ctrl+Z** undoes your last edit (a whole drag counts as one step).
+- **Measure:** with an element selected, hold **Alt** and point at another to see the distances between them in red.
+- **Contrast** under the text color shows the ratio to the background behind it and whether it passes AA and AAA (large text needs less). Over a gradient it reports the lowest ratio across the gradient's colors; it can't measure over images or video.
+- **Copy style / Paste style** (or **⌘⌥C** / **⌘⌥V**) copy an element's type, fill, border, radius, shadow and padding onto another; one undo takes a paste back.
 - **⧉** (on the page) docks the panel into the studio; Shift-click it to pop the panel into its own window instead (needs a browser that allows pop-ups).
 
 Edits are previews until you send them, and they survive page reloads.

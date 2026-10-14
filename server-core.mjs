@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyDirect } from "./direct-apply.mjs";
+import { applyDirect, sourceFiles } from "./direct-apply.mjs";
 
 const KIT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const OVERLAY_PATH = path.join(KIT_DIR, "overlay.js");
@@ -119,8 +119,9 @@ function send(res, status, body, type = "application/json") {
 }
 
 /**
- * Docked mode: the app in a frame on the left, the overlay's own panel docked on the right.
- * The overlay inside the frame finds #ui-tweaks-root here and moves its panel into it.
+ * Docked mode: the app in one or more device frames, the overlay's own panel docked on the right.
+ * The overlay in the first frame finds #ui-tweaks-root here and moves its panel into it; the others
+ * mirror its previews, and whichever frame you click in takes the panel over.
  */
 export function studioPage(appPath) {
   const safe = typeof appPath === "string" && appPath.startsWith("/") && !appPath.startsWith("//") ? appPath : "/";
@@ -135,26 +136,50 @@ export function studioPage(appPath) {
   :root { --bg: #141414; --bar: #1e1e1e; --line: #2c2c2c; --text: #e6e6e6; --dim: #9a9a9a; --accent: #0d99ff; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 12px/1.4 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  button, select { font: inherit; color: var(--text); }
   .studio { display: flex; height: 100vh; }
   .stage { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  .toolbar { height: 40px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 6px; background: var(--bar); border-bottom: 1px solid var(--line); min-width: 0; }
-  .toolbar button { height: 26px; padding: 0 7px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--text); font: inherit; cursor: pointer; flex: none; }
-  .toolbar button:hover { background: #2c2c2c; }
+  .toolbar { height: 40px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 6px; background: var(--bar); border-bottom: 1px solid var(--line); min-width: 0; overflow: hidden; }
+  .toolbar button, .frame-head button { height: 26px; padding: 0 7px; border: 1px solid transparent; border-radius: 5px; background: transparent; cursor: pointer; flex: none; white-space: nowrap; }
+  .toolbar button:hover, .frame-head button:hover { background: #2c2c2c; }
   .toolbar button.on { background: var(--accent); color: #fff; }
-  .toolbar select { height: 26px; max-width: 220px; min-width: 0; padding: 0 6px; border: 1px solid var(--line); border-radius: 5px; background: #2c2c2c; color: var(--text); font: inherit; cursor: pointer; flex: 0 1 auto; }
-  .toolbar select.on { border-color: var(--accent); }
   .toolbar button:disabled { opacity: .35; cursor: default; }
-  .toolbar .sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; flex: none; }
-  .toolbar .size { color: var(--dim); margin: 0 6px; font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
-  .toolbar .path { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
-  .canvas { flex: 1; min-height: 0; overflow: hidden; display: flex; justify-content: center; align-items: center; background: var(--bg); background-image: radial-gradient(#ffffff0d 1px, transparent 1px); background-size: 16px 16px; }
-  .device { padding: 12px; }
-  .wrap { flex: none; width: 100%; height: 100%; overflow: hidden; }
-  iframe { display: block; width: 100%; height: 100%; border: 0; background: #fff; transform-origin: top left; }
-  .device .wrap { box-shadow: 0 0 0 1px var(--line), 0 12px 40px rgba(0,0,0,.45); border-radius: 6px; }
+  select { height: 26px; min-width: 0; max-width: 200px; padding: 0 6px; border: 1px solid var(--line); border-radius: 5px; background: #2c2c2c; cursor: pointer; flex: 0 1 auto; }
+  .sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; flex: none; }
+  .path { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; margin-left: 6px; }
+  .note { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); background: #2c2c2c; border: 1px solid var(--line); padding: 7px 12px; border-radius: 7px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .note.show { opacity: 1; }
+  .body { flex: 1; min-height: 0; display: flex; }
+  .pages { width: 200px; flex: none; border-right: 1px solid var(--line); background: var(--bar); overflow-y: auto; padding: 8px 0; }
+  .pages h4 { margin: 10px 12px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); font-weight: 600; }
+  .pages button { display: flex; align-items: center; gap: 6px; width: 100%; padding: 5px 12px; border: 0; background: transparent; text-align: left; cursor: pointer; color: var(--text); }
+  .pages button:hover { background: #2c2c2c; }
+  .pages button.on { color: var(--accent); }
+  .pages button i { width: 6px; height: 6px; border-radius: 3px; background: #7b61ff; flex: none; }
+  .pages .src { color: var(--dim); font-size: 10px; margin-left: auto; }
+  .pages .empty { padding: 4px 12px; color: var(--dim); }
+  .canvas { flex: 1; min-width: 0; min-height: 0; overflow: auto; display: flex; justify-content: safe center; align-items: safe center; gap: 24px; padding: 12px; background: var(--bg); background-image: radial-gradient(#ffffff0d 1px, transparent 1px); background-size: 16px 16px; }
+  .canvas.fit { padding: 0; }
+  .col { flex: none; display: flex; flex-direction: column; gap: 6px; }
+  .frame-head { height: 28px; display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; }
+  .frame-head select { flex: 1 1 auto; min-width: 48px; max-width: 170px; }
+  .frame-head .dims { color: var(--dim); margin: 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; font-variant-numeric: tabular-nums; font-size: 11px; }
+  .frame-head button { padding: 0 5px; }
+  .wrap { flex: none; overflow: hidden; position: relative; border-radius: 8px; box-shadow: 0 0 0 1px var(--line), 0 12px 40px rgba(0,0,0,.45); }
+  .fit .wrap { border-radius: 0; box-shadow: none; }
+  .screen { position: absolute; top: 0; left: 0; transform-origin: top left; }
+  .screen iframe { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
+  .layer { position: absolute; inset: 0; pointer-events: none; }
+  .chrome-bar { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; font-weight: 600; font-size: 15px; color: #fff; mix-blend-mode: difference; }
+  .island { position: absolute; left: 50%; transform: translateX(-50%); background: #000; }
+  .home-bar { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); height: 5px; border-radius: 3px; background: #fff; mix-blend-mode: difference; }
+  .fold { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; transform: translateX(-50%); background: linear-gradient(90deg, transparent, rgba(0,0,0,.18), transparent); box-shadow: 0 0 12px rgba(0,0,0,.25); }
+  .grid-cols { position: absolute; inset: 0; display: flex; }
+  .grid-cols div { flex: 1; background: rgba(242, 72, 34, .1); }
+  .baseline { position: absolute; inset: 0; background-image: repeating-linear-gradient(to bottom, rgba(13, 153, 255, .22) 0 1px, transparent 1px 8px); }
   #ui-tweaks-root { width: 280px; flex: none; background: #1e1e1e; border-left: 1px solid var(--line); overflow: hidden; }
   .waiting { padding: 24px 18px; color: var(--dim); line-height: 1.5; text-align: center; }
-  @media (max-width: 720px) { #ui-tweaks-root { width: 264px; } .toolbar .path { display: none; } }
+  @media (max-width: 720px) { #ui-tweaks-root { width: 264px; } .path { display: none; } }
 </style>
 </head>
 <body>
@@ -162,123 +187,352 @@ export function studioPage(appPath) {
   <div class="stage">
     <div class="toolbar">
       <button class="exit" title="Leave docked mode">✕</button>
-      <button class="reload" title="Reload the app">↻</button>
+      <button class="reload" title="Reload every frame">↻</button>
+      <button class="pages-toggle" title="Pages">☰</button>
       <span class="sep"></span>
-      <button class="fit" title="Fill the space">Fit</button>
-      <select class="device" title="Device size"></select>
-      <button class="rotate" title="Rotate the device">⟲</button>
-      <span class="size"></span>
+      <button class="fit-btn" title="One frame filling the space">Fit</button>
+      <select class="add" title="Add a device"></select>
+      <span class="sep"></span>
+      <button class="chrome" title="Status bar, notch or Dynamic Island, home indicator">Chrome</button>
+      <button class="grid" title="Column grid">Grid</button>
+      <button class="base" title="8pt baseline">8pt</button>
+      <button class="compare" title="Hold to see the page without your previews (or hold \\ in the app)">Compare</button>
+      <button class="shot" title="Snapshot of the devices as a PNG">📷</button>
       <span class="path"></span>
     </div>
-    <div class="canvas"><div class="wrap"><iframe id="ui-tweaks-frame" title="Your app"></iframe></div></div>
+    <div class="body">
+      <div class="pages" hidden></div>
+      <div class="canvas"></div>
+    </div>
   </div>
   <div id="ui-tweaks-root"><div class="waiting">Loading your app…<br />The panel docks here once it's up.</div></div>
 </div>
+<div class="note"></div>
 <script>
-  const frame = document.getElementById("ui-tweaks-frame");
-  const canvas = document.querySelector(".canvas");
-  const size = document.querySelector(".size");
-  const pathLabel = document.querySelector(".path");
-  frame.src = ${src};
-  const wrap = document.querySelector(".wrap");
-  const picker = document.querySelector(".device");
-  const fit = document.querySelector(".fit");
-  const rotate = document.querySelector(".rotate");
-  // Screen sizes in CSS px, portrait (the Duo opens wide, as it ships).
+  // Screen sizes in CSS px (portrait), and what the device draws over the page.
   const DEVICES = [
     ["iPhone", [
-      ["duo-open", "iPhone Duo, open", 890, 626],
-      ["duo-folded", "iPhone Duo, folded", 466, 678],
-      ["pro-max", "iPhone 18 / 17 / 16 Pro Max", 440, 956],
-      ["air", "iPhone Air", 420, 912],
-      ["pro", "iPhone 18 Pro · 17 Pro · 17", 402, 874],
-      ["i16", "iPhone 16 · 15", 393, 852],
-      ["i14", "iPhone 17e · 14 · 13", 390, 844],
-      ["plus", "iPhone 16 Plus · 15 Plus", 430, 932],
-      ["mini", "iPhone 13 mini", 375, 812],
-      ["se", "iPhone SE", 375, 667],
+      ["duo-open", "iPhone Duo, open", 890, 626, "fold"],
+      ["duo-folded", "iPhone Duo, folded", 466, 678, "island"],
+      ["pro-max", "iPhone 18 / 17 / 16 Pro Max", 440, 956, "island"],
+      ["air", "iPhone Air", 420, 912, "island"],
+      ["pro", "iPhone 18 Pro · 17 Pro · 17", 402, 874, "island"],
+      ["i16", "iPhone 16 · 15", 393, 852, "island"],
+      ["i14", "iPhone 17e · 14 · 13", 390, 844, "notch"],
+      ["plus", "iPhone 16 Plus · 15 Plus", 430, 932, "island"],
+      ["mini", "iPhone 13 mini", 375, 812, "notch"],
+      ["se", "iPhone SE", 375, 667, "home"],
     ]],
     ["iPad", [
-      ["ipad-mini", "iPad mini", 744, 1133],
-      ["ipad-air", "iPad Air 11″", 820, 1180],
-      ["ipad-pro-11", "iPad Pro 11″", 834, 1210],
-      ["ipad-pro-13", "iPad Pro 13″", 1032, 1376],
-      ["ipad-classic", "iPad (classic)", 768, 1024],
+      ["ipad-mini", "iPad mini", 744, 1133, "tablet"],
+      ["ipad-air", "iPad Air 11″", 820, 1180, "tablet"],
+      ["ipad-pro-11", "iPad Pro 11″", 834, 1210, "tablet"],
+      ["ipad-pro-13", "iPad Pro 13″", 1032, 1376, "tablet"],
+      ["ipad-classic", "iPad (classic)", 768, 1024, "tablet"],
     ]],
     ["Android", [
-      ["pixel", "Pixel", 412, 915],
-      ["zfold-folded", "Galaxy Z Fold 5, folded", 344, 882],
+      ["pixel", "Pixel", 412, 915, "android"],
+      ["zfold-folded", "Galaxy Z Fold 5, folded", 344, 882, "android"],
     ]],
     ["Desktop", [
-      ["laptop", "Laptop", 1280, 800],
-      ["mba-13", "MacBook Air 13″", 1470, 956],
-      ["desktop-1440", "Desktop 1440", 1440, 900],
-      ["desktop-1080", "Desktop 1080p", 1920, 1080],
+      ["laptop", "Laptop", 1280, 800, "desktop"],
+      ["mba-13", "MacBook Air 13″", 1470, 956, "desktop"],
+      ["desktop-1440", "Desktop 1440", 1440, 900, "desktop"],
+      ["desktop-1080", "Desktop 1080p", 1920, 1080, "desktop"],
     ]],
   ];
   const BY_ID = Object.fromEntries(DEVICES.flatMap(([, list]) => list.map((d) => [d[0], d])));
-  picker.append(new Option("Device…", ""));
-  for (const [group, list] of DEVICES) {
-    const g = document.createElement("optgroup");
-    g.label = group;
-    for (const [id, name, w, h] of list) g.append(new Option(name + "  " + w + "×" + h, id));
-    picker.append(g);
+  const options = (selected) =>
+    DEVICES.map(([group, list]) => '<optgroup label="' + group + '">' + list.map(([id, name, w, h]) =>
+      '<option value="' + id + '"' + (id === selected ? " selected" : "") + ">" + name + "  " + w + "×" + h + "</option>").join("") + "</optgroup>").join("");
+
+  const $ = (s) => document.querySelector(s);
+  const canvas = $(".canvas");
+  const KEY = "ui-tweaks:studio";
+  let path = ${src};
+  // frames: [{ device, turned }]; one frame with no device = Fit.
+  let view = { frames: [{ device: "", turned: false }], chrome: true, grid: false, base: false, pages: false };
+  try { view = { ...view, ...JSON.parse(localStorage.getItem(KEY) || "{}") }; } catch {}
+  if (!Array.isArray(view.frames) || !view.frames.length) view.frames = [{ device: "", turned: false }];
+  view.frames = view.frames.filter((f, i) => i === 0 || BY_ID[f.device]);
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(view)); } catch {} };
+
+  function note(text) {
+    const n = $(".note");
+    n.textContent = text;
+    n.classList.add("show");
+    clearTimeout(note.t);
+    note.t = setTimeout(() => n.classList.remove("show"), 2600);
   }
-  const KEY = "ui-tweaks:studio-device";
-  let device = "";
-  let turned = false;
-  // A device is laid out at its real size, then scaled down to fit the space.
-  function layout() {
-    const d = BY_ID[device];
-    canvas.classList.toggle("device", !!d);
-    fit.classList.toggle("on", !d);
-    picker.classList.toggle("on", !!d);
-    picker.value = d ? device : "";
-    rotate.disabled = !d;
-    if (!d) {
-      Object.assign(wrap.style, { width: "100%", height: "100%" });
-      Object.assign(frame.style, { width: "100%", height: "100%", transform: "" });
-      size.textContent = Math.round(canvas.clientWidth) + " × " + Math.round(canvas.clientHeight);
-      return;
+
+  // ---------- frames ----------
+  const cols = []; // { col, head, wrap, screen, iframe, layer }
+  function makeCol(i) {
+    const col = document.createElement("div");
+    col.className = "col";
+    col.innerHTML = '<div class="frame-head"></div><div class="wrap"><div class="screen"><iframe title="Your app"></iframe><div class="layer"></div></div></div>';
+    const c = { col, head: col.querySelector(".frame-head"), wrap: col.querySelector(".wrap"), screen: col.querySelector(".screen"), iframe: col.querySelector("iframe"), layer: col.querySelector(".layer") };
+    if (i === 0) c.iframe.dataset.primary = "1";
+    c.iframe.src = path;
+    c.iframe.addEventListener("load", () => followNavigation(c));
+    return c;
+  }
+
+  function frameSize(f) {
+    const d = BY_ID[f.device];
+    if (!d) return null;
+    return f.turned ? [d[3], d[2]] : [d[2], d[3]];
+  }
+
+  function head(c, f, i) {
+    const size = frameSize(f);
+    c.head.innerHTML = '<select class="dev">' + options(f.device) + '</select><span class="dims"></span><button class="turn" title="Rotate">⟲</button>' + (i > 0 ? '<button class="remove" title="Remove this device">✕</button>' : "");
+    c.head.querySelector(".dims").textContent = size ? size[0] + " × " + size[1] : "";
+    c.head.querySelector(".dev").addEventListener("change", (e) => { view.frames[i] = { device: e.target.value, turned: false }; render(); });
+    c.head.querySelector(".turn").addEventListener("click", () => { view.frames[i].turned = !view.frames[i].turned; render(); });
+    const remove = c.head.querySelector(".remove");
+    if (remove) remove.addEventListener("click", () => { view.frames.splice(i, 1); render(); });
+  }
+
+  // What a device draws over the page: status bar, notch or island, home indicator, fold.
+  function chrome(f, w, h) {
+    const d = BY_ID[f.device];
+    if (!d || !view.chrome) return "";
+    const kind = d[4];
+    if (kind === "desktop") return "";
+    const turned = f.turned;
+    const bar = { island: 54, notch: 47, home: 20, android: 28, tablet: 24, fold: 32 }[kind];
+    let html = "";
+    if (!turned || kind === "tablet" || kind === "fold") {
+      html += '<div class="chrome-bar" style="height:' + bar + 'px;font-size:' + (kind === "home" || kind === "tablet" ? 12 : 15) + 'px"><span>9:41</span><span>●●● ▮</span></div>';
     }
-    const [w, h] = turned ? [d[3], d[2]] : [d[2], d[3]];
-    const availW = canvas.clientWidth - 24, availH = canvas.clientHeight - 24;
-    const scale = Math.min(1, availW / w, availH / h);
-    Object.assign(frame.style, { width: w + "px", height: h + "px", transform: scale < 1 ? "scale(" + scale + ")" : "" });
-    Object.assign(wrap.style, { width: w * scale + "px", height: h * scale + "px" });
-    size.textContent = w + " × " + h + (scale < 1 ? " · " + Math.round(scale * 100) + "%" : "");
+    if (!turned && kind === "island") html += '<div class="island" style="top:11px;width:124px;height:36px;border-radius:18px"></div>';
+    if (!turned && kind === "notch") html += '<div class="island" style="top:0;width:162px;height:32px;border-radius:0 0 18px 18px"></div>';
+    if (!turned && kind === "android") html += '<div class="island" style="top:10px;width:12px;height:12px;border-radius:6px"></div>';
+    if (kind === "fold") html += '<div class="fold" style="' + (turned ? "left:0;right:0;top:50%;bottom:auto;width:auto;height:2px;transform:translateY(-50%)" : "") + '"></div>';
+    if (kind !== "home" && kind !== "desktop") html += '<div class="home-bar" style="width:' + (kind === "tablet" ? 300 : 134) + 'px"></div>';
+    return html;
   }
-  function choose(id, isTurned = false) {
-    device = BY_ID[id] ? id : "";
-    turned = !!device && isTurned;
-    try { localStorage.setItem(KEY, JSON.stringify({ device, turned })); } catch {}
+
+  function overlays(w) {
+    let html = "";
+    if (view.grid) {
+      const [n, margin, gutter] = w < 600 ? [4, 16, 16] : w < 1024 ? [8, 24, 24] : [12, 32, 24];
+      html += '<div class="grid-cols" style="padding:0 ' + margin + "px;gap:" + gutter + 'px">' + "<div></div>".repeat(n) + "</div>";
+    }
+    if (view.base) html += '<div class="baseline"></div>';
+    return html;
+  }
+
+  function render() {
+    save();
+    const fit = view.frames.length === 1 && !BY_ID[view.frames[0].device];
+    canvas.classList.toggle("fit", fit);
+    $(".fit-btn").classList.toggle("on", fit);
+    for (const [cls, key] of [[".chrome", "chrome"], [".grid", "grid"], [".base", "base"], [".pages-toggle", "pages"]]) $(cls).classList.toggle("on", !!view[key]);
+    $(".pages").hidden = !view.pages;
+    $(".add").innerHTML = '<option value="">+ Device</option>' + options("");
+    while (cols.length > view.frames.length) cols.pop().col.remove();
+    while (cols.length < view.frames.length) {
+      const c = makeCol(cols.length);
+      cols.push(c);
+      canvas.append(c.col);
+    }
+    view.frames.forEach((f, i) => {
+      const c = cols[i];
+      c.head.hidden = fit;
+      if (!fit) head(c, f, i);
+    });
     layout();
   }
-  try {
-    const saved = JSON.parse(localStorage.getItem(KEY) || "{}");
-    choose(saved.device || "", saved.turned);
-  } catch { choose(""); }
-  fit.addEventListener("click", () => choose(""));
-  picker.addEventListener("change", () => choose(picker.value));
-  rotate.addEventListener("click", () => choose(device, !turned));
-  new ResizeObserver(layout).observe(canvas);
-  const appUrl = () => { try { return frame.contentWindow.location; } catch { return null; } };
-  frame.addEventListener("load", () => {
-    const loc = appUrl();
-    if (!loc) return;
-    const path = loc.pathname + loc.search + loc.hash;
-    pathLabel.textContent = path;
+
+  // Every device at its real size, all scaled by one factor so they fit side by side.
+  function layout() {
+    const fit = view.frames.length === 1 && !BY_ID[view.frames[0].device];
+    if (fit) {
+      const c = cols[0];
+      c.col.style.width = "";
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      Object.assign(c.wrap.style, { width: w + "px", height: h + "px" });
+      Object.assign(c.screen.style, { width: w + "px", height: h + "px", transform: "" });
+      c.layer.innerHTML = overlays(w);
+      return;
+    }
+    const sizes = view.frames.map((f) => frameSize(f) || [canvas.clientWidth, canvas.clientHeight]);
+    // Devices scale; the 24px gaps between them and the canvas's 12px padding don't.
+    const sumW = sizes.reduce((a, [w]) => a + w, 0);
+    const gaps = 24 * (sizes.length - 1);
+    const maxH = Math.max(...sizes.map(([, h]) => h));
+    const scale = Math.min(1, (canvas.clientWidth - 32 - gaps) / sumW, (canvas.clientHeight - 32 - 34) / maxH);
+    sizes.forEach(([w, h], i) => {
+      const c = cols[i];
+      c.col.style.width = w * scale + "px";
+      Object.assign(c.wrap.style, { width: w * scale + "px", height: h * scale + "px" });
+      Object.assign(c.screen.style, { width: w + "px", height: h + "px", transform: scale < 1 ? "scale(" + scale + ")" : "" });
+      c.layer.innerHTML = overlays(w) + chrome(view.frames[i], w, h);
+      const dims = c.head.querySelector(".dims");
+      if (dims) dims.textContent = w + " × " + h + (scale < 1 ? " · " + Math.round(scale * 100) + "%" : "");
+    });
+  }
+
+  // Navigating in one frame takes the others along.
+  function followNavigation(c) {
+    let loc;
+    try { loc = c.iframe.contentWindow.location; } catch { return; }
+    const next = loc.pathname + loc.search + loc.hash;
+    try { document.title = "UI Tweaks · " + c.iframe.contentDocument.title; } catch {}
+    if (next === path) return;
+    path = next;
+    $(".path").textContent = path;
     history.replaceState(null, "", "?path=" + encodeURIComponent(path));
-    try { frame.contentDocument.title && (document.title = "UI Tweaks · " + frame.contentDocument.title); } catch {}
+    for (const other of cols) {
+      try {
+        const l = other.iframe.contentWindow.location;
+        if (other !== c && l.pathname + l.search + l.hash !== path) other.iframe.src = path;
+      } catch {}
+    }
+    loadPages();
+  }
+
+  function go(to) {
+    path = to;
+    $(".path").textContent = to;
+    history.replaceState(null, "", "?path=" + encodeURIComponent(to));
+    for (const c of cols) c.iframe.src = to;
+    loadPages();
+  }
+
+  // ---------- pages ----------
+  const visited = new Set();
+  async function loadPages() {
+    visited.add(path);
+    if (!view.pages) return;
+    const box = $(".pages");
+    let data = { routes: [], pending: [] };
+    try { data = await fetch("/__ui-tweaks/routes").then((r) => r.json()); } catch {}
+    const known = new Set(data.routes.map((r) => r.path));
+    const row = (p, src) => '<button data-path="' + p.replace(/"/g, "&quot;") + '" class="' + (p === path ? "on" : "") + '">' + (data.pending.includes(p) ? "<i title='Has pending tweaks'></i>" : "") + "<span>" + p.replace(/</g, "&lt;") + "</span>" + (src ? '<span class="src">' + src + "</span>" : "") + "</button>";
+    const extra = [...visited].filter((p) => !known.has(p));
+    box.innerHTML = "<h4>Pages</h4>" + (data.routes.length ? data.routes.map((r) => row(r.path, r.source)).join("") : '<div class="empty">No routes found in the project.</div>') +
+      (extra.length ? "<h4>Visited</h4>" + extra.map((p) => row(p, "")).join("") : "");
+    for (const b of box.querySelectorAll("button[data-path]")) {
+      b.addEventListener("click", () => {
+        const p = b.dataset.path;
+        if (/[\\[:*]/.test(p)) return note("That route needs a value; open it in the app and it shows under Visited.");
+        go(p);
+      });
+    }
+  }
+
+  // ---------- toolbar ----------
+  $(".fit-btn").addEventListener("click", () => { view.frames = [{ device: "", turned: false }]; render(); });
+  $(".add").addEventListener("change", (e) => {
+    const id = e.target.value;
+    if (!id) return;
+    const fit = view.frames.length === 1 && !BY_ID[view.frames[0].device];
+    if (fit) view.frames = [{ device: id, turned: false }];
+    else view.frames.push({ device: id, turned: false });
+    render();
   });
-  document.querySelector(".reload").addEventListener("click", () => frame.contentWindow.location.reload());
-  document.querySelector(".exit").addEventListener("click", () => {
-    const loc = appUrl();
-    location.href = loc ? loc.href : ${src};
+  for (const [cls, key] of [[".chrome", "chrome"], [".grid", "grid"], [".base", "base"]]) $(cls).addEventListener("click", () => { view[key] = !view[key]; render(); });
+  $(".pages-toggle").addEventListener("click", () => { view.pages = !view.pages; render(); loadPages(); });
+  $(".reload").addEventListener("click", () => cols.forEach((c) => c.iframe.contentWindow.location.reload()));
+  $(".exit").addEventListener("click", () => {
+    let href = path;
+    try { href = cols[0].iframe.contentWindow.location.href; } catch {}
+    location.href = href;
   });
+  // Compare: held down, every frame shows the page without its previews.
+  const compare = (on) => cols.forEach((c) => { try { c.iframe.contentWindow.__uiTweaks.compare(on); } catch {} });
+  const cmp = $(".compare");
+  cmp.addEventListener("pointerdown", () => { cmp.classList.add("on"); compare(true); });
+  for (const ev of ["pointerup", "pointerleave"]) cmp.addEventListener(ev, () => { if (cmp.classList.contains("on")) { cmp.classList.remove("on"); compare(false); } });
+
+  // Snapshot: the browser captures this tab (it asks each time), cropped to the devices.
+  $(".shot").addEventListener("click", async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return note("This browser can't capture the page; use Chrome.");
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: { displaySurface: "browser" }, audio: false, preferCurrentTab: true, selfBrowserSurface: "include" });
+    } catch {
+      return note("Snapshot cancelled.");
+    }
+    const hide = (on) => cols.forEach((c) => { try { c.iframe.contentWindow.__uiTweaks.hideOverlay(on); } catch {} });
+    hide(true);
+    try {
+      const video = document.createElement("video");
+      video.srcObject = stream;
+      video.muted = true;
+      await video.play();
+      await new Promise((r) => setTimeout(r, 250));
+      const sx = video.videoWidth / innerWidth, sy = video.videoHeight / innerHeight;
+      const boxes = cols.map((c) => c.wrap.getBoundingClientRect());
+      const left = Math.min(...boxes.map((b) => b.left)), top = Math.min(...boxes.map((b) => b.top));
+      const right = Math.max(...boxes.map((b) => b.right)), bottom = Math.max(...boxes.map((b) => b.bottom));
+      const pad = cols.length > 1 ? 16 : 0;
+      const out = document.createElement("canvas");
+      out.width = Math.round((right - left + pad * 2) * sx);
+      out.height = Math.round((bottom - top + pad * 2) * sy);
+      const ctx = out.getContext("2d");
+      ctx.fillStyle = "#141414";
+      ctx.fillRect(0, 0, out.width, out.height);
+      ctx.drawImage(video, (left - pad) * sx, (top - pad) * sy, out.width, out.height, 0, 0, out.width, out.height);
+      const blob = await new Promise((r) => out.toBlob(r, "image/png"));
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "ui-tweaks-" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".png";
+      a.click();
+      try { await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]); note("Snapshot saved and copied."); } catch { note("Snapshot saved."); }
+    } finally {
+      stream.getTracks().forEach((t) => t.stop());
+      hide(false);
+    }
+  });
+
+  $(".path").textContent = path;
+  new ResizeObserver(layout).observe(canvas);
+  render();
+  loadPages();
 </script>
 </body>
 </html>`;
+}
+
+/**
+ * The app's pages, for the studio's sidebar: Next.js app/ and pages/ routes, router `path` definitions
+ * in the source, and HTML files. Dynamic segments ([id], :id) are kept as written.
+ */
+export async function findRoutes(root) {
+  const routes = new Map(); // path -> source
+  const add = (p, source) => {
+    const clean = ("/" + p).replace(/\/+/g, "/").replace(/(.)\/$/, "$1");
+    if (!routes.has(clean)) routes.set(clean, source);
+  };
+  for (const file of await sourceFiles(root)) {
+    const rel = path.relative(root, file).split(path.sep).join("/");
+    const next = /^(?:src\/)?app\/(.*?)\/?page\.(?:tsx|jsx|ts|js|mdx)$/.exec(rel) || /^(?:src\/)?app\/()page\.(?:tsx|jsx|ts|js|mdx)$/.exec(rel);
+    if (next) {
+      add(next[1].split("/").filter((seg) => !/^\(.*\)$/.test(seg) && !seg.startsWith("@")).join("/"), "app");
+      continue;
+    }
+    const pages = /^(?:src\/)?pages\/(.*)\.(?:tsx|jsx|ts|js)$/.exec(rel);
+    if (pages && !/(^|\/)(_app|_document|_error)$/.test(pages[1]) && !pages[1].startsWith("api/")) {
+      add(pages[1].replace(/(^|\/)index$/, ""), "pages");
+      continue;
+    }
+    if (rel.endsWith(".html") && !rel.startsWith(".")) {
+      add(rel === "index.html" ? "" : rel.replace(/(^|\/)index\.html$/, "$1"), "html");
+      continue;
+    }
+    const text = await fs.readFile(file, "utf8").catch(() => "");
+    for (const m of text.matchAll(/\bpath\s*[:=]\s*\{?\s*["'`](\/[^"'`\s]*)["'`]/g)) add(m[1], "router");
+  }
+  if (!routes.size) add("", "");
+  const pending = (await readPending(root)).batches.map((b) => b.page && b.page.path).filter(Boolean);
+  return {
+    routes: [...routes].map(([p, source]) => ({ path: p, source })).sort((a, b) => a.path.localeCompare(b.path)),
+    pending: [...new Set(pending)],
+  };
 }
 
 /**
@@ -313,6 +567,9 @@ export function createTweaksHandler({ root, getVersion }) {
     if (!url.pathname.startsWith(PREFIX)) return next();
     try {
       if (req.method === "OPTIONS") return send(res, 204, "");
+      if (req.method === "GET" && url.pathname === `${PREFIX}/routes`) {
+        return send(res, 200, await findRoutes(root));
+      }
       if (req.method === "GET" && url.pathname === `${PREFIX}/studio`) {
         return send(res, 200, studioPage(url.searchParams.get("path") || "/"), "text/html; charset=utf-8");
       }

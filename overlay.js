@@ -19,6 +19,14 @@
       return null;
     }
   })();
+  // With several devices in the studio, each frame runs an overlay; the one whose panel is docked owns it.
+  const IS_PRIMARY = (() => {
+    try {
+      return !window.frameElement || window.frameElement.dataset.primary === "1";
+    } catch {
+      return true;
+    }
+  })();
   // The studio is served by the dev server the page came from; a sidecar on another origin can't frame it.
   const CAN_DOCK = !(script && script.dataset.api);
 
@@ -437,7 +445,7 @@
         }
       }
     }
-    for (const t of state.tweaks.values()) {
+    for (const t of state.comparing ? [] : state.tweaks.values()) {
       const byState = {};
       for (const [key, c] of Object.entries(t.changes)) if (c.state && c.to !== undefined) (byState[c.state] ||= []).push(`${c.prop}: ${c.to} !important;`);
       if (!Object.keys(byState).length) continue;
@@ -520,6 +528,7 @@
 
   // React may remount nodes; find them again by selector and re-apply the preview.
   setInterval(() => {
+    if (state.comparing) return;
     for (const tweak of state.tweaks.values()) {
       if (!tweak.el.isConnected) {
         const again = document.querySelector(tweak.element.selector);
@@ -531,6 +540,75 @@
       reapply(tweak);
     }
   }, 600);
+
+  // In the studio, only the frame whose panel is docked edits; the others mirror its previews.
+  function ownsPanel() {
+    return !STUDIO || (panel.isConnected && panel.ownerDocument === STUDIO.document);
+  }
+
+  function resync() {
+    for (const t of [...state.tweaks.values()]) {
+      for (const [key, change] of Object.entries(t.changes)) clearChange(t.el, key, change);
+      if (t.text) t.el.textContent = t.text.from;
+    }
+    state.tweaks.clear();
+    restore();
+  }
+  addEventListener("storage", (e) => {
+    if (e.key === STORE_KEY && STUDIO && !ownsPanel()) resync();
+  });
+
+  // ---------- before / after ----------
+  // Hold \ (or the studio's Compare) to see the page as the source has it, without the previews.
+  function compare(on) {
+    if (!!state.comparing === on) return;
+    state.comparing = on;
+    for (const t of state.tweaks.values()) {
+      for (const [key, change] of Object.entries(t.changes)) {
+        if (on) clearChange(t.el, key, change);
+        else if (change.to !== undefined) applyChange(t.el, key, change);
+      }
+      if (t.text) t.el.textContent = on ? t.text.from : t.text.to;
+    }
+    updateStateSheet();
+    host.classList.toggle("comparing", on);
+  }
+
+  // ---------- copy / paste style ----------
+  const COPY_PROPS = [
+    "font-size", "font-weight", "line-height", "letter-spacing", "color", "text-align",
+    "background-color", "background-image", "opacity", "box-shadow",
+    ...GROUPS["border-radius"], ...GROUPS["border-width"], ...GROUPS["border-color"], ...GROUPS.padding,
+  ];
+  const CLIP_KEY = "ui-tweaks:style-clipboard";
+
+  function copyStyle(el) {
+    const t = state.tweaks.get(keyOf(el));
+    const values = Object.fromEntries(COPY_PROPS.map((p) => [p, (t && t.changes[p] && t.changes[p].to) || computed(el, p)]));
+    try {
+      localStorage.setItem(CLIP_KEY, JSON.stringify({ from: describe(el).selector, values }));
+    } catch {}
+    toast("Style copied");
+  }
+
+  function pasteStyle(el) {
+    let clip = null;
+    try {
+      clip = JSON.parse(localStorage.getItem(CLIP_KEY) || "null");
+    } catch {}
+    if (!clip) return toast("Copy a style first (⌘⌥C)");
+    const t = state.tweaks.get(keyOf(el));
+    let n = 0;
+    for (const [prop, value] of Object.entries(clip.values)) {
+      const current = (t && t.changes[prop] && t.changes[prop].to) || computed(el, prop);
+      if (value !== current) {
+        setStyle(el, prop, value, true);
+        n++;
+      }
+    }
+    render();
+    toast(n ? `Pasted ${n} propert${n === 1 ? "y" : "ies"}` : "Already the same style");
+  }
 
   function persist() {
     try {
@@ -672,6 +750,14 @@
     .foot { display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--line); }
     .foot .btn.primary { flex: 1; }
     .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--bg); color: var(--text); border: 1px solid var(--line); padding: 8px 14px; border-radius: 8px; font-size: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.4); pointer-events: none; transition: opacity .2s; }
+    .measure { position: fixed; pointer-events: none; background: #f24822; }
+    .measure-label { position: fixed; pointer-events: none; background: #f24822; color: #fff; font-size: 10px; font-weight: 600; padding: 1px 4px; border-radius: 3px; }
+    .hover-box.measuring { outline-color: #f24822; background: rgba(242,72,34,.06); }
+    :host(.comparing) .sel-box, :host(.comparing) .pad, :host(.comparing) .mar { opacity: .25; }
+    .contrast { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 10.5px; color: var(--dim); }
+    .contrast b { color: var(--text); font-weight: 600; }
+    .contrast .ok { color: #14ae5c; }
+    .contrast .no { color: #f24822; }
     .hidden { display: none !important; }
   </style>
   <div class="hover-box hidden"></div>
@@ -679,6 +765,8 @@
   <div class="pad p-t hidden"></div><div class="pad p-r hidden"></div><div class="pad p-b hidden"></div><div class="pad p-l hidden"></div>
   <div class="sel-box hidden"></div>
   <div class="tag hidden"></div>
+  <div class="measure hidden"></div><div class="measure hidden"></div><div class="measure hidden"></div><div class="measure hidden"></div>
+  <div class="measure-label hidden"></div><div class="measure-label hidden"></div><div class="measure-label hidden"></div><div class="measure-label hidden"></div>
   <button class="launch" title="UI Tweaks (Alt+T)"><span class="dot"></span><span class="label">Tweak</span><span class="count hidden"></span></button>
   <div class="panel hidden"></div>
   <div class="toast hidden"></div>`;
@@ -705,12 +793,56 @@
     Object.assign(node.style, { left: rect.left + "px", top: rect.top + "px", width: rect.width + "px", height: rect.height + "px" });
   }
 
+  // Figma-style measurements: with Alt held, red lines and distances from the selection to the hovered element.
+  function drawMeasures() {
+    const lines = [...shadow.querySelectorAll(".measure")];
+    const labels = [...shadow.querySelectorAll(".measure-label")];
+    lines.concat(labels).forEach((n) => n.classList.add("hidden"));
+    const a = state.selected, b = state.hovered;
+    if (!state.measuring || !a || !b || a === b || !a.isConnected || !b.isConnected || !ownsPanel()) return false;
+    const r = a.getBoundingClientRect(), o = b.getBoundingClientRect();
+    const segments = []; // { x1, y1, x2, y2, value }
+    const inside = (p, q) => p.left >= q.left && p.right <= q.right && p.top >= q.top && p.bottom <= q.bottom;
+    if (inside(r, o) || inside(o, r)) {
+      // One holds the other: the four distances between their edges.
+      const [inner, outer] = inside(r, o) ? [r, o] : [o, r];
+      const cx = inner.left + inner.width / 2, cy = inner.top + inner.height / 2;
+      segments.push({ x1: cx, y1: outer.top, x2: cx, y2: inner.top }, { x1: cx, y1: inner.bottom, x2: cx, y2: outer.bottom });
+      segments.push({ x1: outer.left, y1: cy, x2: inner.left, y2: cy }, { x1: inner.right, y1: cy, x2: outer.right, y2: cy });
+    } else {
+      // Side by side: the gaps between them, drawn where they overlap (or from the selection's middle).
+      const midY = Math.max(r.top, o.top) < Math.min(r.bottom, o.bottom) ? (Math.max(r.top, o.top) + Math.min(r.bottom, o.bottom)) / 2 : r.top + r.height / 2;
+      const midX = Math.max(r.left, o.left) < Math.min(r.right, o.right) ? (Math.max(r.left, o.left) + Math.min(r.right, o.right)) / 2 : r.left + r.width / 2;
+      if (o.left >= r.right) segments.push({ x1: r.right, y1: midY, x2: o.left, y2: midY });
+      if (o.right <= r.left) segments.push({ x1: o.right, y1: midY, x2: r.left, y2: midY });
+      if (o.top >= r.bottom) segments.push({ x1: midX, y1: r.bottom, x2: midX, y2: o.top });
+      if (o.bottom <= r.top) segments.push({ x1: midX, y1: o.bottom, x2: midX, y2: r.top });
+    }
+    segments.slice(0, 4).forEach((g, i) => {
+      const length = Math.abs(g.x2 - g.x1) + Math.abs(g.y2 - g.y1);
+      if (length < 0.5) return;
+      const isVertical = g.x1 === g.x2;
+      place(lines[i], isVertical
+        ? { left: g.x1, top: Math.min(g.y1, g.y2), width: 1, height: Math.abs(g.y2 - g.y1) }
+        : { left: Math.min(g.x1, g.x2), top: g.y1, width: Math.abs(g.x2 - g.x1), height: 1 });
+      labels[i].classList.remove("hidden");
+      labels[i].textContent = shortNumber(length);
+      Object.assign(labels[i].style, {
+        left: (isVertical ? g.x1 + 4 : (g.x1 + g.x2) / 2 - 12) + "px",
+        top: (isVertical ? (g.y1 + g.y2) / 2 - 8 : g.y1 + 4) + "px",
+      });
+    });
+    return true;
+  }
+
   function drawBoxes() {
+    const isMeasuring = drawMeasures();
     const hoverBox = $(".hover-box");
-    if (state.isOpen && state.isPicking && state.hovered && state.hovered !== state.selected) place(hoverBox, state.hovered.getBoundingClientRect());
+    hoverBox.classList.toggle("measuring", isMeasuring);
+    if (state.isOpen && (state.isPicking || isMeasuring) && state.hovered && state.hovered !== state.selected) place(hoverBox, state.hovered.getBoundingClientRect());
     else hoverBox.classList.add("hidden");
 
-    const el = state.isOpen ? state.selected : null;
+    const el = state.isOpen && ownsPanel() ? state.selected : null;
     const sel = $(".sel-box");
     const tag = $(".tag");
     const sides = ["t", "r", "b", "l"];
@@ -864,6 +996,61 @@
     tokenCache = { colors: colors.slice(0, 80), lengths: lengths.slice(0, 80) };
     tokenCacheKey = cacheKey;
     return tokenCache;
+  }
+
+  // ---------- contrast ----------
+  function luminance({ r, g, b }) {
+    const lin = (c) => ((c /= 255) <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  }
+  const over = (top, under) => ({
+    r: top.r * top.a + under.r * (1 - top.a),
+    g: top.g * top.a + under.g * (1 - top.a),
+    b: top.b * top.a + under.b * (1 - top.a),
+    a: 1,
+  });
+  const ratio = (a, b) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+
+  /** The colors behind an element's text: one solid color, or a gradient's stops (worst case wins). */
+  function backdrops(el) {
+    const layers = [];
+    for (let n = el; n; n = n.parentElement) {
+      const cs = getComputedStyle(n);
+      if (/gradient\(/.test(cs.backgroundImage)) {
+        const gradients = splitTopLevel(cs.backgroundImage).filter((l) => /gradient\(/.test(l));
+        const stops = (gradients[gradients.length - 1].match(COLOR_TOKEN) || []).map(rgbaOf).filter((c) => c.a > 0.5);
+        if (stops.length) return { colors: stops.map((c) => layers.reduceRight((acc, l) => over(l, acc), { ...c, a: 1 })), isGradient: true };
+      } else if (cs.backgroundImage !== "none") {
+        return { colors: [], isImage: true };
+      }
+      const c = rgbaOf(cs.backgroundColor);
+      if (c.a > 0) layers.push(c);
+      if (c.a >= 1) break;
+    }
+    const base = layers.length && layers[layers.length - 1].a >= 1 ? layers.pop() : { r: 255, g: 255, b: 255, a: 1 };
+    return { colors: [layers.reduceRight((acc, l) => over(l, acc), base)] };
+  }
+
+  function contrastRow(el) {
+    const row = document.createElement("div");
+    row.className = "contrast";
+    const { colors, isImage, isGradient } = backdrops(el);
+    if (isImage || !colors.length) {
+      row.textContent = "Contrast: can't measure over an image";
+      return row;
+    }
+    const fg = rgbaOf(computed(el, "color"));
+    const value = Math.min(...colors.map((bg) => ratio(fg.a < 1 ? over(fg, bg) : { ...fg, a: 1 }, bg)));
+    const size = parseFloat(computed(el, "font-size"));
+    const isLarge = size >= 24 || (size >= 18.66 && parseInt(computed(el, "font-weight"), 10) >= 700);
+    const aa = value >= (isLarge ? 3 : 4.5), aaa = value >= (isLarge ? 4.5 : 7);
+    row.innerHTML = `Contrast <b>${value.toFixed(2)}:1</b>${isGradient ? " (lowest over the gradient)" : ""}
+      <span class="${aa ? "ok" : "no"}">AA ${aa ? "✓" : "✗"}</span><span class="${aaa ? "ok" : "no"}">AAA ${aaa ? "✓" : "✗"}</span>`;
+    row.title = isLarge ? "Large text: AA needs 3:1, AAA 4.5:1" : "Body text: AA needs 4.5:1, AAA 7:1";
+    return row;
   }
 
   // Changes that cannot show, with why: the panel warns as you edit, and Claude gets them too.
@@ -1304,7 +1491,16 @@
         b.addEventListener("click", () => select(n));
         crumbs.append(b);
       });
-      head.append(name, meta, crumbs, layersTree(el));
+      const styleTools = document.createElement("div");
+      styleTools.className = "crumbs";
+      for (const [label, title, run] of [["Copy style", "Copy this element's type, fill, border, radius, shadow and padding (⌘⌥C)", copyStyle], ["Paste style", "Paste the copied style onto this element (⌘⌥V)", pasteStyle]]) {
+        const b = document.createElement("button");
+        b.textContent = label;
+        b.title = title;
+        b.addEventListener("click", () => run(el));
+        styleTools.append(b);
+      }
+      head.append(name, meta, crumbs, styleTools, layersTree(el));
       const states = document.createElement("div");
       states.className = "seg";
       states.style.marginTop = "8px";
@@ -1365,6 +1561,7 @@
           grid("grid2 row", numberField(el, "line-height", "LH", { step: 0.05, min: 0 }), numberField(el, "letter-spacing", "LS", { step: 0.1 })),
           lbl("Color"),
           colorField(el, "color"),
+          contrastRow(el),
           lbl("Align"),
           segmented(el, "text-align", [["left", "Left"], ["center", "Center"], ["right", "Right"]]),
         ));
@@ -1608,6 +1805,7 @@
         return;
       }
       lastVersion = version;
+      if (!ownsPanel()) return; // the owning frame settles the queue; this one mirrors it
       // A sent tweak that left the queue is in the source now: drop its preview.
       const waiting = new Map(pendingTweaks.map((p) => [p.id, p.skipped || null]));
       let applied = 0;
@@ -1680,7 +1878,8 @@
   function render() {
     if (STUDIO) state.isOpen = true;
     launch.classList.toggle("hidden", state.isOpen || !!STUDIO);
-    panel.classList.toggle("hidden", !state.isOpen);
+    // In the studio, a frame that doesn't own the docked panel shows none of its own.
+    panel.classList.toggle("hidden", !state.isOpen || (STUDIO && !ownsPanel()));
     const count = launch.querySelector(".count");
     count.textContent = String(state.tweaks.size);
     count.classList.toggle("hidden", state.tweaks.size === 0);
@@ -1693,6 +1892,7 @@
     if (el && state.editState) el.setAttribute("data-ui-tweak-force", state.editState);
     updateStateSheet();
     state.expanded = {};
+    if (STUDIO && el && !ownsPanel()) return attachPopup(STUDIO);
     render();
   }
 
@@ -1747,7 +1947,11 @@
     const root = doc.getElementById("ui-tweaks-root");
     if (panel.ownerDocument !== doc || panel.parentNode !== root) root.replaceChildren(doc.adoptNode(panel));
     panel.classList.remove("left");
-    if (state.popup !== win) doc.addEventListener("keydown", onKey, true);
+    if (state.popup !== win) {
+      doc.addEventListener("keydown", onKey, true);
+      doc.addEventListener("keydown", (e) => ownsPanel() && onAlt(e), true);
+      doc.addEventListener("keyup", (e) => ownsPanel() && onKeyUp(e), true);
+    }
     state.popup = win;
     state.isOpen = true;
     render();
@@ -1847,7 +2051,17 @@
   }, true);
 
   function onKey(e) {
+    if (STUDIO && e.currentTarget === STUDIO.document && !ownsPanel()) return;
     const typing = e.composedPath().some((n) => n.tagName === "INPUT" || n.tagName === "TEXTAREA" || n.isContentEditable);
+    if (state.isOpen && !typing && state.selected && (e.metaKey || e.ctrlKey) && e.altKey && (e.code === "KeyC" || e.code === "KeyV")) {
+      e.preventDefault();
+      e.stopPropagation();
+      return e.code === "KeyC" ? copyStyle(state.selected) : pasteStyle(state.selected);
+    }
+    if (state.isOpen && !typing && e.key === "\\" && !e.repeat) {
+      e.preventDefault();
+      return compare(true);
+    }
     if (e.altKey && e.code === "KeyT") {
       e.preventDefault();
       if (STUDIO) return leaveStudio();
@@ -1872,6 +2086,21 @@
   }
   document.addEventListener("keydown", onKey, true);
 
+  // Alt held: measure from the selection to what the pointer is over. \ released: back to the previews.
+  function onKeyUp(e) {
+    if (e.key === "\\") compare(false);
+    if (e.key === "Alt") state.measuring = false;
+  }
+  function onAlt(e) {
+    if (e.key === "Alt") state.measuring = true;
+  }
+  document.addEventListener("keyup", onKeyUp, true);
+  document.addEventListener("keydown", onAlt, true);
+  addEventListener("blur", () => {
+    state.measuring = false;
+    compare(false);
+  });
+
   // Apps often cancel wheel events (custom scrollers, scroll-snap); scroll the panel ourselves.
   panel.addEventListener("wheel", (e) => {
     e.stopPropagation();
@@ -1887,7 +2116,7 @@
   function mount() {
     document.body.appendChild(host);
     restore();
-    if (STUDIO) attachPopup(STUDIO);
+    if (STUDIO && IS_PRIMARY) attachPopup(STUDIO);
     else render();
   }
   if (document.body) mount();
@@ -1900,5 +2129,8 @@
     attachPopup,
     close: () => toggle(false),
     select: (selector) => select(document.querySelector(selector)),
+    compare,
+    // Hides outlines and the launcher (for snapshots).
+    hideOverlay: (on) => (host.style.visibility = on ? "hidden" : ""),
   };
 })();

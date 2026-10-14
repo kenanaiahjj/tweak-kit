@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { applyDirect, collapse, findRule } from "../direct-apply.mjs";
+import { findRoutes } from "../server-core.mjs";
 
 const CSS = `.card { padding: 12px 20px; color: #111 !important; }
 .shared, .other { color: red; }
@@ -148,4 +149,23 @@ test("a tweak is split: values Haiku must do stay queued, the rest is applied", 
   const css = out.files.find((f) => f.path.endsWith("styles.css")).after;
   assert.match(css, /\.hero h1 \{ font-size: 44px; color: var\(--ink\); \}\n\n\.hero h1\.[a-z0-9]+--t[0-9a-z]{4} \{\n  color: #5b3df5;\n\}/);
   assert.match(out.files.find((f) => f.path.endsWith("App.tsx")).after, /<h1 className="[a-z0-9]+--t[0-9a-z]{4}">Your identity<\/h1>/);
+});
+
+test("routes for the studio's pages list: Next app/ and pages/, router paths, HTML files", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "uitk-routes-"));
+  for (const [file, text] of [
+    ["app/page.tsx", "export default 1"],
+    ["app/(shop)/cart/page.tsx", "export default 1"],
+    ["app/blog/[slug]/page.tsx", "export default 1"],
+    ["pages/about.tsx", "export default 1"],
+    ["pages/_app.tsx", "export default 1"],
+    ["pages/api/hello.ts", "export default 1"],
+    ["src/router.tsx", 'const r = [{ path: "/settings" }, { path: "/users/:id" }]; <Route path="/help" />'],
+    ["docs/index.html", "<html></html>"],
+  ]) {
+    await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+    await writeFile(path.join(root, file), text);
+  }
+  const { routes } = await findRoutes(root);
+  assert.deepEqual(routes.map((r) => r.path), ["/", "/about", "/blog/[slug]", "/cart", "/docs", "/help", "/settings", "/users/:id"]);
 });

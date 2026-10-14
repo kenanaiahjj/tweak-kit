@@ -1,0 +1,5 @@
+{
+  "name": "ui-tweak-kit",
+  "owner": { "name": "Kenanaiah" },
+  "plugins": [{ "name": "ui-tweaks", "source": "./claude-mod" }]
+}

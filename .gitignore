@@ -1,0 +1,5 @@
+node_modules/
+.ui-tweaks/
+.DS_Store
+claude-mod/.claude-plugin/types/
+claude-mod/tsconfig.json

@@ -1,0 +1,9 @@
+{
+  "name": "ui-tweaks",
+  "version": "0.1.0",
+  "description": "Turns Figma-style tweaks made in the browser overlay (ui-tweak-kit) into source edits",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Kenanaiah"
+  }
+}

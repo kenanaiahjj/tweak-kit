@@ -1,0 +1,17 @@
+{
+  "name": "ui-tweak-kit",
+  "version": "0.1.0",
+  "description": "Figma-style visual tweaks in the browser, applied to the source by Claude Code",
+  "type": "module",
+  "license": "UNLICENSED",
+  "private": true,
+  "exports": {
+    "./vite": { "types": "./vite-plugin.d.mts", "default": "./vite-plugin.mjs" },
+    "./server": "./server-core.mjs",
+    "./overlay.js": "./overlay.js"
+  },
+  "bin": { "ui-tweaks-serve": "./serve.mjs" },
+  "files": ["overlay.js", "server-core.mjs", "serve.mjs", "vite-plugin.mjs", "vite-plugin.d.mts"],
+  "peerDependencies": { "vite": ">=5" },
+  "peerDependenciesMeta": { "vite": { "optional": true } }
+}

@@ -20,7 +20,7 @@ Figma-style visual tweaks in the browser, applied to the real source by Claude C
 **The Claude Code mod** (once per person, in a terminal session):
 
 ```
-/plugin install ui-tweaks --marketplace <owner>/<repo>
+/plugin install ui-tweaks --marketplace lmfventures/tweak-kit
 ```
 
 Answer `y` to add the marketplace, then pick the user scope. It loads in every session after that, the desktop app included. (Working on the kit itself? Point `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json` at `claude-mod/` instead.)
@@ -28,7 +28,7 @@ Answer `y` to add the marketplace, then pick the user scope. It loads in every s
 **The browser kit** (once per project):
 
 ```bash
-npm i -D github:<owner>/<repo>
+npm i -D github:lmfventures/tweak-kit
 ```
 
 ## Hooking up a project

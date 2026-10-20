@@ -169,3 +169,16 @@ test("routes for the studio's pages list: Next app/ and pages/, router paths, HT
   const { routes } = await findRoutes(root);
   assert.deepEqual(routes.map((r) => r.path), ["/", "/about", "/blog/[slug]", "/cart", "/docs", "/help", "/settings", "/users/:id"]);
 });
+
+test("moves and removals go to Haiku; their CSS changes still apply directly", async () => {
+  const root = await project();
+  const out = await applyDirect(root, {
+    tweaks: [
+      tweak("t-0", { color: { from: "#111", to: "#222", authoredIn: [rule(".card", "color")] } }, { move: { fromIndex: 1, toIndex: 0, where: "before" } }),
+      tweak("t-1", {}, { remove: true }),
+    ],
+  });
+  assert.deepEqual(out.applied.map((a) => a.id), ["t-0"]);
+  assert.deepEqual(out.remaining.map((t) => [t.id, t.directSkip, !!t.move, !!t.remove]), [["t-0", "reorders JSX", true, false], ["t-1", "removes JSX", false, true]]);
+  assert.deepEqual(out.remaining[0].directApplied, ["color"]);
+});

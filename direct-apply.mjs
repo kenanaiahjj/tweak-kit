@@ -479,8 +479,10 @@ export async function applyDirect(root, batch) {
     if (doneProps.length || textDone) applied.push({ id: tweak.id, props: doneProps, text: textDone, files: [...next.keys()].map((f) => path.relative(root, f)) });
 
     const left = Object.fromEntries(changes.filter(([k]) => blocked[k]));
-    if (Object.keys(left).length || (tweak.text && !textDone) || (tweak.note && !doneProps.length)) {
-      const reasons = [...new Set([...Object.values(blocked), ...(textReason ? [textReason] : [])])];
+    // Moving or removing JSX is Haiku's: it needs to read the component.
+    const structural = tweak.move ? "reorders JSX" : tweak.remove ? "removes JSX" : null;
+    if (Object.keys(left).length || (tweak.text && !textDone) || (tweak.note && !doneProps.length) || structural) {
+      const reasons = [...new Set([...Object.values(blocked), ...(textReason ? [textReason] : []), ...(structural ? [structural] : [])])];
       remaining.push({
         ...tweak,
         changes: left,

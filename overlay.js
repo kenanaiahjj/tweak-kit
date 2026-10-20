@@ -354,6 +354,7 @@
   // Calls made in the same task (a linked group's four sides) share a stamp, so one undo takes them back together.
   let stamp = 0, stampCounter = 0;
   function actionStamp() {
+    if (state.dragStamp) return state.dragStamp; // a whole drag or resize undoes as one step
     if (!stamp) {
       stamp = ++stampCounter;
       queueMicrotask(() => (stamp = 0));
@@ -364,6 +365,8 @@
   function recordUndo(entry) {
     const last = state.undo[state.undo.length - 1];
     const now = Date.now();
+    // During a drag keep only each property's first "before".
+    if (state.dragStamp && entry.prop && state.undo.some((u) => u.stamp === state.dragStamp && u.key === entry.key && u.prop === entry.prop)) return;
     // A scrub is many edits of one property in a row: keep only its starting point.
     if (last && last.key === entry.key && last.prop && last.prop === entry.prop && now - last.at < 1000) {
       last.at = now;
@@ -383,7 +386,13 @@
       const el = (state.tweaks.get(entry.key) || entry).el;
       const tweak = tweakFor(el);
       if (tweak.batchId) withdraw(tweak.batchId);
-      if (prop) {
+      if (entry.move) {
+        placeAt(el, entry.prevIndex);
+        tweak.move = entry.before;
+      } else if (entry.removal) {
+        tweak.removed = false;
+        clearRemoved(tweak);
+      } else if (prop) {
         if (before) {
           tweak.changes[prop] = before;
           applyChange(el, prop, before);
@@ -513,7 +522,7 @@
   }
 
   function cleanup(tweak) {
-    if (!Object.keys(tweak.changes).length && tweak.text === null && !tweak.note) state.tweaks.delete(tweak.key);
+    if (!Object.keys(tweak.changes).length && tweak.text === null && !tweak.note && !tweak.move && !tweak.removed) state.tweaks.delete(tweak.key);
   }
 
   function revertTweak(tweak) {
@@ -521,10 +530,93 @@
     state.tweaks.delete(tweak.key);
     for (const [key, change] of changes) clearChange(tweak.el, key, change);
     if (tweak.text) tweak.el.textContent = tweak.text.from;
+    if (tweak.removed) clearRemoved(tweak);
+    if (tweak.move && tweak.el.parentElement) placeAt(tweak.el, tweak.move.fromIndex);
   }
 
   function reapply(tweak) {
     for (const [key, change] of Object.entries(tweak.changes)) if (change.to !== undefined) applyChange(tweak.el, key, change);
+    if (tweak.removed) applyRemoved(tweak);
+    if (tweak.move && tweak.el.parentElement && childIndex(tweak.el) !== tweak.move.toIndex) placeAt(tweak.el, tweak.move.toIndex);
+  }
+
+  // ---------- structure: reorder and remove ----------
+  // Moves stay among the element's own siblings, so React still owns every node where it expects it.
+  const kids = (parent) => [...parent.children].filter((c) => c !== host);
+  const childIndex = (el) => kids(el.parentElement).indexOf(el);
+  function placeAt(el, index) {
+    const parent = el.parentElement;
+    if (!parent) return;
+    const others = kids(parent).filter((c) => c !== el);
+    const ref = others[index] || (others.length ? others[others.length - 1].nextSibling : null);
+    if (ref !== el && el.nextSibling !== ref) parent.insertBefore(el, ref);
+  }
+  // Siblings it can trade places with: visible and in the flow.
+  const flowSiblings = (el) => kids(el.parentElement).filter((c) => c === el || (c.getClientRects().length > 0 && !/^(absolute|fixed)$/.test(getComputedStyle(c).position) && !/^(script|style|template|link)$/i.test(c.tagName)));
+
+  function moveInfo(el, fromIndex, toIndex) {
+    const list = kids(el.parentElement);
+    const i = list.indexOf(el);
+    const where = i > 0 ? "after" : "before";
+    const anchor = list[where === "after" ? i - 1 : i + 1];
+    const info = describe(el), anchorInfo = anchor ? describe(anchor) : null;
+    const sameList = !!(anchorInfo && info.react && anchorInfo.react && info.react.jsxSource && info.react.jsxSource === anchorInfo.react.jsxSource);
+    return { fromIndex, toIndex, where, anchor: anchorInfo, parent: describe(el.parentElement), sameList: sameList || undefined };
+  }
+
+  function moveElement(el, toIndex) {
+    const from = childIndex(el);
+    const max = kids(el.parentElement).length - 1;
+    toIndex = Math.max(0, Math.min(max, toIndex));
+    if (toIndex === from) return false;
+    const tweak = tweakFor(el); // described before it moves: the selector names its place in the source order
+    recordUndo({ el, key: tweak.key, move: true, before: tweak.move ? { ...tweak.move } : null, prevIndex: from });
+    if (tweak.batchId) withdraw(tweak.batchId);
+    const origin = tweak.move ? tweak.move.fromIndex : from;
+    placeAt(el, toIndex);
+    tweak.move = toIndex === origin ? null : moveInfo(el, origin, toIndex);
+    cleanup(tweak);
+    persist();
+    render();
+    return true;
+  }
+
+  // One step earlier or later among the visible siblings.
+  function moveBy(el, step) {
+    const flow = flowSiblings(el);
+    const i = flow.indexOf(el);
+    const target = flow[i + step];
+    if (!target) return toast(step < 0 ? "Already first" : "Already last");
+    moveElement(el, childIndex(target));
+  }
+
+  function applyRemoved(tweak) {
+    const el = tweak.el;
+    if (el.style.getPropertyValue("display") === "none" && el.style.getPropertyPriority("display") === "important") return;
+    if (tweak.removedInline === undefined) tweak.removedInline = el.style.getPropertyValue("display") || "";
+    el.style.setProperty("display", "none", "important");
+  }
+  function clearRemoved(tweak) {
+    const own = tweak.changes.display;
+    if (own && own.to !== undefined) return applyChange(tweak.el, "display", own);
+    if (tweak.removedInline) tweak.el.style.setProperty("display", tweak.removedInline);
+    else tweak.el.style.removeProperty("display");
+    tweak.removedInline = undefined;
+  }
+
+  function removeElement(el) {
+    if (!el || !el.parentElement || el === document.body) return;
+    const tweak = tweakFor(el);
+    if (tweak.removed) return;
+    const flow = flowSiblings(el);
+    const next = flow[flow.indexOf(el) + 1] || flow[flow.indexOf(el) - 1] || el.parentElement;
+    recordUndo({ el, key: tweak.key, removal: true });
+    if (tweak.batchId) withdraw(tweak.batchId);
+    tweak.removed = true;
+    applyRemoved(tweak);
+    persist();
+    toast("Removed (⌘Z to undo). Claude deletes it from the source on Send.");
+    select(next !== document.body ? next : null);
   }
 
   // React may remount nodes; find them again by selector and re-apply the preview.
@@ -551,6 +643,8 @@
     for (const t of [...state.tweaks.values()]) {
       for (const [key, change] of Object.entries(t.changes)) clearChange(t.el, key, change);
       if (t.text) t.el.textContent = t.text.from;
+      if (t.removed) clearRemoved(t);
+      if (t.move && t.el.parentElement) placeAt(t.el, t.move.fromIndex);
     }
     state.tweaks.clear();
     restore();
@@ -570,6 +664,8 @@
         else if (change.to !== undefined) applyChange(t.el, key, change);
       }
       if (t.text) t.el.textContent = on ? t.text.from : t.text.to;
+      if (t.removed) on ? clearRemoved(t) : applyRemoved(t);
+      if (t.move && t.el.parentElement) placeAt(t.el, on ? t.move.fromIndex : t.move.toIndex);
     }
     updateStateSheet();
     host.classList.toggle("comparing", on);
@@ -618,6 +714,8 @@
         changes: t.changes,
         text: t.text,
         note: t.note,
+        move: t.move || undefined,
+        removed: t.removed || undefined,
         scope: t.scope,
         batchId: t.batchId,
         sentId: t.sentId,
@@ -640,7 +738,7 @@
           const el = document.querySelector(d.selector);
           if (!el) return true;
           const tweak = tweakFor(el);
-          Object.assign(tweak, { changes: d.changes, text: d.text, note: d.note, scope: d.scope, batchId: d.batchId, sentId: d.sentId, skipped: d.skipped });
+          Object.assign(tweak, { changes: d.changes, text: d.text, note: d.note, move: d.move || null, removed: !!d.removed, scope: d.scope, batchId: d.batchId, sentId: d.sentId, skipped: d.skipped });
           reapply(tweak);
           if (d.text && d.text.to !== undefined) el.textContent = d.text.to;
           return false;
@@ -775,6 +873,41 @@
     .contrast b { color: var(--text); font-weight: 600; }
     .contrast .ok { color: #14ae5c; }
     .contrast .no { color: #f24822; }
+    .sec h4 { cursor: pointer; user-select: none; }
+    .sec h4 .caret { color: var(--dim); font-size: 9px; width: 10px; display: inline-block; }
+    .sec h4 .h-title { margin-right: auto; }
+    .sec.collapsed > :not(h4) { display: none !important; }
+    .sec.collapsed h4 { margin-bottom: 0; }
+    .h-btn { background: transparent; border: 0; color: var(--dim); font-size: 10.5px; cursor: pointer; padding: 1px 4px; border-radius: 3px; }
+    .h-btn:hover { color: var(--text); background: var(--bg2); }
+    .align-row { display: flex; gap: 8px; align-items: stretch; }
+    .pad9 { display: grid; grid-template-columns: repeat(3, 18px); grid-template-rows: repeat(3, 18px); gap: 2px; padding: 4px; background: var(--bg2); border-radius: 5px; flex: none; }
+    .pad9 button { border: 0; background: transparent; border-radius: 3px; cursor: pointer; display: grid; place-items: center; padding: 0; }
+    .pad9 button::after { content: ""; width: 4px; height: 4px; border-radius: 2px; background: #666; }
+    .pad9 button:hover { background: #3a3a3a; }
+    .pad9 button.on::after { width: 10px; height: 10px; border-radius: 2px; background: var(--accent); }
+    .align-side { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+    .size-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
+    .size-row > div { min-width: 0; }
+    .size-row .seg button { font-size: 10px; padding: 0; min-width: 0; overflow: hidden; }
+    .seg { min-width: 0; }
+    .scroll { overflow-x: hidden; }
+    .arrange { display: flex; gap: 2px; margin-top: 6px; }
+    .arrange button { flex: 1; background: var(--bg2); border: 0; color: var(--text); border-radius: 3px; font-size: 10px; height: 22px; cursor: pointer; padding: 0 2px; }
+    .arrange button:hover { background: #3a3a3a; }
+    .arrange button.danger:hover { background: #5a1f1f; color: #ffb4a8; }
+    .layer-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+    .layer-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+    .layer-row.dragging { opacity: .4; }
+    .handle { position: fixed; width: 8px; height: 8px; margin: -4px 0 0 -4px; background: #fff; border: 1px solid var(--accent); border-radius: 1px; pointer-events: auto; z-index: 1; }
+    .handle[data-dir=n], .handle[data-dir=s] { cursor: ns-resize; }
+    .handle[data-dir=e], .handle[data-dir=w] { cursor: ew-resize; }
+    .handle[data-dir=nw], .handle[data-dir=se] { cursor: nwse-resize; }
+    .handle[data-dir=ne], .handle[data-dir=sw] { cursor: nesw-resize; }
+    .ghost { position: fixed; pointer-events: none; outline: 1px dashed var(--accent); background: rgba(13,153,255,.12); }
+    .drop-line { position: fixed; pointer-events: none; background: var(--accent); border-radius: 2px; box-shadow: 0 0 0 1px #fff; }
+    .guide { position: fixed; pointer-events: none; background: #f24822; }
+    .drag-tip { position: fixed; pointer-events: none; background: #111; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px; white-space: nowrap; }
     .hidden { display: none !important; }
   </style>
   <div class="hover-box hidden"></div>
@@ -782,6 +915,8 @@
   <div class="pad p-t hidden"></div><div class="pad p-r hidden"></div><div class="pad p-b hidden"></div><div class="pad p-l hidden"></div>
   <div class="sel-box hidden"></div>
   <div class="tag hidden"></div>
+  <div class="ghost hidden"></div><div class="drop-line hidden"></div><div class="guide gv hidden"></div><div class="guide gh hidden"></div><div class="drag-tip hidden"></div>
+  ${["nw", "n", "ne", "e", "se", "s", "sw", "w"].map((d) => `<div class="handle hidden" data-dir="${d}"></div>`).join("")}
   <div class="measure hidden"></div><div class="measure hidden"></div><div class="measure hidden"></div><div class="measure hidden"></div>
   <div class="measure-label hidden"></div><div class="measure-label hidden"></div><div class="measure-label hidden"></div><div class="measure-label hidden"></div>
   <button class="launch" title="UI Tweaks (Alt+T)"><span class="dot"></span><span class="label">Tweak</span><span class="count hidden"></span></button>
@@ -867,12 +1002,14 @@
       sel.classList.add("hidden");
       tag.classList.add("hidden");
       sides.forEach((s) => { $(".p-" + s).classList.add("hidden"); $(".m-" + s).classList.add("hidden"); });
+      drawHandles(null);
       return;
     }
     const r = el.getBoundingClientRect();
     const cs = getComputedStyle(el);
     const n = (p) => parseFloat(cs.getPropertyValue(p)) || 0;
     place(sel, r);
+    drawHandles(state.isPicking && !state.comparing && !(drag && drag.kind === "reorder") && r.width + r.height > 0 ? r : null);
     const [pt, pr, pb, pl] = ["padding-top", "padding-right", "padding-bottom", "padding-left"].map(n);
     const [mt, mr, mb, ml] = ["margin-top", "margin-right", "margin-bottom", "margin-left"].map(n);
     place($(".p-t"), { left: r.left, top: r.top, width: r.width, height: pt });
@@ -895,10 +1032,10 @@
     else if (!panelOnRight && r.left < 290 && r.right < innerWidth - 300) panel.classList.remove("left");
   }
 
-  (function loop() {
+  requestAnimationFrame(function loop() {
     drawBoxes();
     requestAnimationFrame(loop);
-  })();
+  });
 
   // ---------- controls ----------
   function numberField(el, prop, label, opts = {}) {
@@ -1340,6 +1477,37 @@
     row.addEventListener("mouseenter", () => (state.hovered = n));
     row.addEventListener("mouseleave", () => (state.hovered = null));
     row.addEventListener("click", () => select(n));
+    // Drag a layer onto a sibling's row to reorder them.
+    if (n.parentElement && n !== document.body) {
+      row.draggable = true;
+      row.addEventListener("dragstart", (e) => {
+        state.layerDrag = n;
+        row.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", "");
+      });
+      row.addEventListener("dragend", () => {
+        state.layerDrag = null;
+        row.classList.remove("dragging");
+      });
+      const side = (e) => (e.offsetY < row.offsetHeight / 2 ? "before" : "after");
+      row.addEventListener("dragover", (e) => {
+        const d = state.layerDrag;
+        if (!d || d === n || d.parentElement !== n.parentElement) return;
+        e.preventDefault();
+        row.classList.toggle("drop-before", side(e) === "before");
+        row.classList.toggle("drop-after", side(e) === "after");
+      });
+      row.addEventListener("dragleave", () => row.classList.remove("drop-before", "drop-after"));
+      row.addEventListener("drop", (e) => {
+        const d = state.layerDrag;
+        row.classList.remove("drop-before", "drop-after");
+        if (!d || d === n || d.parentElement !== n.parentElement) return;
+        e.preventDefault();
+        const list = kids(n.parentElement).filter((c) => c !== d);
+        moveElement(d, list.indexOf(n) + (side(e) === "after" ? 1 : 0));
+      });
+    }
     return row;
   }
 
@@ -1373,13 +1541,143 @@
     return wrap;
   }
 
+  // Sections fold on a click of their title; which ones are folded is remembered.
+  const FOLD_KEY = "ui-tweaks:folded";
+  let folded = new Set();
+  try { folded = new Set(JSON.parse(localStorage.getItem(FOLD_KEY) || "[]")); } catch {}
   function section(title, ...children) {
     const sec = document.createElement("div");
-    sec.className = "sec";
+    sec.className = "sec" + (folded.has(title) ? " collapsed" : "");
     const h = document.createElement("h4");
-    h.textContent = title;
+    const caret = Object.assign(document.createElement("span"), { className: "caret", textContent: folded.has(title) ? "▸" : "▾" });
+    const name = Object.assign(document.createElement("span"), { className: "h-title", textContent: title });
+    h.append(caret, name);
+    h.addEventListener("click", (e) => {
+      if (e.target.closest(".h-btn")) return;
+      folded.has(title) ? folded.delete(title) : folded.add(title);
+      try { localStorage.setItem(FOLD_KEY, JSON.stringify([...folded])); } catch {}
+      sec.classList.toggle("collapsed", folded.has(title));
+      caret.textContent = folded.has(title) ? "▸" : "▾";
+    });
     sec.append(h, ...children);
     return sec;
+  }
+  // A small action at the right end of a section title.
+  function sectionAction(sec, label, title, run) {
+    const b = Object.assign(document.createElement("button"), { className: "h-btn", textContent: label, title });
+    b.addEventListener("click", run);
+    sec.querySelector("h4").append(b);
+    return sec;
+  }
+
+  // ---------- layout helpers ----------
+  function toggleAutoLayout(el) {
+    const d = computed(el, "display");
+    if (/flex|grid/.test(d)) {
+      const own = state.tweaks.get(keyOf(el))?.changes.display;
+      return setStyle(el, "display", own && !/flex|grid/.test(own.from) ? own.from : "block");
+    }
+    // Lay children out the way they already sit: side by side means a row.
+    const shown = kids(el).filter((c) => c.getClientRects().length > 0);
+    const tops = shown.map((c) => Math.round(c.getBoundingClientRect().top));
+    const row = shown.length > 1 && new Set(tops).size === 1;
+    setStyle(el, "display", "flex", true);
+    setStyle(el, "flex-direction", row ? "row" : "column", true);
+    render();
+  }
+
+  const AXIS_POS = (v) => (/^(normal|stretch|flex-start|start|left|baseline|self-start)$/.test(v) ? 0 : /center/.test(v) ? 1 : /^(flex-end|end|right|self-end)$/.test(v) ? 2 : -1);
+  const POS_VALUE = ["flex-start", "center", "flex-end"];
+  function alignPad(el) {
+    const cs = getComputedStyle(el);
+    const row = !cs.display.includes("grid") && cs.flexDirection.startsWith("row");
+    const spaced = /space/.test(cs.justifyContent);
+    const main = AXIS_POS(cs.justifyContent), cross = /stretch|normal/.test(cs.alignItems) ? -1 : AXIS_POS(cs.alignItems);
+    const pad = document.createElement("div");
+    pad.className = "pad9";
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++) {
+        const b = document.createElement("button");
+        const [m, x] = row ? [c, r] : [r, c];
+        if ((spaced || main === m) && cross === x) b.classList.add("on");
+        b.title = `${["Top", "Middle", "Bottom"][r]} ${["left", "center", "right"][c]}`;
+        b.addEventListener("click", () => {
+          if (!spaced) setStyle(el, "justify-content", POS_VALUE[m], true);
+          setStyle(el, "align-items", POS_VALUE[x], true);
+          render();
+        });
+        pad.append(b);
+      }
+    }
+    return pad;
+  }
+
+  // Figma's resizing per axis: Fixed (a length), Hug (fit the content) or Fill (take the space).
+  function sizeContext(el, axis) {
+    const parent = el.parentElement;
+    const pcs = parent ? getComputedStyle(parent) : null;
+    const pFlex = !!pcs && pcs.display.includes("flex");
+    const main = pFlex && (axis === "width") === pcs.flexDirection.startsWith("row");
+    return { pcs, pFlex, main };
+  }
+  function sizeMode(el, axis) {
+    const { pcs, pFlex, main } = sizeContext(el, axis);
+    const cs = getComputedStyle(el);
+    const authored = authoredValue(el, axis);
+    if (/^(absolute|fixed)$/.test(cs.position) && !authored) return "hug";
+    if (pFlex && main && parseFloat(cs.flexGrow) > 0) return "fill";
+    if (/^-?[\d.]+(px|rem|em)$/.test(authored)) return "fixed";
+    if (authored === "100%") return "fill";
+    if (pFlex && !main && (!authored || authored === "auto")) {
+      const self = cs.alignSelf === "auto" ? pcs.alignItems : cs.alignSelf;
+      return /stretch|normal/.test(self) ? "fill" : "hug";
+    }
+    if (axis === "width" && !pFlex && !(pcs && pcs.display.includes("grid")) && /^(block|flex|grid|table|list-item)$/.test(cs.display) && (!authored || authored === "auto")) return "fill";
+    return "hug";
+  }
+  function setSizeMode(el, axis, mode) {
+    const { pFlex, main } = sizeContext(el, axis);
+    const now = Math.round(el.getBoundingClientRect()[axis]) + "px";
+    const grow = parseFloat(computed(el, "flex-grow")) > 0;
+    if (mode === "fixed") {
+      setStyle(el, axis, now, true);
+      if (pFlex && main) { if (grow) setStyle(el, "flex-grow", "0", true); setStyle(el, "flex-shrink", "0", true); }
+      if (pFlex && !main && computed(el, "align-self") === "stretch") setStyle(el, "align-self", "auto", true);
+    } else if (mode === "hug") {
+      if (pFlex && main) {
+        if (grow) setStyle(el, "flex-grow", "0", true);
+        setStyle(el, "flex-basis", "auto", true);
+        setStyle(el, axis, "auto", true);
+      } else if (pFlex) {
+        setStyle(el, axis, "auto", true);
+        setStyle(el, "align-self", "flex-start", true);
+      } else setStyle(el, axis, axis === "width" ? "fit-content" : "auto", true);
+    } else {
+      if (pFlex && main) {
+        setStyle(el, "flex-grow", "1", true);
+        setStyle(el, "flex-basis", "0px", true);
+        setStyle(el, `min-${axis}`, "0px", true);
+      } else if (pFlex) {
+        setStyle(el, axis, "auto", true);
+        setStyle(el, "align-self", "stretch", true);
+      } else setStyle(el, axis, "100%", true);
+    }
+    render();
+  }
+  function sizeControl(el, axis, label) {
+    const box = document.createElement("div");
+    const mode = sizeMode(el, axis);
+    const seg = document.createElement("div");
+    seg.className = "seg";
+    for (const [m, text, title] of [["fixed", "Fixed", "A set length"], ["hug", "Hug", "Fit the content"], ["fill", "Fill", "Take the available space"]]) {
+      const b = Object.assign(document.createElement("button"), { textContent: text, title: `${label}: ${title}` });
+      if (m === mode) b.classList.add("on");
+      b.addEventListener("click", () => setSizeMode(el, axis, m));
+      seg.append(b);
+    }
+    box.append(numberField(el, axis, label === "Width" ? "W" : "H", { min: 0 }), seg);
+    seg.style.marginTop = "4px";
+    return box;
   }
 
   function lbl(text) {
@@ -1580,17 +1878,15 @@
   function nudge(el, key, big) {
     const d = (big ? 10 : 1) * (key === "ArrowUp" || key === "ArrowLeft" ? -1 : 1);
     const horizontal = key === "ArrowLeft" || key === "ArrowRight";
-    const positioned = computed(el, "position") !== "static";
-    let prop = positioned ? (horizontal ? "left" : "top") : horizontal ? "margin-left" : "margin-top";
-    let sign = 1;
-    if (positioned && computed(el, "position") !== "relative") {
-      // Pinned to the far edge (left/top set to auto): move with right/bottom instead.
-      const pinned = (p) => el.style.getPropertyValue(p) === "auto" || state.tweaks.get(keyOf(el))?.changes[changeKey(p)]?.to === "auto";
-      if (pinned(prop)) { prop = horizontal ? "right" : "bottom"; sign = -1; }
+    if (computed(el, "position") === "static") {
+      const prop = horizontal ? "margin-left" : "margin-top";
+      const now = parseNumber(computed(el, prop));
+      if (!now || now.unit !== "px") return toast(`Can't nudge: ${prop} is ${computed(el, prop)}`);
+      setStyle(el, prop, shortNumber(now.n + d) + "px", true);
+    } else {
+      const a = offsetAxes(el)[horizontal ? "h" : "v"];
+      setStyle(el, a.prop, shortNumber(a.start + a.sign * d) + "px", true);
     }
-    const now = parseNumber(computed(el, prop));
-    if (!now || now.unit !== "px") return toast(`Can't nudge: ${prop} is ${computed(el, prop)}`);
-    setStyle(el, prop, shortNumber(now.n + d * sign) + "px", true);
     clearTimeout(nudgeTimer);
     nudgeTimer = setTimeout(renderPanel, 150);
   }
@@ -1647,7 +1943,7 @@
     if (!el || !el.isConnected) {
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.innerHTML = `<b>Click any element</b> to tweak it.<br/>Drag a field's label to scrub its value; Shift for ×10.<br/>Double-click text to edit it.<br/><br/>When you're happy, press <b>Send to Claude</b>. Claude edits the real source to match.`;
+      empty.innerHTML = `<b>Click any element</b> to tweak it.<br/>Drag it to reorder or move it, drag its handles to resize. ⌘-drag places it freely.<br/>Drag a field's label to scrub its value; Shift for ×10.<br/>Double-click text to edit it.<br/><br/>When you're happy, press <b>Send to Claude</b>. Claude edits the real source to match.`;
       scroll.append(empty);
     } else {
       const info = describe(el);
@@ -1683,7 +1979,20 @@
         b.addEventListener("click", () => run(el));
         styleTools.append(b);
       }
-      head.append(name, meta, crumbs, styleTools, layersTree(el));
+      const arrange = document.createElement("div");
+      arrange.className = "arrange";
+      for (const [label, title, run, cls] of [
+        ["↑ Earlier", "Move before its previous sibling (⌘↑), or drag it on the page", () => moveBy(el, -1)],
+        ["↓ Later", "Move after its next sibling (⌘↓), or drag it on the page", () => moveBy(el, 1)],
+        ["Parent", "Select the parent (Shift+Enter). Enter selects the first child, Tab the next sibling", () => el.parentElement && el.parentElement !== document.body && select(el.parentElement)],
+        ["Remove", "Remove this element (Delete). Claude deletes it from the source on Send", () => removeElement(el), "danger"],
+      ]) {
+        const b = Object.assign(document.createElement("button"), { textContent: label, title });
+        if (cls) b.className = cls;
+        b.addEventListener("click", run);
+        arrange.append(b);
+      }
+      head.append(name, meta, crumbs, arrange, styleTools, layersTree(el));
       const states = document.createElement("div");
       states.className = "seg";
       states.style.marginTop = "8px";
@@ -1714,20 +2023,42 @@
         if (isFlex) {
           children.push(segmented(el, "flex-direction", [["row", "→ Row"], ["column", "↓ Column"]]));
         }
-        children.push(lbl("Alignment"));
-        children.push(grid("grid2",
-          selectField(el, "justify-content", "J", ["flex-start", "center", "flex-end", "space-between", "space-around", "space-evenly"]),
-          selectField(el, "align-items", "A", ["stretch", "flex-start", "center", "flex-end", "baseline"]),
+        const side = document.createElement("div");
+        side.className = "align-side";
+        side.append(
+          segmented(el, "justify-content", [["flex-start", "Packed"], ["space-between", "Spread"]]),
+          numberField(el, isFlex && cs.flexDirection.startsWith("row") ? "column-gap" : "row-gap", "Gap", { min: 0 }),
+        );
+        if (isFlex) side.append(segmented(el, "flex-wrap", [["nowrap", "No wrap"], ["wrap", "Wrap"]]));
+        const row = document.createElement("div");
+        row.className = "align-row row";
+        row.append(alignPad(el), side);
+        children.push(row);
+        if (isGrid || (isFlex && cs.flexWrap !== "nowrap")) {
+          children.push(lbl(isGrid ? "Row and column gap" : "Gap between lines"));
+          children.push(grid("grid2", numberField(el, "row-gap", "↕", { min: 0 }), numberField(el, "column-gap", "↔", { min: 0 })));
+        }
+        scroll.append(sectionAction(section(isFlex ? "Auto layout" : "Grid layout", ...children), "Remove", "Back to normal flow (⇧A)", () => toggleAutoLayout(el)));
+      } else if (kids(el).some((c) => c.getClientRects().length > 0) && !/^(inline|contents)$/.test(cs.display)) {
+        scroll.append(sectionAction(section("Auto layout"), "＋ Add", "Lay the children out in a row or column with a gap (⇧A)", () => toggleAutoLayout(el)));
+      }
+
+      // How it sits inside a flex or grid parent.
+      const pcs = el.parentElement ? getComputedStyle(el.parentElement) : null;
+      if (pcs && /flex|grid/.test(pcs.display) && !/^(absolute|fixed)$/.test(cs.position)) {
+        const across = pcs.display.includes("flex") && pcs.flexDirection.startsWith("row") ? "Vertical" : "Horizontal";
+        scroll.append(section("In parent layout",
+          lbl(`${across} alignment`),
+          segmented(el, "align-self", [["auto", "Auto"], ["flex-start", "Start"], ["center", "Center"], ["flex-end", "End"], ["stretch", "Stretch"]]),
         ));
-        children.push(lbl("Gap"));
-        children.push(grid("grid2", numberField(el, "row-gap", "↕", { min: 0 }), numberField(el, "column-gap", "↔", { min: 0 })));
-        scroll.append(section(isFlex ? "Auto layout" : "Grid layout", ...children));
       }
 
       scroll.append(section("Size",
-        grid("grid2", numberField(el, "width", "W", { min: 0 }), numberField(el, "height", "H", { min: 0 })),
+        grid("size-row", sizeControl(el, "width", "Width"), sizeControl(el, "height", "Height")),
         lbl("Min / max width"),
         grid("grid2", numberField(el, "min-width", "↤", { min: 0 }), numberField(el, "max-width", "↦", { min: 0 })),
+        lbl("Content"),
+        segmented(el, "overflow", [["visible", "Visible"], ["hidden", "Clip"], ["auto", "Scroll"]]),
       ));
 
       scroll.append(positionSection(el));
@@ -1820,6 +2151,8 @@
     const parts = Object.entries(tweak.changes).map(([k, c]) => `${c.state ? ":" + c.state + " " : ""}${changeProp(k, c)} ${short(c.from)} → ${short(c.to)}`);
     if (tweak.scope && tweak.scope.kind === "viewport") parts.push(`only at ${tweak.scope.width}px wide`);
     if (tweak.text) parts.push(`text → "${tweak.text.to.slice(0, 30)}"`);
+    if (tweak.move) parts.push(`moved ${tweak.move.where} ${tweak.move.anchor ? tweak.move.anchor.tag + (tweak.move.anchor.classes[0] ? "." + tweak.move.anchor.classes[0] : "") : "its sibling"}`);
+    if (tweak.removed) parts.push("removed");
     if (tweak.note) parts.push(`note: ${tweak.note.slice(0, 40)}`);
     return parts;
   }
@@ -1974,6 +2307,8 @@
         scope: t.scope && t.scope.kind === "viewport" ? t.scope : undefined,
         warnings: t.el.isConnected ? hiddenReasons(t).map((w) => w.text) : undefined,
         text: t.text || undefined,
+        move: t.move || undefined,
+        remove: t.removed || undefined,
         note: t.note || undefined,
       })),
     };
@@ -1983,7 +2318,8 @@
     if (!list.length) return;
     try {
       // Refresh descriptions: the DOM may have changed since the first edit.
-      list.forEach((t) => { if (t.el.isConnected) t.element = describe(t.el); });
+      // A moved element keeps the selector of its original place, which is where the source has it.
+      list.forEach((t) => { if (t.el.isConnected) t.element = t.move ? { ...describe(t.el), selector: t.element.selector } : describe(t.el); });
       const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(buildBatch(list)) });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || res.statusText);
@@ -2033,7 +2369,7 @@
       if (!ownsPanel()) return; // the owning frame settles the queue; this one mirrors it
       // A sent tweak that left the queue is in the source now: drop its preview.
       const waiting = new Map(pendingTweaks.map((p) => [p.id, p.skipped || null]));
-      let applied = 0;
+      let applied = 0, structural = false;
       const newlySkipped = [];
       for (const t of [...state.tweaks.values()]) {
         if (!t.sentId) continue;
@@ -2047,10 +2383,17 @@
         }
         state.tweaks.delete(t.key);
         for (const [key, change] of Object.entries(t.changes)) clearChange(t.el, key, change);
+        if (t.move || t.removed) structural = true;
         state.undo = state.undo.filter((u) => u.key !== t.key);
         applied++;
       }
       for (const id of [...state.sentBatches.keys()]) if (!pendingIds.includes(id)) state.sentBatches.delete(id);
+      if (structural) {
+        // React reuses nodes by position, so a moved or removed node can't be squared with the new source in place.
+        persist();
+        location.reload();
+        return;
+      }
       if (applied || newlySkipped.length) {
         persist();
         render();
@@ -2212,6 +2555,237 @@
     if (state.popup && state.popup !== STUDIO && state.popup.closed) dock(false);
   }, 500);
 
+  // ---------- mouse: resize, move, reorder ----------
+  const handles = [...shadow.querySelectorAll(".handle")];
+  function drawHandles(r) {
+    for (const h of handles) {
+      const d = h.dataset.dir;
+      // Small elements get corner handles only, so the element itself stays grabbable.
+      const show = r && (d.length === 2 || (/[ns]/.test(d) ? r.width >= 28 : r.height >= 28));
+      h.classList.toggle("hidden", !show);
+      if (!show) continue;
+      h.style.left = (d.includes("w") ? r.left : d.includes("e") ? r.right : r.left + r.width / 2) + "px";
+      h.style.top = (d.includes("n") ? r.top : d.includes("s") ? r.bottom : r.top + r.height / 2) + "px";
+    }
+  }
+
+  // Which offset moves an element on each axis: left/top, or right/bottom when it's pinned to that side.
+  function authoredValue(el, prop) {
+    const t = state.tweaks.get(keyOf(el));
+    const own = t && t.changes[prop] && t.changes[prop].to;
+    if (own !== undefined && own !== null) return own;
+    const inline = el.style.getPropertyValue(prop);
+    if (inline) return inline;
+    const rule = matchedRules(el, prop)[0];
+    return rule && rule.property === prop ? rule.value.replace(/\s*!important$/, "") : "";
+  }
+  function offsetAxes(el) {
+    const set = (p) => { const v = authoredValue(el, p); return !!v && !/^auto/.test(v); };
+    const pinned = computed(el, "position") !== "relative";
+    const h = pinned && !set("left") && set("right") ? { prop: "right", sign: -1 } : { prop: "left", sign: 1 };
+    const v = pinned && !set("top") && set("bottom") ? { prop: "bottom", sign: -1 } : { prop: "top", sign: 1 };
+    for (const a of [h, v]) a.start = parseFloat(computed(el, a.prop)) || 0;
+    return { h, v };
+  }
+
+  function tip(text, x, y) {
+    const t = $(".drag-tip");
+    if (!text) return t.classList.add("hidden");
+    t.textContent = text;
+    t.classList.remove("hidden");
+    Object.assign(t.style, { left: x + 14 + "px", top: y + 16 + "px" });
+  }
+  function guide(cls, rect) {
+    const g = $(cls);
+    if (!rect) return g.classList.add("hidden");
+    place(g, rect);
+  }
+
+  let drag = null; // pointer down on the selection, maybe dragging
+  let suppressClickUntil = 0;
+
+  function beginDrag(e, el) {
+    drag = { el, x0: e.clientX, y0: e.clientY, started: false, free: e.metaKey || e.ctrlKey, kind: null };
+    addEventListener("pointermove", dragMove, true);
+    addEventListener("pointerup", dragEnd, true);
+    addEventListener("pointercancel", dragEnd, true);
+  }
+
+  function startDrag() {
+    const el = drag.el;
+    const pos = computed(el, "position");
+    state.dragStamp = ++stampCounter;
+    drag.rect = el.getBoundingClientRect();
+    if (pos === "absolute" || pos === "fixed" || drag.free) {
+      // ⌘-drag frees an element in the flow: position: relative plus offsets, so nothing else moves.
+      if (pos === "static") setStyle(el, "position", "relative", true);
+      drag.kind = "offset";
+      drag.axes = offsetAxes(el);
+      drag.cb = pos === "absolute" || pos === "fixed" ? containingBlock(el).rect : null;
+      return;
+    }
+    const flow = flowSiblings(el);
+    if (flow.length < 2) {
+      drag.kind = "none";
+      toast("Nothing to reorder it with here. ⌘-drag to nudge it freely.");
+      return;
+    }
+    const pcs = getComputedStyle(el.parentElement);
+    const dir = pcs.flexDirection;
+    const isFlex = pcs.display.includes("flex"), isGrid = pcs.display.includes("grid");
+    let axis = "y";
+    if (isGrid || (isFlex && dir.startsWith("row") && pcs.flexWrap !== "nowrap")) axis = "grid";
+    else if (isFlex && dir.startsWith("row")) axis = "x";
+    else if (!isFlex) {
+      // Inline-level children sit on lines; treat them like a wrapping row.
+      const tops = flow.map((c) => Math.round(c.getBoundingClientRect().top));
+      if (new Set(tops).size < tops.length) axis = "grid";
+    }
+    drag.kind = "reorder";
+    drag.axis = axis;
+    drag.reverse = isFlex && dir.endsWith("reverse");
+    drag.others = flow.filter((c) => c !== drag.el).map((c) => ({ el: c, r: c.getBoundingClientRect() }));
+  }
+
+  function dragMove(e) {
+    if (!drag) return;
+    let dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+    if (!drag.started) {
+      if (Math.hypot(dx, dy) < 4) return;
+      drag.started = true;
+      startDrag();
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    if (drag.kind === "offset") return dragOffset(dx, dy, e);
+    if (drag.kind === "reorder") return dragReorder(dx, dy, e);
+  }
+
+  function dragOffset(dx, dy, e) {
+    const { el, axes, rect, cb } = drag;
+    if (e.shiftKey) Math.abs(dx) > Math.abs(dy) ? (dy = 0) : (dx = 0);
+    let snapX = null, snapY = null;
+    if (cb && !(e.metaKey || e.ctrlKey)) {
+      // Snap the element's edges and centre to the containing block's (hold ⌘/Ctrl to place freely).
+      const best = (pairs) => pairs.map(([at, to]) => ({ d: to - at, to })).filter((p) => Math.abs(p.d) < 5).sort((a, b) => Math.abs(a.d) - Math.abs(b.d))[0];
+      const bx = best([[rect.left + dx, cb.left], [rect.left + dx + rect.width / 2, cb.left + cb.width / 2], [rect.right + dx, cb.left + cb.width]]);
+      const by = best([[rect.top + dy, cb.top], [rect.top + dy + rect.height / 2, cb.top + cb.height / 2], [rect.bottom + dy, cb.top + cb.height]]);
+      if (bx) { dx += bx.d; snapX = bx.to; }
+      if (by) { dy += by.d; snapY = by.to; }
+    }
+    guide(".gv", snapX !== null ? { left: snapX, top: cb.top, width: 1, height: cb.height } : null);
+    guide(".gh", snapY !== null ? { left: cb.left, top: snapY, width: cb.width, height: 1 } : null);
+    const hv = Math.round(axes.h.start + axes.h.sign * dx), vv = Math.round(axes.v.start + axes.v.sign * dy);
+    setStyle(el, axes.h.prop, hv + "px", true);
+    setStyle(el, axes.v.prop, vv + "px", true);
+    tip(`${axes.h.prop} ${hv} · ${axes.v.prop} ${vv}`, e.clientX, e.clientY);
+  }
+
+  function dragReorder(dx, dy, e) {
+    const { rect, others, axis, reverse } = drag;
+    place($(".ghost"), { left: rect.left + dx, top: rect.top + dy, width: rect.width, height: rect.height });
+    const x = e.clientX, y = e.clientY;
+    const before = (r) => {
+      let b;
+      if (axis === "x") b = x < r.left + r.width / 2;
+      else if (axis === "y") b = y < r.top + r.height / 2;
+      else b = y < r.top || (y <= r.bottom && x < r.left + r.width / 2);
+      return reverse ? !b : b;
+    };
+    const at = others.findIndex((o) => before(o.r));
+    drag.target = at === -1 ? null : others[at].el;
+    // Where it would land, unless that's where it already is.
+    const flow = flowSiblings(drag.el);
+    const next = flow[flow.indexOf(drag.el) + 1] || null;
+    const line = $(".drop-line");
+    if (drag.target === next || (!drag.target && !next)) {
+      drag.noop = true;
+      line.classList.add("hidden");
+      tip("", 0, 0);
+      return;
+    }
+    drag.noop = false;
+    const ref = drag.target ? others[at].r : others[others.length - 1].r;
+    const prev = drag.target ? others[at - 1] && others[at - 1].r : null;
+    const end = !drag.target;
+    if (axis === "y") {
+      const yy = end ? ref.bottom + 2 : prev && prev.bottom <= ref.top ? (prev.bottom + ref.top) / 2 : ref.top - 2;
+      place(line, { left: ref.left, top: yy - 1, width: ref.width, height: 3 });
+    } else {
+      const xx = end !== reverse ? ref.right + 2 : ref.left - 2;
+      place(line, { left: xx - 1, top: ref.top, width: 3, height: ref.height });
+    }
+    tip("Move here", x, y);
+  }
+
+  function dragEnd(e) {
+    removeEventListener("pointermove", dragMove, true);
+    removeEventListener("pointerup", dragEnd, true);
+    removeEventListener("pointercancel", dragEnd, true);
+    const d = drag;
+    drag = null;
+    if (!d || !d.started) return;
+    suppressClickUntil = performance.now() + 400;
+    ["ghost", "drop-line", "gv", "gh"].forEach((c) => $("." + c).classList.add("hidden"));
+    tip("", 0, 0);
+    if (d.kind === "reorder" && !d.noop && e.type === "pointerup") {
+      const list = kids(d.el.parentElement).filter((c) => c !== d.el);
+      const others = d.others.map((o) => o.el);
+      const toIndex = d.target ? list.indexOf(d.target) : list.indexOf(others[others.length - 1]) + 1;
+      moveElement(d.el, toIndex);
+    }
+    state.dragStamp = 0;
+    render();
+  }
+
+  // Resize from the selection's handles. Shift on a corner keeps the proportions.
+  for (const h of handles) {
+    h.addEventListener("pointerdown", (e) => {
+      const el = state.selected;
+      if (!el || e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      h.setPointerCapture(e.pointerId);
+      const dir = h.dataset.dir;
+      const w0 = parseFloat(computed(el, "width")) || el.getBoundingClientRect().width;
+      const h0 = parseFloat(computed(el, "height")) || el.getBoundingClientRect().height;
+      const positioned = /^(absolute|fixed)$/.test(computed(el, "position"));
+      const axes = positioned ? offsetAxes(el) : null;
+      const x0 = e.clientX, y0 = e.clientY;
+      state.dragStamp = ++stampCounter;
+      const move = (ev) => {
+        let dx = ev.clientX - x0, dy = ev.clientY - y0;
+        const sx = dir.includes("e") ? 1 : dir.includes("w") ? -1 : 0;
+        const sy = dir.includes("s") ? 1 : dir.includes("n") ? -1 : 0;
+        let w = w0 + sx * dx, hh = h0 + sy * dy;
+        if (ev.shiftKey && sx && sy) {
+          const k = Math.max(w / w0, hh / h0);
+          w = w0 * k;
+          hh = h0 * k;
+        }
+        w = Math.max(1, Math.round(w));
+        hh = Math.max(1, Math.round(hh));
+        if (sx) setStyle(el, "width", w + "px", true);
+        if (sy) setStyle(el, "height", hh + "px", true);
+        // Dragging the side an absolute element is pinned to moves that offset too.
+        if (axes && sx && (axes.h.prop === "left") === (sx < 0)) setStyle(el, axes.h.prop, Math.round(axes.h.start - (w - w0)) + "px", true);
+        if (axes && sy && (axes.v.prop === "top") === (sy < 0)) setStyle(el, axes.v.prop, Math.round(axes.v.start - (hh - h0)) + "px", true);
+        tip(`${sx ? "W " + w : ""}${sx && sy ? " · " : ""}${sy ? "H " + hh : ""}`, ev.clientX, ev.clientY);
+      };
+      const up = () => {
+        h.removeEventListener("pointermove", move);
+        h.removeEventListener("pointerup", up);
+        h.removeEventListener("pointercancel", up);
+        state.dragStamp = 0;
+        tip("", 0, 0);
+        render();
+      };
+      h.addEventListener("pointermove", move);
+      h.addEventListener("pointerup", up);
+      h.addEventListener("pointercancel", up);
+    });
+  }
+
   // ---------- page interaction ----------
   const picking = () => state.isOpen && state.isPicking;
   const target = (e) => {
@@ -2234,7 +2808,9 @@
       if (t.isContentEditable && t.dataset.uiTweaksEditing) return;
       e.preventDefault();
       e.stopPropagation();
-      if (type === "click") select(t);
+      // Press on the selection (or inside it) and drag to move it; a plain click still selects.
+      if (type === "pointerdown" && e.button === 0 && state.selected && state.selected.contains(t) && ownsPanel()) beginDrag(e, state.selected);
+      if (type === "click" && performance.now() > suppressClickUntil) select(t);
     }, true);
   }
 
@@ -2300,7 +2876,23 @@
       return;
     }
     if (!state.isOpen || typing) return;
-    if (state.selected && state.selected.isConnected && /^Arrow(Up|Down|Left|Right)$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    const sel = state.selected && state.selected.isConnected ? state.selected : null;
+    const own = (run) => { e.preventDefault(); e.stopPropagation(); run(); };
+    if (sel && ownsPanel()) {
+      if ((e.metaKey || e.ctrlKey) && /^Arrow(Up|Down|Left|Right)$/.test(e.key)) return own(() => moveBy(sel, /Up|Left/.test(e.key) ? -1 : 1));
+      if ((e.key === "Delete" || e.key === "Backspace") && !e.metaKey && !e.ctrlKey) return own(() => removeElement(sel));
+      if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
+        const next = e.shiftKey ? sel.parentElement : kids(sel).find((c) => c.getClientRects().length > 0);
+        return own(() => next && next !== document.body && next !== document.documentElement ? select(next) : toast(e.shiftKey ? "No parent to select" : "No children"));
+      }
+      if (e.key === "Tab" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const flow = flowSiblings(sel);
+        const next = flow[(flow.indexOf(sel) + (e.shiftKey ? -1 : 1) + flow.length) % flow.length];
+        return own(() => next !== sel && select(next));
+      }
+      if (e.key === "A" && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) return own(() => toggleAutoLayout(sel));
+    }
+    if (sel && /^Arrow(Up|Down|Left|Right)$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
       e.stopPropagation();
       return nudge(state.selected, e.key, e.shiftKey);

@@ -44,6 +44,8 @@ type Tweak = {
   id?: string
   changes?: Record<string, Change>
   text?: { from?: string; to?: string }
+  move?: { where?: string }
+  remove?: boolean
   note?: string
   skipped?: string
   element?: { classes?: string[]; tag?: string; react?: { jsxSource?: string } }
@@ -59,7 +61,7 @@ export function summarize(text: string): PendingTweaks | null {
   const all = batches.flatMap(b => (b.tweaks ?? []).map((t, i) => ({ id: tweakId(b, t, i), t })))
   if (all.length === 0) return null
   const changes = all.reduce(
-    (n, { t }) => n + Object.keys(t.changes ?? {}).length + (t.text ? 1 : 0) + (t.note ? 1 : 0),
+    (n, { t }) => n + Object.keys(t.changes ?? {}).length + (t.text ? 1 : 0) + (t.move ? 1 : 0) + (t.remove ? 1 : 0) + (t.note ? 1 : 0),
     0,
   )
 
@@ -140,6 +142,8 @@ For each tweak, edit the source so the element renders each \`to\` value:
 - If that selector is shared (a selector list, or a class used on other elements: Grep src for it), add a new class to the JSX at jsxSource and a rule for it right after the shared rule, with the same !important.
 - Collapse four equal sides or corners into one shorthand. Leave other code alone.
 
+- move { where: "before"|"after", anchor, parent, sameList } means: in the JSX, put this element directly before/after the anchor element (anchor.react.jsxSource), inside the same parent. Move the whole JSX element, including its children and any condition wrapping it. sameList: both come from one array .map(): reorder the array's items if they are literal in the source, else skip.
+- remove: true means delete this element's JSX (with its children), plus a condition that only wraps it and imports or variables left unused. One item of a .map(): remove that item from the array if it is literal in the source, else skip.
 - Follow the note when it is a clear change to this element (new copy, a value); a note may be the whole tweak.
 - A change with a "state" ("hover", "active", "focus-visible"; its key is "<prop>:<state>") belongs in that state's rule, e.g. .btn:hover. Edit the one in authoredIn when it is a state rule, else add it right after the element's own rule.
 - scope { kind: "viewport", width } means: only around that screen width. Put the change in a media query that holds at that width, reusing a breakpoint the file already uses.
@@ -157,7 +161,7 @@ export function claudePrompt(summary: PendingTweaks): string {
     : ''
   return [
     `Apply the UI tweaks in ${FILE}: ${summary.changes} change(s) on ${summary.elements} element(s), page ${summary.pages.join(', ')}.${skippedNote}`,
-    'Each tweak names its JSX line (element.react.jsxSource) and the CSS rules setting each property (changes[prop].authoredIn, most specific first). Edit that source so it renders each `to` value; no inline overrides. Scope changes to this element when the rule is shared, unless the note says otherwise. If a value would be hidden by another property, ask me what I meant instead of guessing.',
+    'Each tweak names its JSX line (element.react.jsxSource) and the CSS rules setting each property (changes[prop].authoredIn, most specific first). Edit that source so it renders each `to` value; no inline overrides. A tweak with move puts the JSX of the element before/after move.anchor; remove deletes the JSX of the element. Scope changes to this element when the rule is shared, unless the note says otherwise. If a value would be hidden by another property, ask me what I meant instead of guessing.',
     `When done, delete ${FILE}, reload the browser pane to check, and list what changed per file.`,
   ].join('\n')
 }

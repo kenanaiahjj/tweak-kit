@@ -1,6 +1,7 @@
 // Shared request handler for the UI Tweaks overlay.
 // Serves the overlay script and stores batches of tweaks in <root>/.ui-tweaks/pending.json,
 // which the Claude Code "ui-tweaks" mod watches.
+import { updateStatus } from "./update.mjs";
 import { promises as fs, unlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -906,6 +907,7 @@ export function createTweaksHandler({ root, getVersion }) {
           // Per tweak, so the overlay can drop previews one at a time and show Haiku's skip reasons.
           pendingTweaks: pending.batches.flatMap((b) => (b.tweaks || []).map((t, i) => ({ id: t.id || `${b.id}-${i}`, skipped: t.skipped }))),
           version: getVersion ? getVersion() : null,
+          update: updateStatus(),
         });
       }
       if (req.method === "POST" && url.pathname === `${PREFIX}/undo`) {

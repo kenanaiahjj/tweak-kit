@@ -41,6 +41,7 @@
     sentBatches: new Map(), // batch id -> tweak keys
     undo: [], // preview edits, newest last: { stamp, at, el, key, prop | text, before }
     lastApply: null, // Haiku's newest undoable apply, from the server
+    update: null, // a newer kit on GitHub, from the server
     note: "",
   };
   const elementKeys = new WeakMap();
@@ -1872,6 +1873,39 @@
       row.append(what, undo);
       box.append(row);
     }
+    if (state.update) {
+      const u = state.update;
+      const row = document.createElement("div");
+      row.className = "change";
+      const what = document.createElement("div");
+      what.className = "what";
+      const b = document.createElement("b");
+      const s = document.createElement("span");
+      if (u.installing) {
+        b.textContent = "Updating Tweak Kit…";
+        s.textContent = u.command;
+      } else if (u.installed) {
+        b.textContent = "Tweak Kit updated";
+        s.textContent = "Restart the dev server to use it";
+      } else {
+        b.textContent = u.moved ? "Tweak Kit moved" : `Tweak Kit: ${u.behind} update${u.behind === 1 ? "" : "s"}`;
+        s.textContent = u.error ? "Couldn't install: " + u.error : (u.latest || []).join(" · ") || "Reinstall from the new repo";
+      }
+      what.append(b, s);
+      row.append(what);
+      if (!u.installing && !u.installed) {
+        const copy = document.createElement("button");
+        copy.className = "btn ghost";
+        copy.textContent = "Copy command";
+        copy.title = u.command + ", then restart the dev server";
+        copy.addEventListener("click", async () => {
+          await navigator.clipboard.writeText(u.command).catch(() => {});
+          toast("Copied: " + u.command);
+        });
+        row.append(copy);
+      }
+      box.append(row);
+    }
     if (state.lastApply) {
       const row = document.createElement("div");
       row.className = "change";
@@ -1981,7 +2015,11 @@
   async function poll() {
     try {
       const res = await fetch(API + "/status", { cache: "no-store" });
-      const { pendingIds, pendingTweaks = [], version, lastApply = null } = await res.json();
+      const { pendingIds, pendingTweaks = [], version, lastApply = null, update = null } = await res.json();
+      if (JSON.stringify(update) !== JSON.stringify(state.update)) {
+        state.update = update;
+        if (state.isOpen) renderChanges();
+      }
       if (JSON.stringify(lastApply) !== JSON.stringify(state.lastApply)) {
         state.lastApply = lastApply;
         if (state.isOpen) renderChanges();

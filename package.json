@@ -18,6 +18,7 @@
   },
   "files": [
     "direct-apply.mjs",
+    "update.mjs",
     "overlay.js",
     "serve.mjs",
     "server-core.mjs",

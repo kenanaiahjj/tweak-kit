@@ -731,6 +731,22 @@
     .seg { display: flex; background: var(--bg2); border-radius: 5px; padding: 2px; gap: 2px; }
     .seg button { flex: 1; height: 24px; background: transparent; border: 0; color: var(--dim); border-radius: 4px; cursor: pointer; font-size: 10.5px; }
     .seg button.on { background: #444; color: var(--text); }
+    .bm { position: relative; border: 1px dashed #5a5a5a; border-radius: 6px; padding: 22px 34px; background: rgba(246, 178, 107, .07); }
+    .bm.pad { border-style: solid; border-color: #4a4a4a; padding: 20px 34px; background: rgba(147, 196, 125, .09); }
+    .bm-c { height: 22px; display: flex; align-items: center; justify-content: center; background: var(--bg2); border-radius: 3px; color: var(--dim); font-size: 10px; }
+    .bm-tag { position: absolute; left: 6px; top: 4px; font-size: 9px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; pointer-events: none; }
+    .bm input { position: absolute; width: 32px; height: 18px; background: transparent; border: 1px solid transparent; border-radius: 3px; color: var(--text); font-size: 10.5px; text-align: center; outline: none; padding: 0; }
+    .bm input:hover { border-color: var(--line); }
+    .bm input:focus { border-color: var(--accent); background: var(--bg); }
+    .bm input.changed { color: var(--accent2); }
+    .bm input.t { top: 2px; left: 50%; transform: translateX(-50%); }
+    .bm input.b { bottom: 2px; left: 50%; transform: translateX(-50%); }
+    .bm input.l { left: 1px; top: 50%; transform: translateY(-50%); }
+    .bm input.r { right: 1px; top: 50%; transform: translateY(-50%); }
+    .quick { display: flex; gap: 4px; margin-top: 6px; }
+    .quick button { flex: 1; height: 24px; background: var(--bg2); border: 1px solid transparent; border-radius: 4px; color: var(--text); font-size: 10.5px; cursor: pointer; padding: 0; }
+    .quick button:hover { border-color: var(--line); }
+    .cb-note { color: var(--dim); font-size: 10px; margin-top: 6px; line-height: 1.4; word-break: break-all; }
     textarea { width: 100%; min-height: 54px; resize: vertical; background: var(--bg2); border: 1px solid transparent; border-radius: 5px; color: var(--text); font-size: 11px; padding: 6px 8px; outline: none; }
     textarea:focus { border-color: var(--accent); }
     .changes { padding: 10px 12px; border-top: 1px solid var(--line); max-height: 34%; overflow-y: auto; }
@@ -1412,6 +1428,172 @@
     return grid("grid4", ...props.map((p, i) => numberField(el, p, labels[i], { min: group === "margin" ? undefined : 0 })));
   }
 
+  // One side of the box-model diagram. Arrows step (Shift ×10); Alt applies the value to all four sides.
+  function boxInput(el, group, side) {
+    const props = GROUPS[group];
+    const prop = props["trbl".indexOf(side)];
+    const input = document.createElement("input");
+    const tweak = state.tweaks.get(keyOf(el));
+    if (tweak && tweak.changes[changeKey(prop)]) input.classList.add("changed");
+    const show = () => {
+      const p = parseNumber(computed(el, prop));
+      return p && p.unit === "px" ? shortNumber(p.n) : computed(el, prop);
+    };
+    input.className += " " + side;
+    input.value = show();
+    input.spellcheck = false;
+    input.title = `${prop}: ${computed(el, prop)}${group === "margin" ? " (auto allowed)" : ""}. Arrows step, Shift ×10, Alt sets all four sides.`;
+    const commit = (val, all) => {
+      const v = normalizeLength(val, prop);
+      if (group === "padding" && /^-/.test(v)) return (input.value = show());
+      for (const p of all ? props : [prop]) setStyle(el, p, v);
+    };
+    input.addEventListener("change", () => commit(input.value, false));
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") {
+        if (e.altKey) commit(input.value, true);
+        input.blur();
+      }
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const p = parseNumber(input.value) || { n: 0, unit: "" };
+        const next = p.n + (e.shiftKey ? 10 : 1) * (e.key === "ArrowUp" ? 1 : -1);
+        commit(shortNumber(group === "padding" ? Math.max(0, next) : next) + (p.unit && p.unit !== "px" ? p.unit : ""), e.altKey);
+      }
+    });
+    return input;
+  }
+
+  function boxModel(el) {
+    const r = el.getBoundingClientRect();
+    const outer = document.createElement("div");
+    outer.className = "bm";
+    const inner = document.createElement("div");
+    inner.className = "bm pad";
+    const center = document.createElement("div");
+    center.className = "bm-c";
+    center.textContent = `${shortNumber(r.width)} × ${shortNumber(r.height)}`;
+    const tag = (t) => Object.assign(document.createElement("span"), { className: "bm-tag", textContent: t });
+    inner.append(tag("padding"), center, ...[..."trbl"].map((s) => boxInput(el, "padding", s)));
+    outer.append(tag("margin"), inner, ...[..."trbl"].map((s) => boxInput(el, "margin", s)));
+    return outer;
+  }
+
+  function quickRow(...buttons) {
+    const row = document.createElement("div");
+    row.className = "quick";
+    for (const [label, title, run] of buttons) {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.title = title;
+      b.addEventListener("click", run);
+      row.append(b);
+    }
+    return row;
+  }
+
+  // The box an absolute or fixed element is placed against.
+  function containingBlock(el) {
+    if (computed(el, "position") === "fixed") return { name: "the viewport", rect: { left: 0, top: 0, width: innerWidth, height: innerHeight } };
+    const cb = el.offsetParent || document.body;
+    const r = cb.getBoundingClientRect(), cs = getComputedStyle(cb);
+    const bl = parseFloat(cs.borderLeftWidth) || 0, bt = parseFloat(cs.borderTopWidth) || 0;
+    const name = cb === document.body || cb === document.documentElement ? "the page (no positioned ancestor)" : cb.tagName.toLowerCase() + (cb.classList[0] ? "." + cb.classList[0] : "");
+    return { name, rect: { left: r.left + bl, top: r.top + bt, width: cb.clientWidth, height: cb.clientHeight } };
+  }
+
+  // Switching to absolute/fixed pins the element where it is now, at its current size.
+  function setPosition(el, value) {
+    if (value === computed(el, "position")) return;
+    if (value === "absolute" || value === "fixed") {
+      const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+      const ml = parseFloat(cs.marginLeft) || 0, mt = parseFloat(cs.marginTop) || 0;
+      const base = value === "fixed" ? { left: 0, top: 0 } : containingBlock(el).rect;
+      const w = shortNumber(r.width) + "px";
+      setStyle(el, "position", value);
+      setStyle(el, "left", shortNumber(r.left - base.left - ml) + "px");
+      setStyle(el, "top", shortNumber(r.top - base.top - mt) + "px");
+      setStyle(el, "right", "auto");
+      setStyle(el, "bottom", "auto");
+      if (computed(el, "width") !== w) setStyle(el, "width", w);
+      // Auto margins (centering) collapse once it's out of the flow: correct for wherever it actually landed.
+      const after = el.getBoundingClientRect();
+      if (Math.abs(after.left - r.left) > 0.5) setStyle(el, "left", shortNumber(parseFloat(computed(el, "left")) + r.left - after.left) + "px");
+      if (Math.abs(after.top - r.top) > 0.5) setStyle(el, "top", shortNumber(parseFloat(computed(el, "top")) + r.top - after.top) + "px");
+    } else setStyle(el, "position", value);
+  }
+
+  // Pin to one edge or the center of the containing block, Figma constraint style.
+  function alignInParent(el, edge) {
+    const r = el.getBoundingClientRect();
+    const horizontal = edge === "left" || edge === "right" || edge === "hcenter";
+    const [a, b, size] = horizontal ? ["left", "right", r.width] : ["top", "bottom", r.height];
+    if (edge === "hcenter" || edge === "vcenter") {
+      setStyle(el, a, `calc(50% - ${shortNumber(size / 2)}px)`);
+      setStyle(el, b, "auto");
+    } else {
+      setStyle(el, edge, "0px");
+      setStyle(el, edge === a ? b : a, "auto");
+    }
+  }
+
+  function positionSection(el) {
+    const pos = computed(el, "position");
+    const seg = document.createElement("div");
+    seg.className = "seg";
+    for (const [value, label] of [["static", "Auto"], ["relative", "Relative"], ["absolute", "Absolute"], ["fixed", "Fixed"], ["sticky", "Sticky"]]) {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.title = value === "static" ? "position: static (in the flow)" : `position: ${value}` + (value === "absolute" || value === "fixed" ? " — keeps its current spot and size" : "");
+      if (pos === value) b.classList.add("on");
+      b.addEventListener("click", () => setPosition(el, value));
+      seg.append(b);
+    }
+    const out = [seg];
+    if (pos !== "static") {
+      out.push(lbl(pos === "sticky" ? "Stick at" : "Offsets"));
+      out.push(grid("grid4", ...["top", "right", "bottom", "left"].map((p, i) => numberField(el, p, "TRBL"[i]))));
+      out.push(grid("grid2 row", numberField(el, "z-index", "Z", { step: 1 }), document.createElement("span")));
+    }
+    if (pos === "absolute" || pos === "fixed") {
+      out.push(lbl("Align in parent"));
+      out.push(quickRow(
+        ["⇤", "Pin to the left edge", () => alignInParent(el, "left")],
+        ["↔", "Center horizontally", () => alignInParent(el, "hcenter")],
+        ["⇥", "Pin to the right edge", () => alignInParent(el, "right")],
+        ["⤒", "Pin to the top edge", () => alignInParent(el, "top")],
+        ["↕", "Center vertically", () => alignInParent(el, "vcenter")],
+        ["⤓", "Pin to the bottom edge", () => alignInParent(el, "bottom")],
+      ));
+      const note = document.createElement("div");
+      note.className = "cb-note";
+      note.textContent = "Positioned against " + containingBlock(el).name;
+      out.push(note);
+    }
+    return section("Position", ...out);
+  }
+
+  // Arrow keys on the page: move a positioned element by its offsets, a static one by its margins.
+  let nudgeTimer = 0;
+  function nudge(el, key, big) {
+    const d = (big ? 10 : 1) * (key === "ArrowUp" || key === "ArrowLeft" ? -1 : 1);
+    const horizontal = key === "ArrowLeft" || key === "ArrowRight";
+    const positioned = computed(el, "position") !== "static";
+    let prop = positioned ? (horizontal ? "left" : "top") : horizontal ? "margin-left" : "margin-top";
+    let sign = 1;
+    if (positioned && computed(el, "position") !== "relative") {
+      // Pinned to the far edge (left/top set to auto): move with right/bottom instead.
+      const pinned = (p) => el.style.getPropertyValue(p) === "auto" || state.tweaks.get(keyOf(el))?.changes[changeKey(p)]?.to === "auto";
+      if (pinned(prop)) { prop = horizontal ? "right" : "bottom"; sign = -1; }
+    }
+    const now = parseNumber(computed(el, prop));
+    if (!now || now.unit !== "px") return toast(`Can't nudge: ${prop} is ${computed(el, prop)}`);
+    setStyle(el, prop, shortNumber(now.n + d * sign) + "px", true);
+    clearTimeout(nudgeTimer);
+    nudgeTimer = setTimeout(renderPanel, 150);
+  }
+
   function renderPanel() {
     panel.innerHTML = "";
     const bar = document.createElement("div");
@@ -1547,11 +1729,16 @@
         grid("grid2", numberField(el, "min-width", "↤", { min: 0 }), numberField(el, "max-width", "↦", { min: 0 })),
       ));
 
+      scroll.append(positionSection(el));
+
+      const setMargins = (pairs) => pairs.forEach(([p, v]) => setStyle(el, p, v));
       scroll.append(section("Spacing",
-        lbl("Padding"),
-        linkedGroup(el, "padding", ["T", "R", "B", "L"], "▣"),
-        lbl("Margin"),
-        linkedGroup(el, "margin", ["T", "R", "B", "L"], "◫"),
+        boxModel(el),
+        quickRow(
+          ["Center", "Center horizontally with auto side margins", () => setMargins([["margin-left", "auto"], ["margin-right", "auto"]])],
+          ["Margin 0", "Remove all margins", () => setMargins(GROUPS.margin.map((p) => [p, "0px"]))],
+          ["Pad 0", "Remove all padding", () => setMargins(GROUPS.padding.map((p) => [p, "0px"]))],
+        ),
       ));
 
       const hasText = (el.innerText || "").trim().length > 0;
@@ -2075,6 +2262,11 @@
       return;
     }
     if (!state.isOpen || typing) return;
+    if (state.selected && state.selected.isConnected && /^Arrow(Up|Down|Left|Right)$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      return nudge(state.selected, e.key, e.shiftKey);
+    }
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
       e.preventDefault();
       e.stopPropagation();

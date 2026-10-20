@@ -182,13 +182,15 @@ Everything below works the same in the studio or on the page.
 | Default / Hover / Active / Focus | Which state you're editing. The page shows that state while the element is selected. |
 | Auto layout | Direction, alignment, gap (flex/grid containers) |
 | Size | Width, height, min/max width |
-| Spacing | Padding and margin (one field when all sides match, or ⊞ for each side) |
+| Position | Auto (static), Relative, Absolute, Fixed or Sticky. Absolute and Fixed keep the element where it is, at its current size. When positioned: top/right/bottom/left offsets, z-index, and **Align in parent** (pin left, center, right, top, middle, bottom). It names the ancestor the element is positioned against. |
+| Spacing | A box diagram: margin outside, padding inside, size in the middle. Click a side to type (margin takes `auto`); ↑/↓ steps, Shift ×10, Alt applies to all four sides. **Center** sets auto side margins; **Margin 0** and **Pad 0** clear them. |
 | Text | Size, weight, line height, letter spacing, color, alignment |
 | Fill & border | Background or gradient layers (each color stop has a picker), corner radius, border, opacity |
 | Shadow | `box-shadow` as text |
 | Apply to | **All screen widths** or **Only at N px** (becomes a media query), plus a **note** for Claude |
 
 - **Drag a field's label** left or right to scrub its value. Hold Shift for steps of 10. ↑/↓ in a field nudges by 1 (Shift: 10).
+- **Arrow keys on the page** move the selected element (Shift: 10px): positioned elements by their offsets, others by their top/left margin.
 - **Double-click text** to edit the copy. Enter saves, Esc cancels.
 - **◇** next to a color field lists your `:root` color variables. Number fields suggest your length variables as you type.
 - A **⚠ warning** appears when a value can't show, for example width on an inline element or a background color under a gradient.

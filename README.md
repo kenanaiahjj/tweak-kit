@@ -57,6 +57,8 @@ The repo is public, so nothing else is needed to install either part.
 | `overlay.js` | The in-page panel (vanilla JS, shadow DOM, no dependencies) |
 | `server-core.mjs` | Request handler: stores tweaks, applies simple ones, undo, history and log |
 | `direct-apply.mjs` | Applies tweaks to CSS/JSX without a model |
+| `tokens.mjs`, `system-page.mjs` | The design system page: reads, edits and adopts tokens in your stylesheets |
+| `update.mjs` | Checks GitHub for a newer kit on dev-server start and reinstalls it |
 | `vite-plugin.mjs` | Vite plugin (dev server only) |
 | `serve.mjs` | `ui-tweaks-serve`: static server for plain HTML, or `--api-only` sidecar for other dev servers |
 | `claude-mod/` | The Claude Code mod (`ui-tweaks`) |

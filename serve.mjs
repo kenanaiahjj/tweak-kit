@@ -76,7 +76,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(port, () => {
   void announceServer(root, `http://localhost:${port}`);
-  void checkForUpdate(root, { autoUpdate: args.includes("--auto-update") });
+  void checkForUpdate(root, { autoUpdate: !args.includes("--no-auto-update") });
   if (apiOnly) {
     console.log(`UI Tweaks sidecar on http://localhost:${port} for ${root}`);
     console.log(`Add to your dev page: <script src="http://localhost:${port}/__ui-tweaks/overlay.js" data-api="http://localhost:${port}" data-root="${root}" defer></script>`);

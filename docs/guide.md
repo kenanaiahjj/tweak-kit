@@ -281,15 +281,15 @@ Restart the dev server after updating the kit.
 
 ### Update check
 
-When the dev server starts, the kit compares the commit pinned in your lockfile with `main` on GitHub. If you're behind, the terminal prints the update command and the panel shows **Tweak Kit: N updates** with the latest changes and a **Copy command** button. It reads the repo's public commits feed, so it isn't subject to GitHub's API rate limit, and it stays quiet offline, in CI, and in a git checkout of the kit.
+When the dev server starts, the kit compares the commit pinned in your lockfile with `main` on GitHub. If you're behind, it reinstalls itself from GitHub (with npm, pnpm, yarn or bun, whichever lockfile the project has) and the panel says **Tweak Kit updated**. Restart the dev server to use it. This edits `package.json` and the lockfile; commit them or not as you like. It reads the repo's public commits feed, so it isn't subject to GitHub's API rate limit, and it stays quiet offline, in CI, and in a git checkout of the kit.
 
-To install updates automatically instead, turn on `autoUpdate` in `vite.config.ts`:
+To be told instead of updated, turn `autoUpdate` off in `vite.config.ts`:
 
 ```ts
-uiTweaks({ autoUpdate: true })
+uiTweaks({ autoUpdate: false })
 ```
 
-The kit then reinstalls itself from GitHub when it finds a newer version (with npm, pnpm, yarn or bun, whichever lockfile the project has), and the panel says **Tweak Kit updated**. Restart the dev server to use it. This edits `package.json` and the lockfile; commit them or not as you like. With `serve.mjs`, pass `--auto-update`. Set `updateCheck: false` (or the `UI_TWEAKS_NO_UPDATE_CHECK` environment variable) to turn the check off.
+Then the terminal prints the update command and the panel shows **Tweak Kit: N updates** with the latest changes and a **Copy command** button. With `serve.mjs`, pass `--no-auto-update`. Set `updateCheck: false` (or the `UI_TWEAKS_NO_UPDATE_CHECK` environment variable) to turn the check off entirely.
 
 For the Claude Code mod, turn on auto-update for the `ui-tweak-kit` marketplace in `/plugin` → Marketplaces, if your Claude Code version offers it; otherwise use the commands above.
 

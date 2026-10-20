@@ -2,7 +2,7 @@
 import { announceServer, createTweaksHandler } from "./server-core.mjs";
 import { checkForUpdate } from "./update.mjs";
 
-export default function uiTweaks({ autoUpdate = false, updateCheck = true } = {}) {
+export default function uiTweaks({ autoUpdate = true, updateCheck = true } = {}) {
   let root = process.cwd();
   return {
     name: "ui-tweaks",

@@ -56,7 +56,7 @@ function run(command, cwd) {
  * Checks once per dev-server start. `log` prints to the terminal.
  * autoUpdate: reinstall from GitHub when behind (the dev server still needs a restart).
  */
-export async function checkForUpdate(root, { autoUpdate = false, log = console.log } = {}) {
+export async function checkForUpdate(root, { autoUpdate = true, log = console.log } = {}) {
   if (process.env.CI || process.env.UI_TWEAKS_NO_UPDATE_CHECK) return;
   if (existsSync(path.join(KIT_DIR, ".git"))) return; // a working copy of the kit: you're the source
   try {

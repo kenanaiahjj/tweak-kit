@@ -142,7 +142,7 @@ Nothing to do: the kit writes a `.gitignore` containing `*` inside `.ui-tweaks/`
 - Drag an artboard by its label to move it (snaps to 8px). On hover or when selected, its label shows the **device** menu, **⟲** rotate, **⧉** duplicate and **✕** remove (or press Delete). Double-click the **name** to rename it, or the **URL** to change which screen and state it shows.
 - Click into an artboard to tweak there; the panel follows. A tweak previews in **every** artboard showing that code.
 - Devices (CSS px): iPhone Duo open (890 × 626) and folded (466 × 678), 18/17/16 Pro Max (440 × 956), Air (420 × 912), 18 Pro · 17 Pro · 17 (402 × 874), 16 · 15 (393 × 852), 17e · 14 · 13 (390 × 844), 16 Plus · 15 Plus (430 × 932), 13 mini (375 × 812), SE (375 × 667); iPad mini, Air 11″, Pro 11″, Pro 13″, classic; Pixel, Galaxy Z Fold 5 folded; Laptop, MacBook Air 13″, 1440 × 900, 1920 × 1080.
-- **Chrome** draws status bars, notches and Dynamic Islands, home indicators and the Duo's fold; **Grid** (4/8/12 columns) and **8pt** overlay guides; hold **Compare** (or **\\** in the app) to see every artboard without your previews; **📷** saves a PNG of the selected artboard (the browser asks to capture the tab; Chrome).
+- Frames show the app edge to edge (no simulated status bar or notch, so nothing clips the app's header); the iPhone Duo draws its fold line. **Grid** (4/8/12 columns) and **8pt** overlay guides; hold **Compare** (or **\\** in the app) to see every artboard without your previews; **📷** saves a PNG of the selected artboard (the browser asks to capture the tab; Chrome).
 
 **`canvas.json`: the canvas is part of your project.** The layout lives in `.ui-tweaks/canvas.json`, the one file in `.ui-tweaks/` that git sees, so you can commit and share it:
 

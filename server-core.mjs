@@ -220,9 +220,6 @@ export function studioPage(appPath) {
   .ab.selected .ab-frame { box-shadow: 0 0 0 calc(2px * var(--iz)) var(--accent), 0 12px 40px rgba(0,0,0,.45); }
   .ab-frame iframe { display: block; width: 100%; height: 100%; border: 0; }
   .layer { position: absolute; inset: 0; pointer-events: none; }
-  .chrome-bar { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; font-weight: 600; color: #fff; mix-blend-mode: difference; }
-  .island { position: absolute; left: 50%; transform: translateX(-50%); background: #000; }
-  .home-bar { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); height: 5px; border-radius: 3px; background: #fff; mix-blend-mode: difference; }
   .fold { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; transform: translateX(-50%); background: linear-gradient(90deg, transparent, rgba(0,0,0,.18), transparent); box-shadow: 0 0 12px rgba(0,0,0,.25); }
   .grid-cols { position: absolute; inset: 0; display: flex; }
   .grid-cols div { flex: 1; background: rgba(242, 72, 34, .1); }
@@ -266,7 +263,6 @@ export function studioPage(appPath) {
         <span class="zoom focus-zoom"></span>
       </span>
       <span class="sep"></span>
-      <button class="chrome" title="Status bar, notch or Dynamic Island, home indicator">Chrome</button>
       <button class="grid" title="Column grid">Grid</button>
       <button class="base" title="8pt baseline">8pt</button>
       <button class="compare" title="Hold to see every artboard without your previews (or hold \\ in the app)">Compare</button>
@@ -327,7 +323,7 @@ export function studioPage(appPath) {
   const $ = (s) => document.querySelector(s);
   const viewport = $(".viewport"), world = $(".world"), minimap = $(".minimap");
   const VIEW_KEY = "ui-tweaks:studio-view";
-  let view = { chrome: true, grid: false, base: false, pages: false, cam: null, mode: "canvas", focus: null };
+  let view = { grid: false, base: false, pages: false, cam: null, mode: "canvas", focus: null };
   try { view = { ...view, ...JSON.parse(localStorage.getItem(VIEW_KEY) || "{}") }; } catch {}
   const saveView = () => { try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch {} };
 
@@ -521,19 +517,11 @@ export function studioPage(appPath) {
   const focusedId = () => (canvas.artboards.some((a) => a.id === view.focus) ? view.focus : (canvas.artboards.find((a) => a.id === selected) || canvas.artboards[0] || {}).id);
   const newId = () => "a" + Math.random().toString(36).slice(2, 8);
 
-  function chrome(a) {
+  // Only the Duo's fold is drawn; simulated status bars and notches clip the app's own header.
+  function fold(a) {
     const d = BY_ID[a.device];
-    if (!d || !view.chrome || d[4] === "desktop") return "";
-    const kind = d[4], turned = !!a.turned;
-    const bar = { island: 54, notch: 47, home: 20, android: 28, tablet: 24, fold: 32 }[kind];
-    let html = "";
-    if (!turned || kind === "tablet" || kind === "fold") html += '<div class="chrome-bar" style="height:' + bar + "px;font-size:" + (kind === "home" || kind === "tablet" ? 12 : 15) + 'px"><span>9:41</span><span>●●● ▮</span></div>';
-    if (!turned && kind === "island") html += '<div class="island" style="top:11px;width:124px;height:36px;border-radius:18px"></div>';
-    if (!turned && kind === "notch") html += '<div class="island" style="top:0;width:162px;height:32px;border-radius:0 0 18px 18px"></div>';
-    if (!turned && kind === "android") html += '<div class="island" style="top:10px;width:12px;height:12px;border-radius:6px"></div>';
-    if (kind === "fold") html += '<div class="fold" style="' + (turned ? "left:0;right:0;top:50%;bottom:auto;width:auto;height:2px;transform:translateY(-50%)" : "") + '"></div>';
-    if (kind !== "home") html += '<div class="home-bar" style="width:' + (kind === "tablet" ? 300 : 134) + 'px"></div>';
-    return html;
+    if (!d || d[4] !== "fold") return "";
+    return '<div class="fold" style="' + (a.turned ? "left:0;right:0;top:50%;bottom:auto;width:auto;height:2px;transform:translateY(-50%)" : "") + '"></div>';
   }
   function overlays(w) {
     let html = "";
@@ -617,7 +605,7 @@ export function studioPage(appPath) {
       Object.assign(f.frame.style, { width: w + "px", height: h + "px" });
       f.el.classList.toggle("selected", a.id === selected);
       if (f.url !== a.url) { f.url = a.url; f.iframe.src = a.url; }
-      f.layer.innerHTML = overlays(w) + chrome(a);
+      f.layer.innerHTML = overlays(w) + fold(a);
       head(a, f);
     });
     const focus = isFocus(), fid = focusedId();
@@ -632,7 +620,7 @@ export function studioPage(appPath) {
       $(".focus-name").textContent = a ? a.name : "";
       $(".focus-device").innerHTML = options(a && a.device);
     }
-    for (const [cls, key] of [[".chrome", "chrome"], [".grid", "grid"], [".base", "base"], [".pages-toggle", "pages"]]) $(cls).classList.toggle("on", !!view[key]);
+    for (const [cls, key] of [[".grid", "grid"], [".base", "base"], [".pages-toggle", "pages"]]) $(cls).classList.toggle("on", !!view[key]);
     $(".pages").hidden = !view.pages || focus;
     $(".add").innerHTML = '<option value="">+ Artboard</option>' + options("");
     saveView();
@@ -757,7 +745,7 @@ export function studioPage(appPath) {
   $(".zoom-out").addEventListener("click", () => zoomAt(cam.z / 1.25, ...center()));
   $(".zoom-fit").addEventListener("click", () => fitTo(canvas.artboards));
   $(".zoom-100").addEventListener("click", () => zoomAt(1, ...center()));
-  for (const [cls, key] of [[".chrome", "chrome"], [".grid", "grid"], [".base", "base"]]) $(cls).addEventListener("click", () => { view[key] = !view[key]; render(); });
+  for (const [cls, key] of [[".grid", "grid"], [".base", "base"]]) $(cls).addEventListener("click", () => { view[key] = !view[key]; render(); });
   $(".pages-toggle").addEventListener("click", () => { view.pages = !view.pages; render(); loadPages(); });
   $(".reload").addEventListener("click", () => frames.forEach((f) => f.iframe.contentWindow.location.reload()));
   $(".exit").addEventListener("click", () => {

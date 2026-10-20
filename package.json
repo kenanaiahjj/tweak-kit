@@ -22,6 +22,8 @@
     "overlay.js",
     "serve.mjs",
     "server-core.mjs",
+    "system-page.mjs",
+    "tokens.mjs",
     "vite-plugin.d.mts",
     "vite-plugin.mjs"
   ],

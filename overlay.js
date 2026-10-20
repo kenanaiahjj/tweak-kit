@@ -904,7 +904,7 @@
     .handle[data-dir=e], .handle[data-dir=w] { cursor: ew-resize; }
     .handle[data-dir=nw], .handle[data-dir=se] { cursor: nwse-resize; }
     .handle[data-dir=ne], .handle[data-dir=sw] { cursor: nesw-resize; }
-    .ghost { position: fixed; pointer-events: none; outline: 1px dashed var(--accent); background: rgba(13,153,255,.12); }
+    .drag-ghost { position: fixed; pointer-events: none; outline: 1px dashed var(--accent); background: rgba(13,153,255,.12); }
     .drop-line { position: fixed; pointer-events: none; background: var(--accent); border-radius: 2px; box-shadow: 0 0 0 1px #fff; }
     .guide { position: fixed; pointer-events: none; background: #f24822; }
     .drag-tip { position: fixed; pointer-events: none; background: #111; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px; white-space: nowrap; }
@@ -915,7 +915,7 @@
   <div class="pad p-t hidden"></div><div class="pad p-r hidden"></div><div class="pad p-b hidden"></div><div class="pad p-l hidden"></div>
   <div class="sel-box hidden"></div>
   <div class="tag hidden"></div>
-  <div class="ghost hidden"></div><div class="drop-line hidden"></div><div class="guide gv hidden"></div><div class="guide gh hidden"></div><div class="drag-tip hidden"></div>
+  <div class="drag-ghost hidden"></div><div class="drop-line hidden"></div><div class="guide gv hidden"></div><div class="guide gh hidden"></div><div class="drag-tip hidden"></div>
   ${["nw", "n", "ne", "e", "se", "s", "sw", "w"].map((d) => `<div class="handle hidden" data-dir="${d}"></div>`).join("")}
   <div class="measure hidden"></div><div class="measure hidden"></div><div class="measure hidden"></div><div class="measure hidden"></div>
   <div class="measure-label hidden"></div><div class="measure-label hidden"></div><div class="measure-label hidden"></div><div class="measure-label hidden"></div>
@@ -1932,7 +1932,16 @@
     undo.disabled = state.undo.length === 0;
     undo.style.opacity = undo.disabled ? "0.35" : "1";
     undo.addEventListener("click", undoPreview);
-    bar.append(title, undo, pick, pop, close);
+    const system = document.createElement("button");
+    system.className = "icon";
+    system.textContent = "◧";
+    system.title = "Design system: every token in your CSS, editable";
+    system.addEventListener("click", () => {
+      const url = API + "/system";
+      if (STUDIO) STUDIO.location.href = url;
+      else if (!window.open(url, "_blank")) location.href = url;
+    });
+    bar.append(title, undo, system, pick, pop, close);
     panel.append(bar);
 
     const scroll = document.createElement("div");
@@ -2683,7 +2692,7 @@
 
   function dragReorder(dx, dy, e) {
     const { rect, others, axis, reverse } = drag;
-    place($(".ghost"), { left: rect.left + dx, top: rect.top + dy, width: rect.width, height: rect.height });
+    place($(".drag-ghost"), { left: rect.left + dx, top: rect.top + dy, width: rect.width, height: rect.height });
     const x = e.clientX, y = e.clientY;
     const before = (r) => {
       let b;
@@ -2726,7 +2735,7 @@
     drag = null;
     if (!d || !d.started) return;
     suppressClickUntil = performance.now() + 400;
-    ["ghost", "drop-line", "gv", "gh"].forEach((c) => $("." + c).classList.add("hidden"));
+    ["drag-ghost", "drop-line", "gv", "gh"].forEach((c) => $("." + c).classList.add("hidden"));
     tip("", 0, 0);
     if (d.kind === "reorder" && !d.noop && e.type === "pointerup") {
       const list = kids(d.el.parentElement).filter((c) => c !== d.el);

@@ -218,6 +218,17 @@ Press **Send to Claude**. The toast tells you what happened, e.g. "Applied 3 dir
 
 **Diff** opens a pane with the exact changes.
 
+### Design system page
+
+**Tokens** in the studio toolbar, or **◧** in the panel, opens `/__ui-tweaks/system`: every design token (CSS custom property) your stylesheets declare, laid out for designers.
+
+- **Sections:** colours, font families, type scale, weights, line heights, spacing, radius, shadows, motion, z-index and anything else, each previewed with the real value (a swatch, a type sample, a bar, a rounded box, a shadow card, a moving dot).
+- **Modes:** any selector that declares four or more tokens is a mode (`:root`, `.dark`, `[data-theme=…]`, a theme class); switch between them at the top. Colour cards show the other modes as small squares, and a value a mode doesn't set says where it comes from.
+- **Edit in place:** change a value and press Enter, or click a swatch to pick a colour (an oklch token stays oklch). The edit is written to the declaration in your stylesheet, your app updates through hot reload, and **Undo** in the toast (or **Undo apply** in the panel) puts the file back.
+- **Uses:** each token shows how often `var(--name)` appears in your source; unused ones are marked.
+- **Hand-written values:** colours, spacing, radii and font sizes typed straight into the CSS, most used first. **Use --token** swaps every one for the matching token (◐ marks a token that changes between modes, and asks first); **Make token** adds a new token to the base mode and uses it everywhere.
+- Custom properties set on a single component's selector are listed as **Local tokens**.
+
 ### Commands in Claude Code
 
 | Command | Does |

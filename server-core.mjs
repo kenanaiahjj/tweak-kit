@@ -2,6 +2,8 @@
 // Serves the overlay script and stores batches of tweaks in <root>/.ui-tweaks/pending.json,
 // which the Claude Code "ui-tweaks" mod watches.
 import { updateStatus } from "./update.mjs";
+import { adoptToken, createToken, scanTokens, setToken } from "./tokens.mjs";
+import { systemPage } from "./system-page.mjs";
 import { promises as fs, unlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -172,7 +174,8 @@ export function studioPage(appPath) {
   .stage { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .toolbar { height: 40px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 6px; background: var(--bar); border-bottom: 1px solid var(--line); min-width: 0; overflow: hidden; }
   .toolbar button { height: 26px; padding: 0 7px; border: 1px solid transparent; border-radius: 5px; background: transparent; cursor: pointer; flex: none; white-space: nowrap; }
-  .toolbar button:hover { background: #2c2c2c; }
+  .toolbar button:hover, .toolbar a.tb:hover { background: #2c2c2c; }
+  .toolbar a.tb { height: 26px; padding: 0 7px; border-radius: 5px; display: inline-flex; align-items: center; flex: none; white-space: nowrap; text-decoration: none; color: var(--text); }
   .toolbar button.on { background: var(--accent); color: #fff; }
   .toolbar select { height: 26px; min-width: 0; max-width: 170px; padding: 0 6px; border: 1px solid var(--line); border-radius: 5px; background: #2c2c2c; cursor: pointer; flex: 0 1 auto; }
   .sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; flex: none; }
@@ -268,6 +271,8 @@ export function studioPage(appPath) {
       <button class="base" title="8pt baseline">8pt</button>
       <button class="compare" title="Hold to see every artboard without your previews (or hold \\ in the app)">Compare</button>
       <button class="shot" title="Snapshot of the selected artboard as a PNG">📷</button>
+      <span class="sep"></span>
+      <a class="tb" href="/__ui-tweaks/system" title="Design system: every token in your CSS, editable">Tokens</a>
     </div>
     <div class="body">
       <div class="pages" hidden></div>
@@ -888,6 +893,27 @@ export function createTweaksHandler({ root, getVersion }) {
       if (req.method === "PUT" && url.pathname === `${PREFIX}/canvas`) {
         const version = await writeCanvas(root, JSON.parse(await readBody(req)));
         return send(res, 200, { ok: true, version });
+      }
+      if (req.method === "GET" && url.pathname === `${PREFIX}/system`) {
+        return send(res, 200, systemPage(), "text/html; charset=utf-8");
+      }
+      if (req.method === "GET" && url.pathname === `${PREFIX}/tokens`) {
+        return send(res, 200, { project: path.basename(root), ...(await scanTokens(root)) });
+      }
+      // Token edits from the design system page: written straight to the stylesheet, undoable like an apply.
+      if ((req.method === "PUT" && url.pathname === `${PREFIX}/tokens`) || (req.method === "POST" && /^\/__ui-tweaks\/tokens\/(adopt|create)$/.test(url.pathname))) {
+        const body = JSON.parse(await readBody(req));
+        try {
+          const action = req.method === "PUT" ? "set" : url.pathname.split("/").pop();
+          const out = action === "set" ? { files: [await setToken(root, body)], count: 1 } : action === "adopt" ? await adoptToken(root, body) : await createToken(root, body);
+          if (!out.files.length) return send(res, 200, { ok: true, count: 0, files: [] });
+          await recordHistory(root, { by: "tokens", count: out.count, files: out.files });
+          const what = action === "set" ? `${body.name}: ${body.from} → ${body.to}` : action === "adopt" ? `${body.value} → var(${body.token}) ×${out.count}` : `new ${body.name}: ${body.value}, used ×${out.count}`;
+          await appendLog(root, [{ at: Date.now(), id: `tok-${Date.now().toString(36)}`, element: "design system", by: "tokens", outcome: "applied", props: [what], files: out.files.map((f) => path.relative(root, f.path)) }]);
+          return send(res, 200, { ok: true, count: out.count, files: out.files.map((f) => path.relative(root, f.path)) });
+        } catch (error) {
+          return send(res, error.status || 500, { error: error.message });
+        }
       }
       if (req.method === "GET" && url.pathname === `${PREFIX}/routes`) {
         return send(res, 200, await findRoutes(root));

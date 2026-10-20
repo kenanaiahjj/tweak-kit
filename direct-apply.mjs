@@ -183,7 +183,7 @@ function applyEdits(text, edits) {
 
 // ---------- ownership ----------
 
-export async function sourceFiles(root) {
+export async function sourceFiles(root, extensions = SOURCE_EXT) {
   const out = [];
   const walk = async (dir) => {
     for (const entry of await fs.readdir(dir, { withFileTypes: true }).catch(() => [])) {
@@ -191,7 +191,7 @@ export async function sourceFiles(root) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         if (!SKIP_DIRS.has(entry.name)) await walk(full);
-      } else if (SOURCE_EXT.has(path.extname(entry.name))) out.push(full);
+      } else if (extensions.has(path.extname(entry.name))) out.push(full);
     }
   };
   await walk(root);

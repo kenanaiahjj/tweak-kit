@@ -24,13 +24,12 @@
 
 Once per person. In a terminal (`/plugin` isn't available in the desktop app's Code tab):
 
-```
-claude
-/plugin install ui-tweaks --marketplace kenanaiahjj/tweak-kit
+```bash
+claude plugin marketplace add kenanaiahjj/tweak-kit
+claude plugin install ui-tweaks@ui-tweak-kit
 ```
 
-1. Answer `y` to add the `kenanaiahjj/tweak-kit` marketplace.
-2. Choose **user scope** so it loads in every project.
+`ui-tweak-kit` is the marketplace's name and `ui-tweaks` the plugin; the install defaults to user scope, so it loads in every project. If you added the marketplace earlier from `lmfventures/tweak-kit`, remove it first with `claude plugin marketplace remove ui-tweak-kit`.
 
 From then on it loads in every Claude Code session, including ones the desktop app starts. Check it with:
 

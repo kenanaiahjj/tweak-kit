@@ -13,13 +13,14 @@ It has two parts:
 
 ## Quick start
 
-**1. Install the Claude Code mod** (once). In a terminal, start `claude` and run:
+**1. Install the Claude Code mod** (once). In a terminal:
 
-```
-/plugin install ui-tweaks --marketplace kenanaiahjj/tweak-kit
+```bash
+claude plugin marketplace add kenanaiahjj/tweak-kit
+claude plugin install ui-tweaks@ui-tweak-kit
 ```
 
-Answer `y`, then choose the user scope. It now loads in every Claude Code session, including the desktop app.
+It now loads in every Claude Code session, including the desktop app.
 
 **2. Add the kit to a project:**
 

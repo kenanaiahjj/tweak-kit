@@ -16,7 +16,7 @@ It has two parts:
 **1. Install the Claude Code mod** (once). In a terminal, start `claude` and run:
 
 ```
-/plugin install ui-tweaks --marketplace lmfventures/tweak-kit
+/plugin install ui-tweaks --marketplace kenanaiahjj/tweak-kit
 ```
 
 Answer `y`, then choose the user scope. It now loads in every Claude Code session, including the desktop app.
@@ -24,7 +24,7 @@ Answer `y`, then choose the user scope. It now loads in every Claude Code sessio
 **2. Add the kit to a project:**
 
 ```bash
-npm i -D github:lmfventures/tweak-kit
+npm i -D github:kenanaiahjj/tweak-kit
 ```
 
 For a **Vite** project, add it to `vite.config.ts` (other setups are covered in the [guide](docs/guide.md#2-hook-up-a-project)):
@@ -41,7 +41,7 @@ export default defineConfig({ plugins: [react(), uiTweaks] });
 
 **3. Use it.** Run your dev server, open the app (Claude Code's browser pane works well), and click **Tweak** (or Alt+T). The studio opens: click elements in your app, edit them in the panel, and press **Send to Claude**. Keep a Claude Code session open (ideally in the project folder) so anything that needs Haiku gets applied.
 
-The repo is private, so you need read access to `lmfventures/tweak-kit` and git set up to reach GitHub.
+The repo is public, so nothing else is needed to install either part.
 
 ## Documentation
 

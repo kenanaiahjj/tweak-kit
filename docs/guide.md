@@ -17,7 +17,6 @@
 
 - **Claude Code 2.1.275 or later**, for the mod (it uses Claude Code's plugin hooks).
 - **Node 18 or later** in the project. Plain-HTML live reload on Linux needs Node 20+.
-- **Read access to `lmfventures/tweak-kit`** (it's a private repo), and git set up to reach GitHub over HTTPS or SSH.
 - **Haiku access** on your Claude account, for the tweaks that need a model.
 - **Chrome or another regular browser** if you want to pop the panel out into its own window. Claude Code's built-in browser blocks pop-ups; the panel works there, just not popped out.
 
@@ -27,10 +26,10 @@ Once per person. In a terminal (`/plugin` isn't available in the desktop app's C
 
 ```
 claude
-/plugin install ui-tweaks --marketplace lmfventures/tweak-kit
+/plugin install ui-tweaks --marketplace kenanaiahjj/tweak-kit
 ```
 
-1. Answer `y` to add the `lmfventures/tweak-kit` marketplace.
+1. Answer `y` to add the `kenanaiahjj/tweak-kit` marketplace.
 2. Choose **user scope** so it loads in every project.
 
 From then on it loads in every Claude Code session, including ones the desktop app starts. Check it with:
@@ -46,7 +45,7 @@ It does nothing in a project until tweaks arrive there, so it's safe to leave on
 Install the kit as a dev dependency:
 
 ```bash
-npm i -D github:lmfventures/tweak-kit
+npm i -D github:kenanaiahjj/tweak-kit
 ```
 
 The package is named `ui-tweak-kit`. It only runs in development; production builds never include it. Then pick your setup.
@@ -261,11 +260,10 @@ All inside `<project>/.ui-tweaks/`, which ignores itself in git:
 
 ## Setting it up for a team
 
-1. Give teammates read access to `lmfventures/tweak-kit`.
-2. Each person installs the mod once ([step 1](#1-install-the-claude-code-mod)).
-3. Commit the dev dependency and the config change for each project ([step 2](#2-hook-up-a-project)). Teammates get the overlay on their next `npm install`.
+1. Each person installs the mod once ([step 1](#1-install-the-claude-code-mod)).
+2. Commit the dev dependency and the config change for each project ([step 2](#2-hook-up-a-project)). Teammates get the overlay on their next `npm install`.
 
-Because the Vite snippet catches a failed import, someone without repo access can still run the project, just without the overlay.
+Because the Vite snippet catches a failed import, the project still runs for anyone who hasn't installed the kit, just without the overlay.
 
 ## Updating
 
@@ -275,7 +273,7 @@ claude plugin marketplace update ui-tweak-kit
 claude plugin update ui-tweaks@ui-tweak-kit
 
 # The browser kit, in each project
-npm i -D github:lmfventures/tweak-kit
+npm i -D github:kenanaiahjj/tweak-kit
 ```
 
 Restart the dev server after updating the kit.
@@ -322,7 +320,7 @@ Then remove the `uiTweaks` lines from `vite.config.ts`, or the script tag from y
 ## Working on the kit itself
 
 ```bash
-git clone https://github.com/lmfventures/tweak-kit.git
+git clone https://github.com/kenanaiahjj/tweak-kit.git
 cd tweak-kit
 npm test                                  # direct-apply tests
 claude plugin test claude-mod             # the mod's tests

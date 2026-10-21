@@ -242,3 +242,60 @@ test("planMediaEdits won't add to a block that sits above the base rule", () => 
   // but editing a value the block already has is safe
   assert.ok(planMediaEdits(css, { selector: ".a", query: "(max-width: 500px)", items: [{ prop: "color", value: "green" }] }).edits);
 });
+
+// ---------- Tailwind ----------
+
+import { planClassEdit } from "../direct-apply.mjs";
+
+async function twProject(jsx) {
+  const root = await mkdtemp(path.join(tmpdir(), "uitk-twp-"));
+  await mkdir(path.join(root, "src"));
+  await writeFile(path.join(root, "package.json"), JSON.stringify({ devDependencies: { tailwindcss: "^3.4.0" } }));
+  await writeFile(path.join(root, "src/index.css"), "@tailwind base;\n@tailwind utilities;\n");
+  await writeFile(path.join(root, "src/App.tsx"), jsx);
+  return root;
+}
+const twTweak = (changes, extra = {}) => ({ id: "t-0", element: { classes: ["pt-2"], react: { jsxSource: "src/App.tsx:2" } }, changes, ...extra });
+const gen = (selector, property) => ({ selector, property, file: "src/index.css", matches: 1 }); // a generated utility: not in the source css
+
+test("Tailwind: a padding tweak rewrites the utility in className", async () => {
+  const root = await twProject('export const A = () => (\n  <div\n    className="flex pt-2 text-sm">x</div>\n);\n');
+  const out = await applyDirect(root, { tweaks: [twTweak({ "padding-top": { prop: "padding-top", from: "8px", to: "20px", authoredIn: [gen(".pt-2", "padding-top")] } })] });
+  assert.equal(out.remaining.length, 0);
+  assert.match(out.files[0].after, /className="flex text-sm pt-5"/);
+});
+
+test("Tailwind: a hover tweak adds a hover: utility; unsupported props stay for Haiku", async () => {
+  const root = await twProject('export const A = () => (\n  <div className="btn">x</div>\n);\n');
+  const out = await applyDirect(root, {
+    tweaks: [twTweak({
+      "background-color:hover": { prop: "background-color", state: "hover", from: "#fff", to: "#000", authoredIn: [] },
+      "backdrop-filter": { prop: "backdrop-filter", from: "none", to: "blur(4px)", authoredIn: [] },
+    }, { element: { classes: ["btn"], react: { jsxSource: "src/App.tsx:2" } } })],
+  });
+  assert.match(out.files[0].after, /className="btn hover:bg-\[#000\]"/);
+  assert.deepEqual(Object.keys(out.remaining[0].changes), ["backdrop-filter"]);
+  assert.match(out.remaining[0].directSkip, /no Tailwind class for backdrop-filter/);
+});
+
+test("Tailwind: a hand-written rule in a source stylesheet keeps the normal CSS path", async () => {
+  const root = await twProject('export const A = () => (\n  <div className="card">x</div>\n);\n');
+  await writeFile(path.join(root, "src/index.css"), "@tailwind base;\n.card { padding-top: 8px; }\n");
+  const out = await applyDirect(root, { tweaks: [twTweak({ "padding-top": { prop: "padding-top", from: "8px", to: "20px", authoredIn: [gen(".card", "padding-top")] } }, { element: { classes: ["card"], react: { jsxSource: "src/App.tsx:2" } } })] });
+  assert.match(out.files[0].after, /\.card \{ padding-top: 20px; \}/);
+  assert.equal(out.files.length, 1);
+});
+
+test("Tailwind: a width-scoped tweak gets a max-[…] variant", async () => {
+  const root = await twProject('export const A = () => (\n  <div className="pt-2">x</div>\n);\n');
+  const out = await applyDirect(root, { tweaks: [twTweak({ "padding-top": { prop: "padding-top", from: "8px", to: "12px", authoredIn: [gen(".pt-2", "padding-top")] } }, { scope: { kind: "viewport", width: 375, query: "(max-width: 430px)" }, element: { classes: ["pt-2"], react: { jsxSource: "src/App.tsx:2" } } })] });
+  assert.match(out.files[0].after, /className="pt-2 max-\[430px\]:pt-3"/);
+});
+
+test("planClassEdit edits cn()'s first string and leaves other expressions to a model", () => {
+  const cn = 'const A = () => <div className={cn("p-2 flex", open && "block")}>x</div>;\n';
+  const { edits } = planClassEdit(cn, 1, (c) => [...c, "gap-4"]);
+  assert.equal(edits.reduce((t, e) => t.slice(0, e.start) + e.value + t.slice(e.end), cn), 'const A = () => <div className={cn("p-2 flex gap-4", open && "block")}>x</div>;\n');
+  assert.match(planClassEdit("const A = () => <div className={`a ${b}`}>x</div>;\n", 1, (c) => c).error, /expression/);
+  assert.match(planClassEdit("const A = () => <Button className=\"a\">x</Button>;\n", 1, (c) => c).error, /component/);
+});

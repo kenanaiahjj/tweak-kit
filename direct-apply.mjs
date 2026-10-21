@@ -9,6 +9,7 @@
 // Notes, hover/active/focus states and style props are left for Haiku.
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { detectTailwind, planUtilities } from "./tailwind.mjs";
 
 const GROUPS = {
   padding: ["padding-top", "padding-right", "padding-bottom", "padding-left"],
@@ -315,6 +316,44 @@ export function planClassAdd(text, line, cls) {
   return { edits: [{ start: at, end: at, value: ` className="${cls}"` }] };
 }
 
+/**
+ * Rewrites the class list of the JSX element that starts on `line`: `fn(classes) -> classes`.
+ * Handles className="a b", className={"a b"}-less literals, and cn()/clsx()/classNames()/twMerge() whose first
+ * argument is a plain string (that string is edited). Any other className expression is left for a model.
+ */
+export function planClassEdit(text, line, fn) {
+  const lines = text.split("\n");
+  const lineStart = lines.slice(0, Math.max(0, line - 1)).join("\n").length + (line > 1 ? 1 : 0);
+  const lt = text.indexOf("<", lineStart);
+  if (lt < 0 || lt - lineStart > 200) return { error: "no JSX tag at the JSX line" };
+  let i = lt + 1, depth = 0;
+  for (; i < text.length; i++) {
+    const c = text[i];
+    if ((c === '"' || c === "'" || c === "`") && depth >= 0) {
+      const end = text.indexOf(c, i + 1);
+      if (end < 0) break;
+      i = end;
+    } else if (c === "{") depth++;
+    else if (c === "}") depth--;
+    else if (c === ">" && depth === 0) break;
+  }
+  const tag = text.slice(lt, i);
+  const name = /^<([A-Za-z][\w.]*)/.exec(tag);
+  if (!name) return { error: "no JSX tag at the JSX line" };
+  if (/^[A-Z]/.test(name[1])) return { error: `<${name[1]}> is a component; its className may not reach the element` };
+  const edit = (index, quote, inner) => {
+    const start = lt + index + 1; // just after the opening quote
+    return { edits: [{ start, end: start + inner.length, value: fn(inner.split(/\s+/).filter(Boolean)).join(" ") }] };
+  };
+  const literal = /\bclassName\s*=\s*(["'])([^"']*)\1/.exec(tag);
+  if (literal) return edit(literal.index + literal[0].indexOf(literal[1]), literal[1], literal[2]);
+  const call = /\bclassName\s*=\s*\{\s*(?:cn|clsx|classNames|classnames|twMerge|cx)\(\s*(["'`])([^"'`$\\]*)\1/.exec(tag);
+  if (call) return edit(call.index + call[0].lastIndexOf(call[1], call[0].length - call[2].length - 2), call[1], call[2]);
+  if (/\bclassName\s*=/.test(tag)) return { error: "its className is an expression" };
+  const at = lt + 1 + name[1].length;
+  return { edits: [{ start: at, end: at, value: ` className="${fn([]).join(" ")}"` }] };
+}
+
 /** Four matching longhands of a group become its shorthand. */
 function collapseDecls(items) {
   const out = [...items];
@@ -401,9 +440,22 @@ export async function applyDirect(root, batch) {
   let markup = null;
   const markupTexts = async () => (markup ??= await Promise.all((await sourceFiles(root)).map((f) => fs.readFile(f, "utf8").catch(() => ""))));
 
+  const tailwind = await detectTailwind(root);
+  // Tailwind sets a value when no hand-written rule in a source stylesheet does: the winning rule is a generated
+  // utility (not in any source CSS file), or there is none. A rule the author wrote keeps the normal path.
+  const tailwindOwns = async (c, r) => {
+    if (c.inlineBefore) return false;
+    if (c.state && !["hover", "active", "focus", "focus-visible"].includes(c.state)) return false;
+    if (!r) return true;
+    if (!r.file || !/\.css$/i.test(r.file)) return true;
+    const text = await read(path.resolve(root, r.file)).catch(() => "");
+    return !text || !!findRule(text, r.selector, r.conditions || []).error;
+  };
   const applied = []; // { id, props, text, files }
   const remaining = []; // tweaks (with only what is left) + directSkip
   for (const tweak of batch.tweaks) {
+    const jsxLoc = /^(.*):(\d+)$/.exec((tweak.element && tweak.element.react && tweak.element.react.jsxSource) || "");
+    const tw = {}; // prop key -> true: written as a Tailwind utility on the element's className
     const changes = Object.entries(tweak.changes || {});
     const blocked = {}; // prop key -> reason
     const overridable = {}; // prop key -> true when an override rule can do it
@@ -420,6 +472,10 @@ export async function applyDirect(root, batch) {
           blocked[k] = reason;
           if (!scopeQuery) overridable[k] = true; // an override class has no width scope
         };
+        if (tailwind && jsxLoc && tweak.reach !== "all" && (await tailwindOwns(c, r))) {
+          tw[k] = true; // a utility class sets this (or nothing does yet): write a utility, not a CSS rule
+          continue;
+        }
         if (c.state) blocked[k] = "changes a hover/active/focus state";
         else if (c.inlineBefore) blocked[k] = "set by the element's style prop";
         else if (!r) shared("not set by any rule yet");
@@ -432,7 +488,7 @@ export async function applyDirect(root, batch) {
         else if (r.usesVariable && !/^var\(/.test(c.to)) shared(`${r.property} uses a CSS variable`);
         else if (scopeQuery && !(r.conditions || []).length) mediaWrite[k] = true;
       }
-      const open = changes.filter(([k]) => !blocked[k]);
+      const open = changes.filter(([k]) => !blocked[k] && !tw[k]);
       if (open.length && tweak.reach !== "all") {
         const classes = [...new Set(open.flatMap(([, c]) => classesIn(c.authoredIn[0].selector)))];
         const uses = countClassUses(await markupTexts(), classes);
@@ -452,7 +508,7 @@ export async function applyDirect(root, batch) {
     const byFile = new Map();
     const mediaGroups = new Map(); // `${file}|${selector}` -> { abs, selector, items, keys }
     for (const [k, c] of changes) {
-      if (blocked[k]) continue;
+      if (blocked[k] || tw[k]) continue;
       const abs = path.resolve(root, c.authoredIn[0].file);
       if (mediaWrite[k]) {
         const g = c.authoredIn[0];
@@ -468,6 +524,20 @@ export async function applyDirect(root, batch) {
       const plan = planMediaEdits(await read(g.abs).catch(() => ""), { selector: g.selector, query: scopeQuery, items: g.items });
       if (plan.error) for (const k of g.keys) blocked[k] = plan.error;
       else plans.set(g.abs, [...(plans.get(g.abs) || []), ...plan.edits]);
+    }
+    const twChanges = changes.filter(([k]) => tw[k] && !blocked[k]);
+    if (twChanges.length) {
+      const abs = path.resolve(root, jsxLoc[1]);
+      let result = null;
+      const plan = planClassEdit(await read(abs).catch(() => ""), Number(jsxLoc[2]), (classes) => {
+        result = planUtilities(classes, twChanges.map(([k, c]) => ({ id: k, prop: c.prop || k, to: c.to, state: c.state })), { query: scopeQuery });
+        return result.classes;
+      });
+      if (plan.error) for (const [k] of twChanges) blocked[k] = plan.error;
+      else {
+        for (const sk of result.skipped) blocked[sk.id] = sk.reason;
+        if (result.applied.length) plans.set(abs, [...(plans.get(abs) || []), ...plan.edits]);
+      }
     }
     for (const [abs, fileChanges] of byFile) {
       const plan = planStyleEdits(await read(abs).catch(() => ""), fileChanges);

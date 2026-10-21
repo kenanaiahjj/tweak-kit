@@ -25,7 +25,7 @@ test("a mobile-first project scopes to the largest min-width breakpoint at or be
   assert.equal(s.style, "min");
   assert.deepEqual(scopeFor(s, 800), { query: "(min-width: 640px)", label: "From 640px up", px: 640 });
   assert.equal(scopeFor(s, 1317).px, 1024);
-  assert.equal(scopeFor(s, 375), null);
+  assert.deepEqual(scopeFor(s, 375), { query: "(max-width: 639px)", label: "Below 640px", px: 639 });
 });
 
 test("no breakpoints means no scope", () => {

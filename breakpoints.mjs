@@ -3,6 +3,7 @@
 // or mobile-first min-width), not a one-off query at the exact width of the preview.
 import { promises as fs } from "node:fs";
 import { styleFiles } from "./tokens.mjs";
+import { detectTailwind, TAILWIND_BREAKPOINTS } from "./tailwind.mjs";
 
 const toPx = (n, unit) => Math.round(Number(n) * (unit === "px" ? 1 : 16) * 100) / 100;
 
@@ -39,7 +40,10 @@ export function summarize(uses) {
 export function scopeFor(summary, width) {
   if (summary.style === "min") {
     const bp = summary.min.filter((b) => b.px <= width).pop();
-    return bp ? { query: `(min-width: ${bp.px}px)`, label: `From ${bp.px}px up`, px: bp.px } : null;
+    if (bp) return { query: `(min-width: ${bp.px}px)`, label: `From ${bp.px}px up`, px: bp.px };
+    // Below the smallest breakpoint: the screens the mobile-first base styles are written for.
+    const first = summary.min[0];
+    return first ? { query: `(max-width: ${first.px - 1}px)`, label: `Below ${first.px}px`, px: first.px - 1 } : null;
   }
   const bp = summary.max.find((b) => b.px >= width);
   return bp ? { query: `(max-width: ${bp.px}px)`, label: `At ${bp.px}px and below`, px: bp.px } : null;
@@ -48,5 +52,8 @@ export function scopeFor(summary, width) {
 export async function scanBreakpoints(root) {
   const uses = [];
   for (const file of await styleFiles(root)) uses.push(...breakpointsIn(await fs.readFile(file, "utf8").catch(() => "")));
-  return summarize(uses);
+  const found = summarize(uses);
+  // Tailwind generates its breakpoints, so they aren't in the source: use its defaults (mobile-first).
+  if (found.style === null && (await detectTailwind(root))) return { style: "min", max: [], min: Object.values(TAILWIND_BREAKPOINTS).map((px) => ({ px, uses: 0 })) };
+  return found;
 }

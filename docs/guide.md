@@ -175,7 +175,10 @@ Everything below works the same in the studio or on the page.
 | Section | Controls |
 | --- | --- |
 | Default / Hover / Active / Focus | Which state you're editing. The page shows that state while the element is selected. |
-| Arrange | **↑ Earlier / ↓ Later** reorder among siblings, **Parent** selects up, **Remove** deletes the element (Claude removes its JSX on Send) |
+| Ask Claude | Describe a change and press **Do it** (⌘Enter): a designer agent (Sonnet, in Claude Code) edits the code in the background, following your components and tokens; the result shows here and **Undo apply** reverts it. **3 variations** proposes three looks for the element as style changes: click one to preview it on the page, **Use** turns it into ordinary tweaks to send. Works with nothing selected too ("add a row under Settings"). |
+| Arrange | **↑ / ↓** reorder among siblings, **Parent** selects up, **Duplicate** (⌘D) adds a copy, **Remove** deletes the element (Claude writes the JSX on Send) |
+| Component · Name | When the element is the root of a React component instance: its string, number and boolean props, editable; Haiku changes them at the usage on Send |
+| Tokens on this element | The design tokens behind its styles, with the value in the theme that applies here. Editing one rewrites the token itself, so everything that uses it changes |
 | Auto layout | Row or column, a 3×3 alignment pad, Packed or Spread, gap, wrap. **＋ Add** (or **⇧A**) turns any element with children into one; **Remove** puts it back in normal flow |
 | In parent layout | For children of flex or grid containers: align-self (Auto, Start, Center, End, Stretch) |
 | Size | Width and height, each **Fixed**, **Hug** (fit the content) or **Fill** (take the space, using flex-grow or stretch inside auto layout), min/max width, and content overflow: Visible, Clip or Scroll |
@@ -184,13 +187,16 @@ Everything below works the same in the studio or on the page.
 | Text | Size, weight, line height, letter spacing, color, alignment |
 | Fill & border | Background or gradient layers (each color stop has a picker), corner radius, border, opacity |
 | Shadow | `box-shadow` as text |
-| Apply to | **All screen widths** or **Only at N px** (becomes a media query), plus a **note** for Claude |
+| Apply to | **This element** or **Everywhere**: Everywhere edits the CSS rule itself, so every element and component instance it styles changes (the preview shows them all, and how many); This element gives shared styles an override for just it. Then **All screen widths** or **Only at N px** (a media query), and a **note** for Claude |
 
 - **Drag a field's label** left or right to scrub its value. Hold Shift for steps of 10. ↑/↓ in a field nudges by 1 (Shift: 10).
 - **Drag the selected element** on the page to reorder it among its siblings: a blue line shows where it lands. Absolute and fixed elements move instead, snapping their edges and centre to the parent (hold ⌘/Ctrl to place freely, Shift to lock an axis). **⌘-drag** an element in the flow to offset it (`position: relative`) without moving anything else.
 - **Drag the handles** on the selection to resize; Shift on a corner keeps the proportions. On an absolute element, the handle on the side it's pinned to moves that side.
 - **Drag a row in the layers list** onto a sibling's row to reorder.
-- **Keys:** ⌘↑/⌘↓ reorder, Delete removes, Enter selects the first child, Shift+Enter the parent, Tab / Shift+Tab the next or previous sibling, ⇧A adds or removes auto layout.
+- **Keys:** ⌘↑/⌘↓ reorder, ⌘D duplicates, Delete removes, Enter selects the first child, Shift+Enter the parent, Tab / Shift+Tab the next or previous sibling, ⇧A adds or removes auto layout.
+- **＋ Insert** (panel bar) lists basic elements (frame, text, button, image) and the React components on the page. Pick one, then click where it goes: over a container's empty space it goes inside, over an element it goes beside it; hold **Shift** to place it between the repeated items around the pointer (cards, rows). It previews at once; Haiku writes the JSX on Send.
+- **Resizing** from the handles snaps to **Fill** (the space available) and **Hug** (the content's own size) as you pass them, and switches a Fill element to a fixed size properly (its flex-grow off).
+- **Performance:** the overlay does nothing while the panel is closed or the tab is in the background; style lookups are cached per stylesheet change. `__uiTweaks.stats()` in the console shows the time its per-frame drawing and periodic checks take.
 - **Section titles** fold their section; the panel remembers which.
 - Reordering and removing are previews on the page until you Send; Haiku then edits the JSX, and the page reloads once it's applied. Items from one `.map()` are reordered in the data when it's written out in the source; otherwise Haiku skips them and says why.
 - **Arrow keys on the page** move the selected element (Shift: 10px): positioned elements by their offsets, others by their top/left margin.

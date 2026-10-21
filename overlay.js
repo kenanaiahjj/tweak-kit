@@ -282,11 +282,23 @@
   const STATE_SHEET_ID = "ui-tweaks-states";
 
   // With `st` ("hover", ...), rules for that state come first, then the element's base rules.
-  function matchedRules(el, prop, st = "") {
-    const names = [prop, ...(SHORTHANDS[prop] || [])];
-    const found = [];
+  // ---------- which rules style an element (cached) ----------
+  // The page's rules, flattened once per stylesheet change; per element, the rules that match it,
+  // worked out once per render. A lookup for one property is then a filter over a short list.
+  let sheetVersion = 0;
+  const ourSheet = (n) => n && (n.id === STATE_SHEET_ID || n.id === "ui-tweaks-reach" || (n.parentNode && (n.parentNode.id === STATE_SHEET_ID || n.parentNode.id === "ui-tweaks-reach")));
+  new MutationObserver((muts) => {
+    const theirs = (m) => !ourSheet(m.target) && (m.type !== "childList" || [...m.addedNodes, ...m.removedNodes].some((n) => !ourSheet(n)));
+    if (muts.some(theirs)) sheetVersion++;
+  }).observe(document.head, { childList: true, subtree: true, characterData: true });
+  document.addEventListener("load", (e) => e.target && e.target.tagName === "LINK" && sheetVersion++, true);
+
+  let flat = null, flatVersion = -1;
+  function flatRules() {
+    if (flat && flatVersion === sheetVersion) return flat;
+    flat = [];
     for (const sheet of document.styleSheets) {
-      if (sheet.ownerNode && sheet.ownerNode.id === STATE_SHEET_ID) continue;
+      if (sheet.ownerNode && (sheet.ownerNode.id === STATE_SHEET_ID || sheet.ownerNode.id === "ui-tweaks-reach")) continue;
       let rules;
       try {
         rules = sheet.cssRules;
@@ -295,45 +307,77 @@
       }
       const all = [];
       collectRules(rules, sheet, [], all);
-      all.forEach(({ rule, conditions }, order) => {
-        let matchingPart = null;
-        let isState = false;
-        for (const part of rule.selectorText.split(",")) {
-          try {
-            const forState = st && part.includes(`:${st}`);
-            if (el.matches(forState ? part.trim().split(`:${st}`).join(FORCE(st)) : part.trim())) {
-              if (forState) isState = true;
-              if (!matchingPart || selectorSpecificity(part) > selectorSpecificity(matchingPart)) matchingPart = part.trim();
-            }
-          } catch {}
-        }
-        if (!matchingPart) return;
-        const conditionsHold = conditions.every((c) => (c.startsWith("@layer") ? true : (() => { try { return matchMedia(c).matches; } catch { return true; } })()));
-        if (!conditionsHold) return;
-        for (const name of names) {
-          const value = rule.style.getPropertyValue(name);
-          if (value) {
-            let matches;
-            try {
-              matches = document.querySelectorAll(rule.selectorText).length;
-            } catch {}
-            found.push({
-              selector: rule.selectorText.length > 200 ? matchingPart : rule.selectorText,
-              part: matchingPart, // the part of a selector list that matched this element
-              matches,
-              forState: isState || undefined,
-              important: !!rule.style.getPropertyPriority(name),
-              property: name,
-              value: value.trim() + (rule.style.getPropertyPriority(name) ? " !important" : ""),
-              file: sheetSource(sheet),
-              conditions: conditions.length ? conditions : undefined,
-              usesVariable: value.includes("var(") || undefined,
-              specificity: selectorSpecificity(matchingPart),
-              order,
-            });
+      for (const r of all) flat.push({ ...r, parts: r.rule.selectorText.split(",").map((p) => p.trim()), order: flat.length });
+    }
+    flatVersion = sheetVersion;
+    matchCache = new WeakMap();
+    return flat;
+  }
+
+  let matchCache = new WeakMap();
+  const holds = (conditions) => conditions.every((c) => (c.startsWith("@layer") ? true : (() => { try { return matchMedia(c).matches; } catch { return true; } })()));
+  // The rules matching `el` (for state `st`), with the part of each selector that matched.
+  function rulesFor(el, st) {
+    const rules = flatRules();
+    const key = `${st}|${el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className}|${el.id}|${innerWidth}x${innerHeight}`;
+    let byEl = matchCache.get(el);
+    if (!byEl) matchCache.set(el, (byEl = new Map()));
+    if (byEl.has(key)) return byEl.get(key);
+    const out = [];
+    for (const r of rules) {
+      let matchingPart = null, isState = false;
+      for (const part of r.parts) {
+        try {
+          const forState = st && part.includes(`:${st}`);
+          if (el.matches(forState ? part.split(`:${st}`).join(FORCE(st)) : part)) {
+            if (forState) isState = true;
+            if (!matchingPart || selectorSpecificity(part) > selectorSpecificity(matchingPart)) matchingPart = part;
           }
-        }
-      });
+        } catch {}
+      }
+      if (matchingPart && holds(r.conditions)) out.push({ ...r, matchingPart, isState });
+    }
+    byEl.set(key, out);
+    return out;
+  }
+  // Selector match counts, per stylesheet version: querySelectorAll over the page is the costly part.
+  let countCache = new Map(), countVersion = -1;
+  function matchCount(selector) {
+    if (countVersion !== sheetVersion) {
+      countCache = new Map();
+      countVersion = sheetVersion;
+    }
+    if (!countCache.has(selector)) {
+      let n;
+      try { n = document.querySelectorAll(selector).length; } catch {}
+      countCache.set(selector, n);
+      setTimeout(() => countCache.delete(selector), 2000); // the page changes too
+    }
+    return countCache.get(selector);
+  }
+
+  function matchedRules(el, prop, st = "") {
+    const names = [prop, ...(SHORTHANDS[prop] || [])];
+    const found = [];
+    for (const { rule, sheet, conditions, matchingPart, isState, order } of rulesFor(el, st)) {
+      for (const name of names) {
+        const value = rule.style.getPropertyValue(name);
+        if (!value) continue;
+        found.push({
+          selector: rule.selectorText.length > 200 ? matchingPart : rule.selectorText,
+          part: matchingPart, // the part of a selector list that matched this element
+          matches: matchCount(rule.selectorText),
+          forState: isState || undefined,
+          important: !!rule.style.getPropertyPriority(name),
+          property: name,
+          value: value.trim() + (rule.style.getPropertyPriority(name) ? " !important" : ""),
+          file: sheetSource(sheet),
+          conditions: conditions.length ? conditions : undefined,
+          usesVariable: value.includes("var(") || undefined,
+          specificity: selectorSpecificity(matchingPart),
+          order,
+        });
+      }
     }
     // The cascade: state rules (when asked), then !important, then specificity, then order.
     found.sort((a, b) => !!b.forState - !!a.forState || b.important - a.important || b.specificity - a.specificity || b.order - a.order);
@@ -355,7 +399,9 @@
   function tweakFor(el) {
     const key = keyOf(el);
     if (!state.tweaks.has(key)) {
-      state.tweaks.set(key, { key, el, at: here(), element: describe(el), changes: {}, text: null, note: "", batchId: null });
+      // "Everywhere" picked before the first change carries over to it.
+      const reach = state.pendingReach === key ? "all" : undefined;
+      state.tweaks.set(key, { key, el, at: here(), element: describe(el), changes: {}, text: null, note: "", batchId: null, reach });
     }
     return state.tweaks.get(key);
   }
@@ -437,15 +483,65 @@
   const changeKey = (prop) => (state.editState ? `${prop}:${state.editState}` : prop);
   const changeProp = (key, change) => (change && change.prop) || key;
 
+  // "Everywhere": the change previews on every element its CSS rule styles, through a rule of our own.
+  const reachRule = (el, change) => {
+    const t = state.tweaks.get(elementKeys.get(el));
+    const r = t && t.reach === "all" && change && !change.state && change.authoredIn && change.authoredIn[0];
+    return r && (r.part || r.selector) ? r : null;
+  };
+  function updateReachSheet() {
+    let sheet = document.getElementById("ui-tweaks-reach");
+    if (!sheet) {
+      sheet = document.createElement("style");
+      sheet.id = "ui-tweaks-reach";
+      document.head.append(sheet);
+    }
+    const css = [];
+    if (!state.comparing) {
+      for (const t of state.tweaks.values()) {
+        if (t.reach !== "all") continue;
+        for (const [k, c] of Object.entries(t.changes)) {
+          const r = !c.state && c.to !== undefined && c.authoredIn && c.authoredIn[0];
+          // Same selector, same priority, later in the page: wins exactly where editing that rule would.
+          if (r && (r.part || r.selector)) css.push(`${r.part || r.selector} { ${changeProp(k, c)}: ${c.to}${/!important$/.test(r.value || "") ? " !important" : ""}; }`);
+        }
+      }
+    }
+    if (sheet.textContent !== css.join("\n")) sheet.textContent = css.join("\n");
+    if (css.length && sheet !== document.head.lastElementChild) document.head.append(sheet); // after the app's styles
+  }
+
   function applyChange(el, key, change) {
     if (change.state) return updateStateSheet();
     const prop = changeProp(key, change);
+    if (reachRule(el, change)) {
+      restoreProp(el, prop, change);
+      return updateReachSheet();
+    }
     if (el.style.getPropertyValue(prop) !== change.to || el.style.getPropertyPriority(prop) !== "important") el.style.setProperty(prop, change.to, "important");
   }
 
   function clearChange(el, key, change) {
     if (change && change.state) return updateStateSheet();
     restoreProp(el, changeProp(key, change), change);
+    updateReachSheet();
+  }
+
+  // Switches a tweak between this element and everywhere its rules apply, moving the preview over.
+  function setReach(el, reach) {
+    if (!state.tweaks.has(keyOf(el))) {
+      state.pendingReach = reach === "all" ? keyOf(el) : null;
+      return render();
+    }
+    const t = tweakFor(el);
+    if (t.batchId) withdraw(t.batchId);
+    for (const [k, c] of Object.entries(t.changes)) if (!c.state) restoreProp(el, changeProp(k, c), c);
+    t.reach = reach === "all" ? "all" : undefined;
+    for (const [k, c] of Object.entries(t.changes)) if (c.to !== undefined) applyChange(el, k, c);
+    updateReachSheet();
+    cleanup(t);
+    persist();
+    render();
   }
 
   // State previews: our state changes as real :hover/:active rules, plus copies of the page's own
@@ -896,7 +992,8 @@
   }
 
   // React may remount nodes; find them again by selector and re-apply the preview.
-  setInterval(() => {
+  setInterval(() => document.hidden || !state.tweaks.size || time(stats.tick, recheck), 600);
+  function recheck() {
     if (state.comparing) return;
     const all = [...state.tweaks.values()];
     const lost = all.filter((t) => !t.el.isConnected);
@@ -912,22 +1009,22 @@
     // Selectors count siblings in source order. Where a match sits among moved siblings,
     // look it up again with them put back for a moment.
     const parents = new Set(all.filter((t) => t.move && t.el.isConnected).map((t) => t.el.parentElement));
-    const recheck = [];
+    const retry = [];
     for (const tweak of lost.filter((t) => t.insert && (!t.at || t.at === here()))) placeInsert(tweak);
     for (const tweak of lost.filter((t) => !t.el.isConnected && !t.insert)) {
       const again = document.querySelector(tweak.element.selector);
       if (!again) continue; // not on the page now: try again later, without touching anything
-      if ([...parents].some((p) => p.contains(again))) recheck.push(tweak);
+      if ([...parents].some((p) => p.contains(again))) retry.push(tweak);
       else adopt(tweak, again);
     }
-    if (recheck.length) {
+    if (retry.length) {
       parents.forEach((p) => layoutMoves(p, { original: true }));
-      const found = recheck.map((t) => document.querySelector(t.element.selector));
+      const found = retry.map((t) => document.querySelector(t.element.selector));
       parents.forEach((p) => layoutMoves(p));
-      recheck.forEach((t, i) => adopt(t, found[i]));
+      retry.forEach((t, i) => adopt(t, found[i]));
     }
     for (const tweak of all) if (tweak.el.isConnected) reapply(tweak);
-  }, 600);
+  }
 
   // In the studio, only the frame whose panel is docked edits; the others mirror its previews.
   function ownsPanel() {
@@ -965,6 +1062,7 @@
       if (t.move && t.el.parentElement) layoutMoves(t.el.parentElement, { original: on });
     }
     updateStateSheet();
+    updateReachSheet();
     host.classList.toggle("comparing", on);
   }
 
@@ -1018,6 +1116,7 @@
         insert: t.insert || undefined,
         props: t.props && Object.keys(t.props).length ? t.props : undefined,
         component: t.component || undefined,
+        reach: t.reach || undefined,
         scope: t.scope,
         batchId: t.batchId,
         sentId: t.sentId,
@@ -1058,7 +1157,7 @@
           const el = document.querySelector(d.selector);
           if (!el || !sameSource(el, d.jsx)) return true;
           const tweak = tweakFor(el);
-          Object.assign(tweak, { at: d.at || here(), changes: d.changes, text: d.text, note: d.note, move: d.move || null, removed: !!d.removed, props: d.props, component: d.component, scope: d.scope, batchId: d.batchId, sentId: d.sentId, skipped: d.skipped });
+          Object.assign(tweak, { at: d.at || here(), changes: d.changes, text: d.text, note: d.note, move: d.move || null, removed: !!d.removed, props: d.props, component: d.component, reach: d.reach, scope: d.scope, batchId: d.batchId, sentId: d.sentId, skipped: d.skipped });
           reapply(tweak);
           if (d.text && d.text.to !== undefined) el.textContent = d.text.to;
           return false;
@@ -1275,7 +1374,13 @@
   <div class="panel hidden"></div>
   <div class="toast hidden"></div>`;
 
-  const $ = (sel) => shadow.querySelector(sel);
+  // The overlay's own elements never change: look each one up once.
+  const found$ = new Map();
+  const $ = (sel) => {
+    let n = found$.get(sel);
+    if (!n || !n.isConnected) found$.set(sel, (n = shadow.querySelector(sel)));
+    return n;
+  };
   const panel = $(".panel");
   const launch = $(".launch");
 
@@ -1384,8 +1489,23 @@
     else if (!panelOnRight && r.left < 290 && r.right < innerWidth - 300) panel.classList.remove("left");
   }
 
+  // Timings for __uiTweaks.stats(): the per-frame drawing and the 600 ms re-check.
+  const stats = { draw: { n: 0, total: 0, max: 0 }, tick: { n: 0, total: 0, max: 0 } };
+  const time = (bucket, fn) => {
+    const t0 = performance.now();
+    fn();
+    const ms = performance.now() - t0;
+    bucket.n++;
+    bucket.total += ms;
+    if (ms > bucket.max) bucket.max = ms;
+  };
+  // Draws while the panel is open (or measuring); closed, it clears once and then does nothing.
+  let drawnIdle = false;
   requestAnimationFrame(function loop() {
-    drawBoxes();
+    // In the studio only the screen holding the panel, or under the pointer, has anything to draw.
+    const active = (state.isOpen || state.measuring) && !document.hidden && (!STUDIO || ownsPanel() || !!state.hovered);
+    if (active || !drawnIdle) time(stats.draw, drawBoxes);
+    drawnIdle = !active;
     requestAnimationFrame(loop);
   });
 
@@ -2276,6 +2396,135 @@
     nudgeTimer = setTimeout(renderPanel, 150);
   }
 
+  // How many elements on the page the "Everywhere" rules of this element's changes reach.
+  function reachCount(el) {
+    const t = state.tweaks.get(keyOf(el));
+    const seen = new Set();
+    for (const c of Object.values((t && t.changes) || {})) {
+      const r = !c.state && c.authoredIn && c.authoredIn[0];
+      if (!r) continue;
+      try { document.querySelectorAll(r.part || r.selector).forEach((n) => seen.add(n)); } catch {}
+    }
+    return seen.size || null;
+  }
+
+  // ---------- Tokens on this element ----------
+  // The tokens behind this element's styles, editable here: saving rewrites the token itself, so
+  // everything that uses it changes (in the theme that applies to this element).
+  const TOKEN_PROPS = ["color", "background-color", "background-image", "border-top-color", "border-color", "box-shadow", "padding-top", "padding-left", "gap", "row-gap", "column-gap", "border-top-left-radius", "border-radius", "font-size", "font-family", "font-weight", "line-height", "width", "height"];
+  let tokenScan = null, tokenScanAt = 0, tokenScanning = null;
+  function loadTokenScan() {
+    if (tokenScan && Date.now() - tokenScanAt < 5000) return Promise.resolve(tokenScan);
+    if (!tokenScanning) tokenScanning = fetch(API + "/tokens", { cache: "no-store" }).then((r) => r.json()).then((d) => (tokenScan = d, tokenScanAt = Date.now(), tokenScanning = null, d)).catch(() => (tokenScanning = null, null));
+    return tokenScanning;
+  }
+  function tokensUsedBy(el) {
+    const used = new Map(); // name -> props
+    for (const p of TOKEN_PROPS) {
+      const own = state.tweaks.get(keyOf(el));
+      const rule = matchedRules(el, p)[0];
+      const v = (own && own.changes[p] && own.changes[p].to) || el.style.getPropertyValue(p) || (rule && rule.value) || "";
+      for (const m of String(v || "").matchAll(/var\(\s*(--[\w-]+)/g)) used.set(m[1], [...(used.get(m[1]) || []), p]);
+    }
+    return used;
+  }
+  // The declaration that gives the token its value here: the mode whose selector is the nearest ancestor.
+  function declarationFor(token, el) {
+    let best = null, bestDepth = Infinity;
+    for (const [key, v] of Object.entries(token.values)) {
+      const parts = key.split(" › ");
+      const media = parts.filter((p) => p.startsWith("@media"));
+      if (media.some((m) => { try { return !matchMedia(m.replace(/^@media\s*/, "")).matches; } catch { return false; } })) continue;
+      const sel = parts[parts.length - 1];
+      let n = null;
+      try { n = el.closest(sel); } catch {}
+      if (!n && /^(:root|html)$/.test(sel.trim())) n = document.documentElement;
+      if (!n) continue;
+      let depth = 0;
+      for (let x = el; x && x !== n; x = x.parentElement) depth++;
+      if (depth <= bestDepth) { best = { key, ...v }; bestDepth = depth; }
+    }
+    return best;
+  }
+  function tokensSection(el) {
+    const used = tokensUsedBy(el);
+    if (!used.size) return null;
+    const box = document.createElement("div");
+    box.append(lbl("Changes here apply everywhere the token is used"));
+    const rows = document.createElement("div");
+    box.append(rows);
+    loadTokenScan().then((scan) => {
+      if (!scan) return rows.append(lbl("Couldn't read the tokens"));
+      for (const [name, props] of used) {
+        const token = scan.tokens.find((t) => t.name === name) || null;
+        const decl = token && declarationFor(token, el);
+        const row = document.createElement("div");
+        row.className = "prop-row";
+        row.append(Object.assign(document.createElement("span"), { textContent: name, title: `${name}, used for ${props.join(", ")}${decl ? ` · ${decl.file}:${decl.line}` : ""}` }));
+        if (!decl) {
+          row.append(lbl("declared in a selector the kit can't edit"));
+          rows.append(row);
+          continue;
+        }
+        const wrap = document.createElement("div");
+        wrap.style.cssText = "display:flex;gap:4px;align-items:center;min-width:0";
+        const isColor = token.category === "color";
+        if (isColor) {
+          const sw = document.createElement("label");
+          sw.className = "swatch";
+          sw.style.margin = "0";
+          const fill = document.createElement("i");
+          fill.style.background = getComputedStyle(el).getPropertyValue(name) || decl.value;
+          const pick = Object.assign(document.createElement("input"), { type: "color", value: toHex(fill.style.background || "#000") });
+          pick.addEventListener("change", () => saveToken(name, decl, inNotation(decl.value, pick.value, alphaOf(getComputedStyle(el).getPropertyValue(name).trim() || decl.value))));
+          sw.append(fill, pick);
+          wrap.append(sw);
+        }
+        const input = Object.assign(document.createElement("input"), { value: decl.value, spellcheck: false, title: `Saved to ${decl.file}:${decl.line}` });
+        input.addEventListener("keydown", (e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") input.blur();
+        });
+        input.addEventListener("change", () => saveToken(name, decl, input.value.trim()));
+        wrap.append(input);
+        row.append(wrap);
+        rows.append(row);
+      }
+    });
+    return section("Tokens on this element", box);
+  }
+  async function saveToken(name, decl, to) {
+    if (!to || to === decl.value) return;
+    try {
+      const res = await fetch(API + "/tokens", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, file: decl.file, line: decl.line, from: decl.value, to }) });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error || res.statusText);
+      tokenScanAt = 0;
+      toast(`${name} → ${to}: changed everywhere it's used. Undo apply puts it back.`);
+      setTimeout(render, 600);
+    } catch (error) {
+      toast(`Not saved: ${error.message}`);
+    }
+  }
+  // A picked colour in the token's own notation (oklch stays oklch).
+  function inNotation(original, hex, alpha) {
+    const o = String(original).trim().toLowerCase();
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    if (o.startsWith("oklch")) {
+      const lin = (u) => ((u /= 255) <= 0.04045 ? u / 12.92 : ((u + 0.055) / 1.055) ** 2.4);
+      const [R, G, B] = [r, g, b].map(lin);
+      const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B), m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B), s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+      const L = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, A = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, Bb = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s;
+      const C = Math.hypot(A, Bb);
+      let H = (Math.atan2(Bb, A) * 180) / Math.PI;
+      if (H < 0) H += 360;
+      const f = (n, d) => +n.toFixed(d);
+      return `oklch(${f(L * 100, 1)}% ${f(C, 3)} ${f(C < 0.002 ? 0 : H, 1)}${alpha < 1 ? ` / ${f(alpha, 2)}` : ""})`;
+    }
+    if (o.startsWith("rgb")) return alpha < 1 ? `rgba(${r}, ${g}, ${b}, ${+alpha.toFixed(2)})` : `rgb(${r}, ${g}, ${b})`;
+    return alpha < 1 ? hex + Math.round(alpha * 255).toString(16).padStart(2, "0") : hex;
+  }
+
   // ---------- Insert ----------
   function insertSection() {
     const basics = document.createElement("div");
@@ -2526,6 +2775,7 @@
   }
 
   function renderPanel() {
+    matchCache = new WeakMap(); // one rule match per element per render; the DOM may have changed since
     panel.innerHTML = "";
     const bar = document.createElement("div");
     bar.className = "bar";
@@ -2664,6 +2914,8 @@
       scroll.append(askSection(el));
       const props = componentSection(el);
       if (props) scroll.append(props);
+      const tokensHere = tokensSection(el);
+      if (tokensHere) scroll.append(tokensHere);
 
       const current = state.tweaks.get(keyOf(el));
       const warnings = current && el.isConnected ? hiddenReasons(current) : [];
@@ -2793,7 +3045,19 @@
         });
         scope.append(b);
       }
-      scroll.append(section("Apply to", scope, note));
+      const reach = document.createElement("div");
+      reach.className = "seg";
+      reach.style.marginBottom = "6px";
+      const everywhere = tweak ? tweak.reach === "all" : state.pendingReach === keyOf(el);
+      for (const [kind, label, title] of [["one", "This element", "Only this element changes (shared styles get an override for it)"], ["all", "Everywhere", "Edit the CSS rule itself: every element and component instance that uses it changes"]]) {
+        const b = Object.assign(document.createElement("button"), { textContent: label, title });
+        if ((kind === "all") === everywhere) b.classList.add("on");
+        b.addEventListener("click", () => setReach(el, kind));
+        reach.append(b);
+      }
+      const shared = everywhere ? reachCount(el) : null;
+      const reachNote = shared ? lbl(`Previewing on ${shared} element${shared === 1 ? "" : "s"} on this screen`) : null;
+      scroll.append(section("Apply to", reach, reachNote, scope, note));
     }
 
     const changes = document.createElement("div");
@@ -2808,6 +3072,7 @@
   function summarize(tweak) {
     const parts = Object.entries(tweak.changes).map(([k, c]) => `${c.state ? ":" + c.state + " " : ""}${changeProp(k, c)} ${short(c.from)} → ${short(c.to)}`);
     if (tweak.scope && tweak.scope.kind === "viewport") parts.push(`only at ${tweak.scope.width}px wide`);
+    if (tweak.reach === "all") parts.push("everywhere this style is used");
     if (tweak.text) parts.push(`text → "${tweak.text.to.slice(0, 30)}"`);
     if (tweak.move && tweak.el.parentElement) {
       const list = kids(tweak.el.parentElement), i = list.indexOf(tweak.el);
@@ -2987,6 +3252,7 @@
         insert: t.insert ? { ...t.insert, html: undefined, parentSelector: undefined, ...(t.el.isConnected ? { ...insertWhere(t.el), parent: describe(t.el.parentElement) } : {}) } : undefined,
         props: t.props && Object.keys(t.props).length ? t.props : undefined,
         component: t.component || undefined,
+        reach: t.reach || undefined,
         note: t.note || undefined,
       })),
     };
@@ -3100,7 +3366,10 @@
       }
     } catch {}
   }
-  setInterval(poll, 1500);
+  // The frame showing the panel checks often; studio frames in the background less.
+  (function tick() {
+    (document.hidden ? Promise.resolve() : poll()).finally(() => setTimeout(tick, !STUDIO || ownsPanel() ? 1500 : 5000));
+  })();
 
   function resetAll() {
     [...state.sentBatches.keys()].forEach(withdraw);
@@ -3714,5 +3983,7 @@
     compare,
     // Hides outlines and the launcher (for snapshots).
     hideOverlay: (on) => (host.style.visibility = on ? "hidden" : ""),
+    // Average and worst times (ms) of the overlay's background work, for checking it stays light.
+    stats: () => Object.fromEntries(Object.entries(stats).map(([k, v]) => [k, { runs: v.n, avg: v.n ? +(v.total / v.n).toFixed(3) : 0, max: +v.max.toFixed(3) }])),
   };
 })();

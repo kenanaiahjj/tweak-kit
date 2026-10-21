@@ -366,12 +366,13 @@ export async function applyDirect(root, batch) {
         else if (c.inlineBefore) blocked[k] = "set by the element's style prop";
         else if (!r) shared("not set by any rule yet");
         else if (!/\.css$/i.test(r.file || "")) blocked[k] = `rule lives in ${r.file || "an unknown file"}`;
+        else if (tweak.reach === "all") continue; // "Everywhere": edit the rule itself, shared or not
         else if (r.selector.includes(",")) shared(`${r.selector} is a shared selector list`);
         else if (r.matches !== 1) shared(`${r.selector} matches ${r.matches ?? "?"} elements on the page`);
         else if (r.usesVariable && !/^var\(/.test(c.to)) shared(`${r.property} uses a CSS variable`);
       }
       const open = changes.filter(([k]) => !blocked[k]);
-      if (open.length) {
+      if (open.length && tweak.reach !== "all") {
         const classes = [...new Set(open.flatMap(([, c]) => classesIn(c.authoredIn[0].selector)))];
         const uses = countClassUses(await markupTexts(), classes);
         for (const [k, c] of open) {

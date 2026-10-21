@@ -157,6 +157,7 @@ For each tweak, edit the source so the element renders each \`to\` value, sits w
 - Follow the note when it is a clear change to this element (new copy, a value); a note may be the whole tweak.
 - A change with a "state" ("hover", "active", "focus-visible"; its key is "<prop>:<state>") belongs in that state's rule, e.g. .btn:hover. Edit the one in authoredIn when it is a state rule, else add it right after the element's own rule.
 - scope { kind: "viewport", width } means: only around that screen width. Put the change in a media query that holds at that width, reusing a breakpoint the file already uses.
+- reach "all" means the change is meant for everything that rule styles: edit the rule in authoredIn[0] itself even when it is shared, and add no override class.
 - directApplied lists properties already written to the source: leave them alone. directSkip only says why the automatic writer left the rest to you; it is never a reason to skip.
 - warnings say a value cannot show (e.g. hidden under a gradient): skip that tweak with the warning as the reason, unless its note says what to do.
 

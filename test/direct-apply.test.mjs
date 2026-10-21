@@ -182,3 +182,11 @@ test("moves and removals go to Haiku; their CSS changes still apply directly", a
   assert.deepEqual(out.remaining.map((t) => [t.id, t.directSkip, !!t.move, !!t.remove]), [["t-0", "moving JSX needs Haiku", true, false], ["t-1", "removing JSX needs Haiku", false, true]]);
   assert.deepEqual(out.remaining[0].directApplied, ["color"]);
 });
+
+test("Everywhere edits a shared rule in place instead of overriding one element", async () => {
+  const root = await project();
+  const out = await applyDirect(root, { tweaks: [tweak("t-0", { color: { from: "red", to: "blue", authoredIn: [rule(".shared, .other", "color", { matches: 3 })] } }, { reach: "all" })] });
+  assert.deepEqual(out.applied.map((a) => a.id), ["t-0"]);
+  assert.match(out.files[0].after, /\.shared, \.other \{ color: blue; \}/);
+  assert.equal(out.files.length, 1); // no class added to the JSX
+});

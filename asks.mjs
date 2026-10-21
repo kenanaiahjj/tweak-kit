@@ -46,8 +46,29 @@ export async function cancelAsk(root, id) {
   await fs.rm(path.join(dir(root), "asks", `${id}.json`), { force: true });
 }
 
+// The panel polls this every second or two: answer from memory until a file changes.
+const statusCache = new Map(); // root -> { stamp, value }
+// What can change: the request list, and the result files of requests not finished yet
+// (a result file is rewritten in place, which a folder's timestamp doesn't show).
+async function stampOf(root, cached) {
+  const st = (f) => fs.stat(f).then((s) => s.mtimeMs, () => 0);
+  const open = cached ? cached.value.filter((a) => a.status !== "done" && a.status !== "failed").map((a) => a.id) : [];
+  const parts = [await st(path.join(dir(root), "asks.json")), await st(path.join(dir(root), "asks"))];
+  for (const id of open) parts.push(await st(path.join(dir(root), "asks", `${id}.json`)));
+  return parts.join("|");
+}
+
 /** The recent asks with their outcomes, for the panel: status is waiting, running, done or failed. */
 export async function askStatus(root) {
+  const cached = statusCache.get(root);
+  const stamp = await stampOf(root, cached);
+  if (cached && cached.stamp === stamp) return cached.value;
+  const value = await readStatus(root);
+  statusCache.set(root, { stamp, value });
+  return value;
+}
+
+async function readStatus(root) {
   const asks = await readAsks(root);
   return Promise.all(
     asks.map(async (a) => {

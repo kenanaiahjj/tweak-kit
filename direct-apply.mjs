@@ -480,7 +480,7 @@ export async function applyDirect(root, batch) {
 
     const left = Object.fromEntries(changes.filter(([k]) => blocked[k]));
     // Moving or removing JSX is Haiku's: it needs to read the component.
-    const structural = tweak.move ? "reorders JSX" : tweak.remove ? "removes JSX" : null;
+    const structural = tweak.move ? "moving JSX needs Haiku" : tweak.remove ? "removing JSX needs Haiku" : null;
     if (Object.keys(left).length || (tweak.text && !textDone) || (tweak.note && !doneProps.length) || structural) {
       const reasons = [...new Set([...Object.values(blocked), ...(textReason ? [textReason] : []), ...(structural ? [structural] : [])])];
       remaining.push({

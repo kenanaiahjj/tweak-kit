@@ -199,7 +199,9 @@
       if (classes.length) part += "." + classes.map((c) => CSS.escape(c)).join(".");
       const parent = node.parentElement;
       if (parent) {
-        const same = [...parent.children].filter((c) => c.tagName === node.tagName);
+        // Count in source order, so the selector still finds it after a reload puts moved siblings back.
+        const orig = ORIGINAL.get(parent);
+        const same = (orig && orig.includes(node) ? orig : [...parent.children]).filter((c) => c.tagName === node.tagName);
         if (same.length > 1) part += `:nth-of-type(${same.indexOf(node) + 1})`;
       }
       parts.unshift(part);
@@ -388,7 +390,9 @@
       if (tweak.batchId) withdraw(tweak.batchId);
       if (entry.move) {
         placeAt(el, entry.prevIndex);
-        tweak.move = entry.before;
+        tweak.move = entry.before ? { ...entry.before, toIndex: entry.prevIndex } : null;
+        syncMoves(el.parentElement);
+        layoutMoves(el.parentElement);
       } else if (entry.removal) {
         tweak.removed = false;
         clearRemoved(tweak);
@@ -531,13 +535,17 @@
     for (const [key, change] of changes) clearChange(tweak.el, key, change);
     if (tweak.text) tweak.el.textContent = tweak.text.from;
     if (tweak.removed) clearRemoved(tweak);
-    if (tweak.move && tweak.el.parentElement) placeAt(tweak.el, tweak.move.fromIndex);
+    if (tweak.move && tweak.el.parentElement) {
+      tweak.move = null;
+      layoutMoves(tweak.el.parentElement);
+      syncMoves(tweak.el.parentElement);
+    }
   }
 
   function reapply(tweak) {
     for (const [key, change] of Object.entries(tweak.changes)) if (change.to !== undefined) applyChange(tweak.el, key, change);
     if (tweak.removed) applyRemoved(tweak);
-    if (tweak.move && tweak.el.parentElement && childIndex(tweak.el) !== tweak.move.toIndex) placeAt(tweak.el, tweak.move.toIndex);
+    if (tweak.move && tweak.el.parentElement) layoutMoves(tweak.el.parentElement);
   }
 
   // ---------- structure: reorder and remove ----------
@@ -554,27 +562,73 @@
   // Siblings it can trade places with: visible and in the flow.
   const flowSiblings = (el) => kids(el.parentElement).filter((c) => c === el || (c.getClientRects().length > 0 && !/^(absolute|fixed)$/.test(getComputedStyle(c).position) && !/^(script|style|template|link)$/i.test(c.tagName)));
 
-  function moveInfo(el, fromIndex, toIndex) {
+  // The order the source has, per parent, captured before anything there moves (the DOM is still in source order then).
+  const ORIGINAL = new WeakMap();
+  const originalOrder = (parent) => {
+    if (!ORIGINAL.has(parent)) ORIGINAL.set(parent, kids(parent));
+    return ORIGINAL.get(parent);
+  };
+  const movedIn = (parent) => [...state.tweaks.values()].filter((t) => t.move && t.el.parentElement === parent);
+
+  // Lays a parent out from the model: siblings nobody moved in source order, moved ones at their target index.
+  // Touches the DOM only where it differs, so running it often is cheap.
+  function layoutMoves(parent, { original = false } = {}) {
+    if (!parent) return;
+    const orig = originalOrder(parent);
+    const now = kids(parent);
+    const moved = original ? [] : movedIn(parent).sort((a, b) => a.move.toIndex - b.move.toIndex);
+    const movedEls = new Set(moved.map((t) => t.el));
+    const free = now.filter((n) => !movedEls.has(n));
+    // Known siblings go back to source order; ones React added since keep their slots.
+    const known = free.filter((n) => orig.includes(n)).sort((a, b) => orig.indexOf(a) - orig.indexOf(b));
+    let k = 0;
+    const order = free.map((n) => (orig.includes(n) ? known[k++] : n));
+    for (const t of moved) order.splice(Math.min(t.move.toIndex, order.length), 0, t.el);
+    order.forEach((n, i) => {
+      const cur = kids(parent);
+      if (cur[i] !== n) parent.insertBefore(n, cur[i] || null);
+    });
+  }
+
+  // After the DOM changed: each moved sibling's target is where it is now.
+  function syncMoves(parent) {
+    for (const t of movedIn(parent)) t.move = { ...t.move, toIndex: childIndex(t.el) };
+  }
+
+  const brief = (n) => {
+    const d = describe(n);
+    return { tag: d.tag, classes: d.classes.slice(0, 3), text: d.text.slice(0, 40), jsxSource: d.react && d.react.jsxSource };
+  };
+
+  // What Haiku needs, from the DOM as it is now: the neighbour to sit next to, and the final order of all the siblings.
+  function moveInfo(el, fromIndex) {
     const list = kids(el.parentElement);
     const i = list.indexOf(el);
     const where = i > 0 ? "after" : "before";
     const anchor = list[where === "after" ? i - 1 : i + 1];
     const info = describe(el), anchorInfo = anchor ? describe(anchor) : null;
     const sameList = !!(anchorInfo && info.react && anchorInfo.react && info.react.jsxSource && info.react.jsxSource === anchorInfo.react.jsxSource);
-    return { fromIndex, toIndex, where, anchor: anchorInfo, parent: describe(el.parentElement), sameList: sameList || undefined };
+    const order = list.filter((n) => n.getClientRects().length > 0 || n === el).map((n) => ({ ...brief(n), self: n === el || undefined }));
+    return { fromIndex, toIndex: i, where, anchor: anchorInfo, parent: describe(el.parentElement), order, sameList: sameList || undefined };
   }
 
   function moveElement(el, toIndex) {
+    const parent = el.parentElement;
     const from = childIndex(el);
-    const max = kids(el.parentElement).length - 1;
-    toIndex = Math.max(0, Math.min(max, toIndex));
+    toIndex = Math.max(0, Math.min(kids(parent).length - 1, toIndex));
     if (toIndex === from) return false;
-    const tweak = tweakFor(el); // described before it moves: the selector names its place in the source order
+    originalOrder(parent);
+    const tweak = tweakFor(el);
     recordUndo({ el, key: tweak.key, move: true, before: tweak.move ? { ...tweak.move } : null, prevIndex: from });
     if (tweak.batchId) withdraw(tweak.batchId);
-    const origin = tweak.move ? tweak.move.fromIndex : from;
+    const origin = tweak.move ? tweak.move.fromIndex : originalOrder(parent).indexOf(el);
     placeAt(el, toIndex);
-    tweak.move = toIndex === origin ? null : moveInfo(el, origin, toIndex);
+    tweak.move = { fromIndex: origin, toIndex };
+    syncMoves(parent);
+    if (childIndex(el) === origin) tweak.move = null; // back where the source has it
+    layoutMoves(parent);
+    syncMoves(parent);
+    for (const t of movedIn(parent)) if (t.batchId) withdraw(t.batchId); // their neighbours changed
     cleanup(tweak);
     persist();
     render();
@@ -644,7 +698,7 @@
       for (const [key, change] of Object.entries(t.changes)) clearChange(t.el, key, change);
       if (t.text) t.el.textContent = t.text.from;
       if (t.removed) clearRemoved(t);
-      if (t.move && t.el.parentElement) placeAt(t.el, t.move.fromIndex);
+      if (t.move && t.el.parentElement) layoutMoves(t.el.parentElement, { original: true });
     }
     state.tweaks.clear();
     restore();
@@ -665,7 +719,7 @@
       }
       if (t.text) t.el.textContent = on ? t.text.from : t.text.to;
       if (t.removed) on ? clearRemoved(t) : applyRemoved(t);
-      if (t.move && t.el.parentElement) placeAt(t.el, on ? t.move.fromIndex : t.move.toIndex);
+      if (t.move && t.el.parentElement) layoutMoves(t.el.parentElement, { original: on });
     }
     updateStateSheet();
     host.classList.toggle("comparing", on);
@@ -1590,7 +1644,8 @@
   const POS_VALUE = ["flex-start", "center", "flex-end"];
   function alignPad(el) {
     const cs = getComputedStyle(el);
-    const row = !cs.display.includes("grid") && cs.flexDirection.startsWith("row");
+    // In a grid, justify-content is horizontal, like a flex row.
+    const row = cs.display.includes("grid") || cs.flexDirection.startsWith("row");
     const spaced = /space/.test(cs.justifyContent);
     const main = AXIS_POS(cs.justifyContent), cross = /stretch|normal/.test(cs.alignItems) ? -1 : AXIS_POS(cs.alignItems);
     const pad = document.createElement("div");
@@ -2055,7 +2110,7 @@
       // How it sits inside a flex or grid parent.
       const pcs = el.parentElement ? getComputedStyle(el.parentElement) : null;
       if (pcs && /flex|grid/.test(pcs.display) && !/^(absolute|fixed)$/.test(cs.position)) {
-        const across = pcs.display.includes("flex") && pcs.flexDirection.startsWith("row") ? "Vertical" : "Horizontal";
+        const across = pcs.display.includes("grid") || pcs.flexDirection.startsWith("row") ? "Vertical" : "Horizontal";
         scroll.append(section("In parent layout",
           lbl(`${across} alignment`),
           segmented(el, "align-self", [["auto", "Auto"], ["flex-start", "Start"], ["center", "Center"], ["flex-end", "End"], ["stretch", "Stretch"]]),
@@ -2160,7 +2215,11 @@
     const parts = Object.entries(tweak.changes).map(([k, c]) => `${c.state ? ":" + c.state + " " : ""}${changeProp(k, c)} ${short(c.from)} → ${short(c.to)}`);
     if (tweak.scope && tweak.scope.kind === "viewport") parts.push(`only at ${tweak.scope.width}px wide`);
     if (tweak.text) parts.push(`text → "${tweak.text.to.slice(0, 30)}"`);
-    if (tweak.move) parts.push(`moved ${tweak.move.where} ${tweak.move.anchor ? tweak.move.anchor.tag + (tweak.move.anchor.classes[0] ? "." + tweak.move.anchor.classes[0] : "") : "its sibling"}`);
+    if (tweak.move && tweak.el.parentElement) {
+      const list = kids(tweak.el.parentElement), i = list.indexOf(tweak.el);
+      const n = list[i > 0 ? i - 1 : i + 1];
+      parts.push(`moved ${i > 0 ? "after" : "before"} ${n ? n.tagName.toLowerCase() + (n.classList[0] ? "." + n.classList[0] : "") : "its sibling"}`);
+    }
     if (tweak.removed) parts.push("removed");
     if (tweak.note) parts.push(`note: ${tweak.note.slice(0, 40)}`);
     return parts;
@@ -2328,7 +2387,11 @@
     try {
       // Refresh descriptions: the DOM may have changed since the first edit.
       // A moved element keeps the selector of its original place, which is where the source has it.
-      list.forEach((t) => { if (t.el.isConnected) t.element = t.move ? { ...describe(t.el), selector: t.element.selector } : describe(t.el); });
+      list.forEach((t) => {
+        if (!t.el.isConnected) return;
+        t.element = describe(t.el);
+        if (t.move) t.move = moveInfo(t.el, t.move.fromIndex);
+      });
       const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(buildBatch(list)) });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || res.statusText);
@@ -2885,23 +2948,27 @@
       return;
     }
     if (!state.isOpen || typing) return;
-    const sel = state.selected && state.selected.isConnected ? state.selected : null;
+    const sel = state.selected && state.selected.isConnected && state.isPicking ? state.selected : null;
     const own = (run) => { e.preventDefault(); e.stopPropagation(); run(); };
-    if (sel && ownsPanel()) {
+    const path = e.composedPath();
+    // Tab and Enter work normally on the panel's own buttons; arrows and Delete leave dropdowns alone.
+    const inPanel = path.some((n) => n === host || n === panel);
+    const onSelect = path.some((n) => n.tagName === "SELECT");
+    if (sel && ownsPanel() && !onSelect) {
       if ((e.metaKey || e.ctrlKey) && /^Arrow(Up|Down|Left|Right)$/.test(e.key)) return own(() => moveBy(sel, /Up|Left/.test(e.key) ? -1 : 1));
       if ((e.key === "Delete" || e.key === "Backspace") && !e.metaKey && !e.ctrlKey) return own(() => removeElement(sel));
-      if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
+      if (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !inPanel) {
         const next = e.shiftKey ? sel.parentElement : kids(sel).find((c) => c.getClientRects().length > 0);
         return own(() => next && next !== document.body && next !== document.documentElement ? select(next) : toast(e.shiftKey ? "No parent to select" : "No children"));
       }
-      if (e.key === "Tab" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (e.key === "Tab" && !e.metaKey && !e.ctrlKey && !e.altKey && !inPanel) {
         const flow = flowSiblings(sel);
         const next = flow[(flow.indexOf(sel) + (e.shiftKey ? -1 : 1) + flow.length) % flow.length];
         return own(() => next !== sel && select(next));
       }
       if (e.key === "A" && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) return own(() => toggleAutoLayout(sel));
     }
-    if (sel && /^Arrow(Up|Down|Left|Right)$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    if (sel && !onSelect && /^Arrow(Up|Down|Left|Right)$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
       e.stopPropagation();
       return nudge(state.selected, e.key, e.shiftKey);

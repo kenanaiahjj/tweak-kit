@@ -334,7 +334,7 @@ export function systemPage() {
   }
 
   async function adopt(value, token) {
-    const res = await fetch(API + "/tokens/adopt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value, token }) });
+    const res = await fetch(API + "/tokens/adopt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value, token, kind: rawTab }) });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) return toast("Not changed: " + (body.error || res.statusText));
     toast("Replaced " + body.count + "× " + value + " with var(" + token + ")", true);
@@ -345,7 +345,7 @@ export function systemPage() {
     const guess = rawTab === "color" ? "--color-" : rawTab === "radius" ? "--radius-" : rawTab === "type" ? "--text-" : "--space-";
     const name = prompt("Name for the new token (it's added to " + (data.modes[0] ? data.modes[0].label : "the base mode") + " and used everywhere " + value + " is)", guess);
     if (!name) return;
-    const res = await fetch(API + "/tokens/create", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), value, mode: data.modes[0] && data.modes[0].key }) });
+    const res = await fetch(API + "/tokens/create", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), value, mode: data.modes[0] && data.modes[0].key, kind: rawTab }) });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) return toast("Not created: " + (body.error || res.statusText));
     toast("Added " + name.trim() + " and used it in " + body.count + " places", true);

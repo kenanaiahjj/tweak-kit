@@ -135,19 +135,19 @@ export function verifyTweak(tweak: Tweak, files: { before: string; after: string
 
 const APPLIER_PROMPT = `You apply visual UI tweaks to source code. Be brief; do not explain your process.
 
-Read ${FILE}. It holds batches of tweaks; each tweak has an id, element.react.jsxSource (file:line of the JSX), element.classes, and changes: { "<css-prop>": { from, to, authoredIn: [{ file, selector, property, value, conditions }] } } with the most specific rule first, plus optional text: { from, to } (a copy edit) and note (my instruction).
+Read ${FILE}. It holds batches of tweaks; each tweak has an id, element.react.jsxSource (file:line of the JSX), element.classes, and changes: { "<css-prop>": { from, to, authoredIn: [{ file, selector, property, value, conditions }] } } with the most specific rule first, plus optional text: { from, to } (a copy edit), move (put the element somewhere else among its siblings), remove (delete the element) and note (my instruction). Moves and removals are JSX edits and are part of the job.
 
-For each tweak, edit the source so the element renders each \`to\` value:
+For each tweak, edit the source so the element renders each \`to\` value, sits where move says, or is gone when remove is set:
 - Edit the rule in authoredIn[0] when its selector only targets this element. Keep !important if that rule has it. Edit inside its media query if it has conditions.
 - If that selector is shared (a selector list, or a class used on other elements: Grep src for it), add a new class to the JSX at jsxSource and a rule for it right after the shared rule, with the same !important.
 - Collapse four equal sides or corners into one shorthand. Leave other code alone.
 
-- move { where: "before"|"after", anchor, parent, sameList } means: in the JSX, put this element directly before/after the anchor element (anchor.react.jsxSource), inside the same parent. Move the whole JSX element, including its children and any condition wrapping it. sameList: both come from one array .map(): reorder the array's items if they are literal in the source, else skip.
+- move { where: "before"|"after", anchor, parent, order, sameList } means: in the JSX, put this element directly before/after the anchor element (anchor.react.jsxSource), inside the same parent. order lists all the siblings in their final order (self marks this one). Move the whole JSX element, including its children and any condition wrapping it. sameList: both come from one array .map(): reorder the array's items if they are literal in the source, else skip.
 - remove: true means delete this element's JSX (with its children), plus a condition that only wraps it and imports or variables left unused. One item of a .map(): remove that item from the array if it is literal in the source, else skip.
 - Follow the note when it is a clear change to this element (new copy, a value); a note may be the whole tweak.
 - A change with a "state" ("hover", "active", "focus-visible"; its key is "<prop>:<state>") belongs in that state's rule, e.g. .btn:hover. Edit the one in authoredIn when it is a state rule, else add it right after the element's own rule.
 - scope { kind: "viewport", width } means: only around that screen width. Put the change in a media query that holds at that width, reusing a breakpoint the file already uses.
-- directApplied lists properties already written to the source: leave them alone.
+- directApplied lists properties already written to the source: leave them alone. directSkip only says why the automatic writer left the rest to you; it is never a reason to skip.
 - warnings say a value cannot show (e.g. hidden under a gradient): skip that tweak with the warning as the reason, unless its note says what to do.
 
 Skip a tweak, editing nothing for it, when: you cannot find its source; the new value would be hidden by another property (e.g. background-color under a background-image gradient); its note reaches beyond this element or is unclear; or you are unsure. Give a one-line reason.
@@ -155,14 +155,17 @@ Skip a tweak, editing nothing for it, when: you cannot find its source; the new 
 Never edit ${FILE}. End your answer with exactly one line of JSON and nothing after it:
 {"applied":["<id>"],"skipped":[{"id":"<id>","reason":"<why>"}]}`
 
+// Repeated in each spawn, so a session whose applier was registered before these rules still follows them.
+const STRUCTURE_NOTE = ' A tweak with "move" or "remove" is in scope even with no CSS changes: move puts the JSX element (with its children) directly before/after move.anchor (anchor.react.jsxSource) in the same parent; remove deletes it. For siblings from one .map(), change the literal array or skip.'
+
 export function claudePrompt(summary: PendingTweaks): string {
   const skippedNote = summary.skipped.length
     ? ` Haiku skipped ${summary.skipped.length} of them; each skipped tweak says why in its "skipped" field.`
     : ''
   return [
-    `Apply the UI tweaks in ${FILE}: ${summary.changes} change(s) on ${summary.elements} element(s), page ${summary.pages.join(', ')}.${skippedNote}`,
+    `Apply the UI tweaks in ${inProject(FILE)}: ${summary.changes} change(s) on ${summary.elements} element(s), page ${summary.pages.join(', ')}.${skippedNote}`,
     'Each tweak names its JSX line (element.react.jsxSource) and the CSS rules setting each property (changes[prop].authoredIn, most specific first). Edit that source so it renders each `to` value; no inline overrides. A tweak with move puts the JSX of the element before/after move.anchor; remove deletes the JSX of the element. Scope changes to this element when the rule is shared, unless the note says otherwise. If a value would be hidden by another property, ask me what I meant instead of guessing.',
-    `When done, delete ${FILE}, reload the browser pane to check, and list what changed per file.`,
+    `When done, delete ${inProject(FILE)}, reload the browser pane to check, and list what changed per file.`,
   ].join('\n')
 }
 
@@ -267,6 +270,7 @@ async function openDiff($: EngineInterface) {
 }
 
 async function refresh($: EngineInterface) {
+  if (!applierRegistered) await registerApplier($)
   await devServer($)
   await syncLastApply($)
   const next = await readPending($)
@@ -345,7 +349,7 @@ async function applyWithHaiku($: EngineInterface, ids?: string[]): Promise<strin
     subagentType: APPLIER,
     model: 'haiku',
     description: 'Apply UI tweaks',
-    prompt: `Apply these tweak ids from ${FILE}: ${todo.join(', ')}. Ignore any other tweaks in the file.`,
+    prompt: `Apply these tweak ids from ${inProject(FILE)}: ${todo.join(', ')}. Ignore any other tweaks in the file.${STRUCTURE_NOTE}${projectRoot ? ` The project is ${projectRoot}: file paths in the tweaks (src/..., file:line) are relative to it.` : ''}`,
   })
   if ('deny' in started) {
     await update($, run, () => null)
@@ -470,17 +474,24 @@ async function devServer($: EngineInterface): Promise<string | null> {
   return null
 }
 
+// Registered at start, and again the first time a reloaded copy of this module runs, so prompt changes take effect.
+let applierRegistered = false
+async function registerApplier($: EngineInterface) {
+  applierRegistered = true
+  await $.agent.register({
+    name: 'applier',
+    description: 'Applies visual tweaks from the ui-tweaks overlay to source code',
+    prompt: APPLIER_PROMPT,
+    model: 'haiku',
+    tools: ['Read', 'Grep', 'Glob', 'Edit'],
+    omitClaudeMd: true,
+    maxTurns: 30,
+  })
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.agent.register({
-      name: 'applier',
-      description: 'Applies visual tweaks from the ui-tweaks overlay to source code',
-      prompt: APPLIER_PROMPT,
-      model: 'haiku',
-      tools: ['Read', 'Grep', 'Glob', 'Edit'],
-      omitClaudeMd: true,
-      maxTurns: 30,
-    })
+    await registerApplier($)
     await $.command.register({
       name: 'apply-tweaks',
       description: 'Apply the waiting browser tweaks with Haiku ("claude": main model; "undo": revert Haiku\'s last apply)',

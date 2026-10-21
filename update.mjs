@@ -35,11 +35,24 @@ async function findLock(root) {
 async function installedCommit(lock) {
   if (lock.path.endsWith(".lockb")) return null;
   const text = await fs.readFile(lock.path, "utf8");
-  const m = /([\w.-]+\/tweak-kit)(?:\.git)?(?:#|\/tar\.gz\/|\/)([0-9a-f]{40})/.exec(text);
+  // Some lockfiles (bun) pin a short commit id.
+  const m = /([\w.-]+\/tweak-kit)(?:\.git)?(?:#|\/tar\.gz\/|\/)([0-9a-f]{7,40})\b/.exec(text);
   return m ? { repo: m[1].split("/").slice(-2).join("/"), sha: m[2] } : null;
 }
 
 const unescape = (t) => t.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+
+// The nearest directory (from the project up) whose package.json lists the kit.
+async function packageListingKit(root) {
+  for (let dir = root, i = 0; i < 5; i++, dir = path.dirname(dir)) {
+    try {
+      const pkg = JSON.parse(await fs.readFile(path.join(dir, "package.json"), "utf8"));
+      if (["dependencies", "devDependencies", "optionalDependencies"].some((k) => pkg[k] && pkg[k]["ui-tweak-kit"])) return dir;
+    } catch {}
+    if (path.dirname(dir) === dir) break;
+  }
+  return null;
+}
 
 function run(command, cwd) {
   return new Promise((resolve) => {
@@ -74,11 +87,19 @@ export async function checkForUpdate(root, { autoUpdate = true, log = console.lo
     if (!res.ok) return;
     const feed = await res.text();
     const commits = [...feed.matchAll(/Grit::Commit\/([0-9a-f]{40})<\/id>[\s\S]*?<title>\s*([\s\S]*?)\s*<\/title>/g)].map((m) => ({ sha: m[1], title: unescape(m[2]) }));
-    if (!commits.length || commits[0].sha === installed.sha) return;
-    const at = commits.findIndex((c) => c.sha === installed.sha);
+    const same = (c) => c.sha.startsWith(installed.sha);
+    if (!commits.length || same(commits[0])) return;
+    const at = commits.findIndex(same);
     const behind = at === -1 ? `${commits.length}+` : at;
     const latest = commits.slice(0, Math.min(3, at === -1 ? 3 : at)).map((c) => c.title);
     update = { behind, latest, command };
+    // In a workspace the lockfile sits above the app; installing there would add the kit to the wrong package.
+    const owner = await packageListingKit(root);
+    if (owner && owner !== lock.dir) {
+      update.command = `cd ${path.relative(root, owner) || "."} && ${command}`;
+      log(`[ui-tweaks] ${behind} update${behind === 1 ? "" : "s"} available. This looks like a workspace; update from the app's package with your package manager (${command}).`);
+      return;
+    }
     if (!autoUpdate) {
       log(`[ui-tweaks] ${behind} update${behind === 1 ? "" : "s"} available. Update with:\n  ${command}\nthen restart the dev server.`);
       return;

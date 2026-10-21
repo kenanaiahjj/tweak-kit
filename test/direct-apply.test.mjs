@@ -179,6 +179,6 @@ test("moves and removals go to Haiku; their CSS changes still apply directly", a
     ],
   });
   assert.deepEqual(out.applied.map((a) => a.id), ["t-0"]);
-  assert.deepEqual(out.remaining.map((t) => [t.id, t.directSkip, !!t.move, !!t.remove]), [["t-0", "reorders JSX", true, false], ["t-1", "removes JSX", false, true]]);
+  assert.deepEqual(out.remaining.map((t) => [t.id, t.directSkip, !!t.move, !!t.remove]), [["t-0", "moving JSX needs Haiku", true, false], ["t-1", "removing JSX needs Haiku", false, true]]);
   assert.deepEqual(out.remaining[0].directApplied, ["color"]);
 });

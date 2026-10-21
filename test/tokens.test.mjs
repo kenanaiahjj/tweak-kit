@@ -86,3 +86,29 @@ test("createToken adds to the mode's block and uses it", async () => {
   assert.equal(out.files[0].before, CSS);
   await assert.rejects(createToken(root, { name: "--gap", value: "1px", mode: ":root" }), /already exists/);
 });
+
+test("adopting inside nested rules keeps the file intact", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "uitk-nest-"));
+  await writeFile(path.join(root, "a.css"), `:root { --red: #ff0000; }\n.a { color: #ff0000; &:hover { color: #ff0000; } background: #ff0000; }\n`);
+  const out = await adoptToken(root, { value: "#ff0000", token: "--red" });
+  assert.equal(out.count, 3);
+  assert.equal(await readFile(path.join(root, "a.css"), "utf8"), `:root { --red: #ff0000; }\n.a { color: var(--red); &:hover { color: var(--red); } background: var(--red); }\n`);
+});
+
+test("adopting a length only touches declarations of its kind", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "uitk-kind-"));
+  await writeFile(path.join(root, "a.css"), `.a { padding: 14px; font-size: 14px; border-radius: 14px; margin: -14px 114px; }\n`);
+  const out = await adoptToken(root, { value: "14px", token: "--space", kind: "spacing" });
+  assert.equal(out.count, 1);
+  assert.equal(await readFile(path.join(root, "a.css"), "utf8"), `.a { padding: var(--space); font-size: 14px; border-radius: 14px; margin: -14px 114px; }\n`);
+});
+
+test("a ; inside url() or quotes doesn't split a declaration", async () => {
+  const css = `:root { --icon: url("data:image/svg+xml;utf8,<svg/>"); --after: 1px; }\n.b { content: "a;b"; color: red; }\n`;
+  const d = declarationsIn(css);
+  assert.deepEqual(d.map((x) => [x.prop, x.value]), [["--icon", 'url("data:image/svg+xml;utf8,<svg/>")'], ["--after", "1px"], ["content", '"a;b"'], ["color", "red"]]);
+  const root = await mkdtemp(path.join(tmpdir(), "uitk-url-"));
+  await writeFile(path.join(root, "a.css"), css);
+  const f = await setToken(root, { name: "--icon", file: "a.css", line: 1, from: 'url("data:image/svg+xml;utf8,<svg/>")', to: "none" });
+  assert.match(f.after, /^:root \{ --icon: none; --after: 1px; \}/);
+});

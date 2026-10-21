@@ -48,7 +48,7 @@ export function declarationsIn(text) {
       segments.push([cursor, b.close]);
       for (const [s, e] of segments) {
         let p = s;
-        for (const part of src.slice(s, e).split(";")) {
+        for (const part of splitDeclarations(src.slice(s, e))) {
           const m = /^(\s*)(--[\w-]+|-?[a-zA-Z][\w-]*)\s*:/.exec(part);
           if (m) {
             const valueStart = p + m[0].length + (/^\s*/.exec(part.slice(m[0].length))[0].length);
@@ -62,8 +62,38 @@ export function declarationsIn(text) {
     }
   };
   visit(0, src.length, []);
-  return out;
+  // Nested rules are visited after their parent's own declarations: put everything back in file order.
+  return out.sort((a, b) => a.valueStart - b.valueStart);
 }
+
+// Splits on ; outside quotes and parentheses (data: URLs and strings can hold one).
+function splitDeclarations(text) {
+  const parts = [];
+  let depth = 0, quote = null, start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+    } else if (c === '"' || c === "'") quote = c;
+    else if (c === "(") depth++;
+    else if (c === ")") depth = Math.max(0, depth - 1);
+    else if (c === ";" && depth === 0) {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts;
+}
+
+// Which declarations a kind of hand-written value belongs to (the same split scanTokens uses).
+const KIND_PROPS = {
+  spacing: (p) => /^(padding|margin|gap|row-gap|column-gap|inset|top|right|bottom|left)(-|$)/.test(p),
+  radius: (p) => /radius/.test(p),
+  type: (p) => p === "font-size",
+  color: () => true,
+};
 
 export async function styleFiles(root) {
   return sourceFiles(root, STYLE_EXT);
@@ -124,9 +154,9 @@ export async function scanTokens(root) {
       }
       for (const m of d.value.matchAll(COLOR_LITERAL)) note(raw.color, m[0], where);
       const lengths = d.value.match(/(?<![\w.#-])-?\d*\.?\d+(px|rem)\b/g) || [];
-      if (/^(padding|margin|gap|row-gap|column-gap|inset|top|right|bottom|left)(-|$)/.test(d.prop)) lengths.forEach((v) => v !== "0px" && note(raw.spacing, v, where));
-      if (/radius/.test(d.prop)) lengths.forEach((v) => note(raw.radius, v, where));
-      if (d.prop === "font-size") lengths.forEach((v) => note(raw.type, v, where));
+      if (KIND_PROPS.spacing(d.prop)) lengths.forEach((v) => v !== "0px" && note(raw.spacing, v, where));
+      if (KIND_PROPS.radius(d.prop)) lengths.forEach((v) => note(raw.radius, v, where));
+      if (KIND_PROPS.type(d.prop)) lengths.forEach((v) => note(raw.type, v, where));
     }
   }
   // Uses of each token across the styles and the markup (style props, Tailwind arbitrary values).
@@ -199,8 +229,10 @@ export async function setToken(root, { name, file, line, from, to }) {
 }
 
 /** Swaps a hand-written value for var(--token) in every stylesheet declaration that uses it. */
-export async function adoptToken(root, { value, token }) {
+export async function adoptToken(root, { value, token, kind = "color" }) {
   if (!/^--[\w-]+$/.test(token || "") || typeof value !== "string" || !value.trim()) throw Object.assign(new Error("Need a value and a token"), { status: 400 });
+  const fits = KIND_PROPS[kind];
+  if (!fits) throw Object.assign(new Error(`Unknown kind ${kind}`), { status: 400 });
   const want = value.trim().toLowerCase().replace(/\s+/g, " ");
   const esc = value.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
   const re = new RegExp(`(?<![\\w#.-])${esc}(?![\\w-])`, "gi");
@@ -210,7 +242,7 @@ export async function adoptToken(root, { value, token }) {
     const before = await fs.readFile(abs, "utf8");
     let after = before;
     for (const d of declarationsIn(before).reverse()) {
-      if (d.prop.startsWith("--") || !d.value.toLowerCase().replace(/\s+/g, " ").includes(want)) continue;
+      if (d.prop.startsWith("--") || !fits(d.prop) || !d.value.toLowerCase().replace(/\s+/g, " ").includes(want)) continue;
       const next = d.value.replace(re, () => (count++, `var(${token})`));
       after = after.slice(0, d.valueStart) + next + after.slice(d.valueEnd);
     }
@@ -223,7 +255,7 @@ export async function adoptToken(root, { value, token }) {
 }
 
 /** Adds a token to a mode (the selector block that declares that mode's tokens), or a new :root block. */
-export async function createToken(root, { name, value, mode }) {
+export async function createToken(root, { name, value, mode, kind = "color" }) {
   if (!/^--[a-zA-Z][\w-]*$/.test(name || "")) throw Object.assign(new Error("A token name looks like --brand-green"), { status: 400 });
   if (typeof value !== "string" || !value.trim() || /[;{}]/.test(value)) throw Object.assign(new Error("Not a valid value"), { status: 400 });
   const files = await styleFiles(root);
@@ -254,7 +286,7 @@ export async function createToken(root, { name, value, mode }) {
     after = before.slice(0, head) + `:root {\n  ${name}: ${value.trim()};\n}\n\n` + before.slice(head);
   }
   await fs.writeFile(abs, after);
-  const adopted = await adoptToken(root, { value, token: name });
+  const adopted = await adoptToken(root, { value, token: name, kind });
   // One history entry per file: its state before the token, and after it's used.
   const merged = new Map([[abs, { path: abs, before, after }]]);
   for (const f of adopted.files) merged.set(f.path, { path: f.path, before: merged.get(f.path) ? before : f.before, after: f.after });

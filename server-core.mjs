@@ -245,23 +245,15 @@ export function studioPage(appPath) {
       <button class="exit" title="Leave the studio">✕</button>
       <button class="reload" title="Reload every artboard">↻</button>
       <span class="sep"></span>
-      <span class="modes"><button class="mode-canvas" title="Canvas: every artboard (⇧C)">▦ Canvas</button><button class="mode-focus" title="Focus: one screen alone (⇧F)">▢ Focus</button></span>
-      <span class="sep"></span>
-      <span class="canvas-tools">
-        <button class="pages-toggle" title="Pages: add an artboard for a route">☰</button>
-        <select class="add" title="Add an artboard"></select>
-        <button class="hand-btn" title="Hand: drag to pan (or hold Space)">✋</button>
+      <span class="focus-tools">
+        <button class="prev" title="Previous screen (←)">‹</button>
+        <select class="focus-pick" title="Screen"></select>
+        <button class="next" title="Next screen (→)">›</button>
+        <button class="scr-add" title="New screen: a copy of this one (then edit its URL)">＋</button>
+        <button class="scr-edit" title="Rename this screen or change its URL">✎</button>
+        <button class="scr-del" title="Remove this screen">🗑</button>
+        <button class="pages-toggle" title="Routes: add a screen for a page of your app">☰</button>
         <span class="sep"></span>
-        <button class="zoom-out" title="Zoom out (⌘−)">−</button>
-        <span class="zoom">100%</span>
-        <button class="zoom-in" title="Zoom in (⌘+)">+</button>
-        <button class="zoom-fit" title="Zoom to fit everything (⇧1)">Fit</button>
-        <button class="zoom-100" title="Actual size (⇧0)">1:1</button>
-      </span>
-      <span class="focus-tools" hidden>
-        <button class="prev" title="Previous artboard (←)">‹</button>
-        <span class="focus-name"></span>
-        <button class="next" title="Next artboard (→)">›</button>
         <select class="focus-device" title="Device"></select>
         <button class="focus-turn" title="Rotate">⟲</button>
         <span class="zoom focus-zoom"></span>
@@ -280,7 +272,6 @@ export function studioPage(appPath) {
         <div class="dots"></div>
         <div class="world"></div>
         <div class="shield"></div>
-        <div class="minimap"></div>
       </div>
     </div>
   </div>
@@ -327,10 +318,11 @@ export function studioPage(appPath) {
   const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
   const $ = (s) => document.querySelector(s);
-  const viewport = $(".viewport"), world = $(".world"), minimap = $(".minimap");
+  const viewport = $(".viewport"), world = $(".world");
   const VIEW_KEY = "ui-tweaks:studio-view";
-  let view = { grid: false, base: false, pages: false, cam: null, mode: "canvas", focus: null };
+  let view = { grid: false, base: false, pages: false, cam: null, mode: "focus", focus: null };
   try { view = { ...view, ...JSON.parse(localStorage.getItem(VIEW_KEY) || "{}") }; } catch {}
+  view.mode = "focus"; // one screen at a time, at its real size (the canvas view is gone)
   const saveView = () => { try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch {} };
 
   function note(text) {
@@ -407,6 +399,17 @@ export function studioPage(appPath) {
     saveView();
     render();
     applyCam();
+    dockShown();
+  }
+  // The panel belongs to the screen on show (once its app has loaded).
+  function dockShown(tries = 0) {
+    const f = frames.get(focusedId());
+    if (!f) return;
+    try {
+      const t = f.iframe.contentWindow.__uiTweaks;
+      if (t && f.iframe.contentDocument.readyState !== "loading") return t.attachPopup(window);
+    } catch {}
+    if (tries < 40) setTimeout(() => f === frames.get(focusedId()) && dockShown(tries + 1), 150);
   }
   function step(dir) {
     const list = canvas.artboards;
@@ -416,6 +419,7 @@ export function studioPage(appPath) {
     saveView();
     render();
     applyCam();
+    dockShown();
   }
 
   function zoomAt(z, mx, my) {
@@ -461,12 +465,12 @@ export function studioPage(appPath) {
   let hand = false;
   function setHand(on) {
     hand = on;
-    viewport.classList.toggle("hand", on || $(".hand-btn").classList.contains("on"));
+    viewport.classList.toggle("hand", on || false);
   }
   viewport.addEventListener("pointerdown", (e) => {
     const onEmpty = e.target === viewport || e.target === world || e.target.classList.contains("shield") || e.target.classList.contains("dots");
     if (!onEmpty) return;
-    if (!hand && !$(".hand-btn").classList.contains("on") && !isFocus()) select(null);
+    if (!hand && !false && !isFocus()) select(null);
     const start = { x: e.clientX, y: e.clientY, cx: isFocus() ? focusPan.x : cam.x, cy: isFocus() ? focusPan.y : cam.y };
     viewport.setPointerCapture(e.pointerId);
     viewport.classList.add("panning");
@@ -490,8 +494,6 @@ export function studioPage(appPath) {
     if ((e.metaKey || e.ctrlKey) && e.key === "-") { e.preventDefault(); zoomAt(cam.z / 1.25, ...center()); }
     if (e.shiftKey && e.code === "Digit1") fitTo(canvas.artboards);
     if (e.shiftKey && e.code === "Digit0") zoomAt(1, ...center());
-    if (e.shiftKey && e.code === "KeyF") setMode("focus");
-    if (e.shiftKey && e.code === "KeyC") setMode("canvas");
     if (isFocus() && e.key === "ArrowLeft") step(-1);
     if (isFocus() && e.key === "ArrowRight") step(1);
     if (!isFocus() && (e.key === "Backspace" || e.key === "Delete") && selected) removeArtboard(selected);
@@ -602,33 +604,31 @@ export function studioPage(appPath) {
     // Drop frames whose artboard is gone; keep the rest running (no reload).
     const ids = new Set(canvas.artboards.map((a) => a.id));
     for (const [id, f] of frames) if (!ids.has(id)) { f.el.remove(); frames.delete(id); }
+    const shown = focusedId();
     canvas.artboards.forEach((a, i) => {
       if (!a.id) a.id = newId();
       let f = frames.get(a.id);
-      if (!f) { f = makeFrame(a, i === 0 && ![...frames.values()].some((x) => x.iframe.dataset.primary)); frames.set(a.id, f); }
+      // The screen on show first holds the panel.
+      if (!f) { f = makeFrame(a, a.id === shown && ![...frames.values()].some((x) => x.iframe.dataset.primary)); frames.set(a.id, f); }
       const [w, h] = size(a);
       Object.assign(f.el.style, { left: a.x + "px", top: a.y + "px" });
       Object.assign(f.frame.style, { width: w + "px", height: h + "px" });
       f.el.classList.toggle("selected", a.id === selected);
-      if (f.url !== a.url) { f.url = a.url; f.iframe.src = a.url; }
+      // A screen loads the first time it's shown, then stays loaded so switching back is instant.
+      if (a.id === shown) f.seen = true;
+      if (f.seen && f.url !== a.url) { f.url = a.url; f.iframe.src = a.url; }
       f.layer.innerHTML = overlays(w) + fold(a);
       head(a, f);
     });
     const focus = isFocus(), fid = focusedId();
     for (const [id, f] of frames) f.el.classList.toggle("hidden", focus && id !== fid);
     viewport.classList.toggle("focus", focus);
-    $(".mode-canvas").classList.toggle("on", !focus);
-    $(".mode-focus").classList.toggle("on", focus);
-    $(".canvas-tools").hidden = focus;
-    $(".focus-tools").hidden = !focus;
-    if (focus) {
-      const a = canvas.artboards.find((x) => x.id === fid);
-      $(".focus-name").textContent = a ? a.name : "";
-      $(".focus-device").innerHTML = options(a && a.device);
-    }
+    const a = canvas.artboards.find((x) => x.id === fid);
+    $(".focus-pick").innerHTML = canvas.artboards.map((x) => '<option value="' + esc(x.id) + '"' + (x.id === fid ? " selected" : "") + ">" + esc(x.name || x.url) + "</option>").join("");
+    $(".focus-pick").title = a ? a.url : "";
+    $(".focus-device").innerHTML = options(a && a.device);
     for (const [cls, key] of [[".grid", "grid"], [".base", "base"], [".pages-toggle", "pages"]]) $(cls).classList.toggle("on", !!view[key]);
-    $(".pages").hidden = !view.pages || focus;
-    $(".add").innerHTML = '<option value="">+ Artboard</option>' + options("");
+    $(".pages").hidden = !view.pages;
     saveView();
     drawMinimap();
     dockPanel();
@@ -638,7 +638,7 @@ export function studioPage(appPath) {
   function dockPanel() {
     const root = document.getElementById("ui-tweaks-root");
     if (root.querySelector(".panel")) return;
-    const first = canvas.artboards[0] && frames.get(canvas.artboards[0].id);
+    const first = frames.get(focusedId());
     try { first && first.iframe.contentWindow.__uiTweaks && first.iframe.contentWindow.__uiTweaks.attachPopup(window); } catch {}
   }
 
@@ -679,35 +679,7 @@ export function studioPage(appPath) {
     render();
   }
 
-  // ---------- minimap ----------
-  function drawMinimap() {
-    if (!canvas.artboards.length) return;
-    const b = bounds();
-    const vw = viewport.clientWidth, vh = viewport.clientHeight;
-    const v = { x: -cam.x / cam.z, y: -cam.y / cam.z, w: vw / cam.z, h: vh / cam.z };
-    const all = { x: Math.min(b.x, v.x), y: Math.min(b.y, v.y) };
-    all.w = Math.max(b.x + b.w, v.x + v.w) - all.x;
-    all.h = Math.max(b.y + b.h, v.y + v.h) - all.y;
-    const s = Math.min(170 / all.w, 110 / all.h);
-    const r = (x, y, w, h) => "left:" + (5 + (x - all.x) * s) + "px;top:" + (5 + (y - all.y) * s) + "px;width:" + Math.max(2, w * s) + "px;height:" + Math.max(2, h * s) + "px";
-    minimap.innerHTML = canvas.artboards.map((a) => { const [w, h] = size(a); return '<div class="mini-ab' + (a.id === selected ? " selected" : "") + '" style="' + r(a.x, a.y, w, h) + '"></div>'; }).join("") +
-      '<div class="mini-view" style="' + r(v.x, v.y, v.w, v.h) + '"></div>';
-    minimap.dataset.map = JSON.stringify({ ...all, s });
-  }
-  minimap.addEventListener("pointerdown", (e) => {
-    e.stopPropagation();
-    const go = (ev) => {
-      const m = JSON.parse(minimap.dataset.map || "{}");
-      const r = minimap.getBoundingClientRect();
-      const wx = m.x + (ev.clientX - r.left - 5) / m.s, wy = m.y + (ev.clientY - r.top - 5) / m.s;
-      cam = { ...cam, x: viewport.clientWidth / 2 - wx * cam.z, y: viewport.clientHeight / 2 - wy * cam.z };
-      applyCam();
-    };
-    go(e);
-    minimap.setPointerCapture(e.pointerId);
-    minimap.onpointermove = go;
-    minimap.onpointerup = () => (minimap.onpointermove = null);
-  });
+  function drawMinimap() {}
 
   // ---------- pages ----------
   async function loadPages() {
@@ -715,17 +687,41 @@ export function studioPage(appPath) {
     const box = $(".pages");
     let data = { routes: [], pending: [] };
     try { data = await fetch("/__ui-tweaks/routes").then((r) => r.json()); } catch {}
-    box.innerHTML = "<h4>Add an artboard for</h4>" + (data.routes.length ? data.routes.map((r) => '<button data-path="' + esc(r.path) + '">' + (data.pending.includes(r.path) ? "<i title='Has pending tweaks'></i>" : "") + "<span>" + esc(r.path) + '</span><span class="src">' + esc(r.source) + "</span></button>").join("") : '<div class="empty">No routes found.</div>');
+    box.innerHTML = "<h4>Add a screen for</h4>" + (data.routes.length ? data.routes.map((r) => '<button data-path="' + esc(r.path) + '">' + (data.pending.includes(r.path) ? "<i title='Has pending tweaks'></i>" : "") + "<span>" + esc(r.path) + '</span><span class="src">' + esc(r.source) + "</span></button>").join("") : '<div class="empty">No routes found.</div>');
     for (const b of box.querySelectorAll("button[data-path]")) b.addEventListener("click", () => {
       const p = b.dataset.path;
-      if (/[\\[:*]/.test(p)) return note("That route needs a value: add an artboard, then double-click its URL to fill it in.");
-      addArtboard({ url: p, name: p === "/" ? "Home" : p });
+      if (/[\\[:*]/.test(p)) return note("That route needs a value: add it, then fill it in with ✎.");
+      const a = addArtboard({ url: p, name: p === "/" ? "Home" : p });
+      setMode("focus", a.id);
     });
   }
 
   // ---------- toolbar ----------
-  $(".mode-canvas").addEventListener("click", () => setMode("canvas"));
-  $(".mode-focus").addEventListener("click", () => setMode("focus", selected || view.focus));
+  const current = () => canvas.artboards.find((x) => x.id === focusedId());
+  $(".focus-pick").addEventListener("change", (e) => { select(e.target.value); setMode("focus", e.target.value); });
+  $(".scr-add").addEventListener("click", () => {
+    const a = current();
+    const copy = addArtboard({ name: a ? a.name + " copy" : "Screen", url: a && a.url, device: a && a.device });
+    setMode("focus", copy.id);
+  });
+  $(".scr-edit").addEventListener("click", () => {
+    const a = current();
+    if (!a) return;
+    const name = prompt("Screen name", a.name || "");
+    if (name === null) return;
+    const url = prompt("Screen URL (path, query and #hash of your app, e.g. /?screen=settings)", a.url || "/");
+    if (url === null) return;
+    a.name = name.trim() || a.name;
+    a.url = url.trim() ? (url.trim().startsWith("/") ? url.trim() : "/" + url.trim()) : a.url;
+    save();
+    render();
+  });
+  $(".scr-del").addEventListener("click", () => {
+    const a = current();
+    if (!a || !confirm('Remove the screen "' + (a.name || a.url) + '"? (Your app is not changed.)')) return;
+    removeArtboard(a.id);
+    setMode("focus", focusedId());
+  });
   $(".prev").addEventListener("click", () => step(-1));
   $(".next").addEventListener("click", () => step(1));
   $(".focus-device").addEventListener("change", (e) => {
@@ -745,17 +741,11 @@ export function studioPage(appPath) {
     render();
     applyCam();
   });
-  $(".add").addEventListener("change", (e) => { if (e.target.value) addArtboard({ device: e.target.value, name: BY_ID[e.target.value][1] }); });
-  $(".hand-btn").addEventListener("click", (e) => { e.currentTarget.classList.toggle("on"); setHand(hand); });
-  $(".zoom-in").addEventListener("click", () => zoomAt(cam.z * 1.25, ...center()));
-  $(".zoom-out").addEventListener("click", () => zoomAt(cam.z / 1.25, ...center()));
-  $(".zoom-fit").addEventListener("click", () => fitTo(canvas.artboards));
-  $(".zoom-100").addEventListener("click", () => zoomAt(1, ...center()));
   for (const [cls, key] of [[".grid", "grid"], [".base", "base"]]) $(cls).addEventListener("click", () => { view[key] = !view[key]; render(); });
   $(".pages-toggle").addEventListener("click", () => { view.pages = !view.pages; render(); loadPages(); });
   $(".reload").addEventListener("click", () => frames.forEach((f) => f.iframe.contentWindow.location.reload()));
   $(".exit").addEventListener("click", () => {
-    const a = canvas.artboards.find((x) => x.id === selected) || canvas.artboards[0];
+    const a = canvas.artboards.find((x) => x.id === focusedId()) || canvas.artboards[0];
     location.href = a ? a.url : ${src};
   });
   const compare = (on) => frames.forEach((f) => { try { f.iframe.contentWindow.__uiTweaks.compare(on); } catch {} });
@@ -765,7 +755,7 @@ export function studioPage(appPath) {
 
   // Snapshot: the browser captures this tab (it asks each time), cropped to the selected artboard.
   $(".shot").addEventListener("click", async () => {
-    const a = canvas.artboards.find((x) => x.id === selected) || canvas.artboards[0];
+    const a = canvas.artboards.find((x) => x.id === focusedId()) || canvas.artboards[0];
     const f = a && frames.get(a.id);
     if (!f) return;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return note("This browser can't capture the page; use Chrome.");

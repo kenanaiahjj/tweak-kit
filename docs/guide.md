@@ -126,24 +126,19 @@ Nothing to do: the kit writes a `.gitignore` containing `*` inside `.ui-tweaks/`
 2. Open a Claude Code session **in the project folder**. The mod watches the folder the session is in.
 3. Click **Tweak** (bottom right of the page), or press **Alt+T**.
 
-### The studio canvas (the default)
+### The studio (the default)
 
-**Tweak** opens the studio at `/__ui-tweaks/studio`: an infinite canvas of **artboards** on the left, the panel docked on the right. An artboard is not a picture of a screen: it is your running app, framed at one **screen**, **state** and **device**. Change the code and every artboard showing it updates.
+**Tweak** opens the studio at `/__ui-tweaks/studio`: one **screen** of your app at a time, at its real size on a real device, with the panel docked on the right. A screen is not a picture: it is your running app, framed at one URL (screen and state) and device. Change the code and it updates.
 
-**Canvas and Focus.** The toolbar switches between **▦ Canvas** (every artboard, ⇧C) and **▢ Focus** (⇧F): one screen alone, on its device, at actual size (100%). In Focus, **‹ ›** (or ←/→) step through the artboards, the device menu and **⟲** apply to the screen in view, and you scroll or drag to see a device bigger than the space. Double-click an artboard's size label to focus it. Switching back returns the canvas exactly as you left it; the other artboards keep running, so switching is instant.
-
-**Moving around**
-- Two-finger scroll pans; pinch, or ⌘/Ctrl + scroll, zooms at the pointer (also over an artboard).
-- Drag the empty canvas, hold **Space**, or turn on **✋** to pan. **−** / **+**, **Fit** (⇧1) and **1:1** (⇧0) set the zoom; the **minimap** (bottom right) jumps anywhere.
-
-**Artboards**
-- **+ Artboard** adds one (a copy of the selected artboard's screen, on the device you pick). **☰** lists the app's routes; click one to add an artboard for it.
-- Drag an artboard by its label to move it (snaps to 8px). On hover or when selected, its label shows the **device** menu, **⟲** rotate, **⧉** duplicate and **✕** remove (or press Delete). Double-click the **name** to rename it, or the **URL** to change which screen and state it shows.
-- Click into an artboard to tweak there; the panel follows. A tweak previews in **every** artboard showing that code.
+**Screens**
+- **‹ ›** (or ←/→) step through your screens; the dropdown jumps to one. A screen loads the first time you open it and stays loaded, so switching back is instant.
+- **＋** adds a copy of the screen in view (then change its URL with **✎**), **✎** renames it or changes its URL, **🗑** removes it (your app isn't touched). **☰** lists the app's routes; click one to add a screen for it.
+- The device menu and **⟲** (rotate) apply to the screen in view. Scroll or drag to see a device bigger than the space.
+- Tweaks belong to the screen they were made on, identified by its path, query and #hash, and only preview there. The panel notes unsent changes on other screens; open a screen to see and send its changes.
 - Devices (CSS px): iPhone Duo open (890 × 626) and folded (466 × 678), 18/17/16 Pro Max (440 × 956), Air (420 × 912), 18 Pro · 17 Pro · 17 (402 × 874), 16 · 15 (393 × 852), 17e · 14 · 13 (390 × 844), 16 Plus · 15 Plus (430 × 932), 13 mini (375 × 812), SE (375 × 667); iPad mini, Air 11″, Pro 11″, Pro 13″, classic; Pixel, Galaxy Z Fold 5 folded; Laptop, MacBook Air 13″, 1440 × 900, 1920 × 1080.
-- Frames show the app edge to edge (no simulated status bar or notch, so nothing clips the app's header); the iPhone Duo draws its fold line. **Grid** (4/8/12 columns) and **8pt** overlay guides; hold **Compare** (or **\\** in the app) to see every artboard without your previews; **📷** saves a PNG of the selected artboard (the browser asks to capture the tab; Chrome).
+- Frames show the app edge to edge (no simulated status bar or notch, so nothing clips the app's header); the iPhone Duo draws its fold line. **Grid** (4/8/12 columns) and **8pt** overlay guides; hold **Compare** (or **\\** in the app) to see the screen without your previews; **📷** saves a PNG of it (the browser asks to capture the tab; Chrome).
 
-**`canvas.json`: the canvas is part of your project.** The layout lives in `.ui-tweaks/canvas.json`, the one file in `.ui-tweaks/` that git sees, so you can commit and share it:
+**`canvas.json`: your screens are part of your project.** The list lives in `.ui-tweaks/canvas.json`, the one file in `.ui-tweaks/` that git sees, so you can commit and share it:
 
 ```json
 {
@@ -156,11 +151,11 @@ Nothing to do: the kit writes a `.gitignore` containing `*` inside `.ui-tweaks/`
 }
 ```
 
-The studio saves it as you arrange things, and picks up changes made to it elsewhere within a couple of seconds, so you can ask Claude to "add artboards for the empty and error states" and watch them appear.
+The studio saves it as you change screens, and picks up changes made to it elsewhere within a couple of seconds, so you can ask Claude to "add screens for the empty and error states" and watch them appear. (`x`/`y` are left over from the old canvas view and are ignored.)
 
-**Screens and states: the dev hook.** Apps with URLs (Next.js, React Router) need nothing: an artboard's URL is the route. Apps that switch screens or data in memory need a small **dev-only** hook so each artboard can open a screen in a known state; ask Claude to add one. The convention:
+**Screens and states: the dev hook.** Apps with URLs (Next.js, React Router) need nothing: an artboard's URL is the route. Apps that switch screens or data in memory need a small **dev-only** hook so each screen can open a screen in a known state; ask Claude to add one. The convention:
 - `?screen=<name>` opens a screen.
-- `?fixture=<name>` loads a named, made-up data state (new user, verified, error…) **instead of** the saved one, and never writes it back, so artboards don't overwrite your real dev data or each other.
+- `?fixture=<name>` loads a named, made-up data state (new user, verified, error…) **instead of** the saved one, and never writes it back, so screens don't overwrite your real dev data or each other.
 - Both are ignored outside development.
 
 Example (OneQR): `src/dev-fixtures.ts` defines the fixtures `new`, `unverified`, `pending`, `verified`, `rejected` and `family`; `main.tsx` reads them in `loadState()` and skips saving while one is active.

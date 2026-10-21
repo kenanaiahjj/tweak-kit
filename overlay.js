@@ -11,6 +11,13 @@
   const API = ((script && script.dataset.api) || "") + "/__ui-tweaks";
   const LIVE_RELOAD = !!(script && script.dataset.liveReload);
   const STORE_KEY = "ui-tweaks:drafts:" + location.pathname;
+  // The screen a tweak was made on: apps often keep every screen at one path and switch by query or #hash.
+  const here = () => location.pathname + location.search + location.hash;
+  // When both are known, an element must come from the same JSX line to inherit a saved tweak.
+  const sameSource = (el, jsx) => {
+    const own = jsx && reactInfo(el);
+    return !own || !own.jsxSource || own.jsxSource === jsx;
+  };
   // Docked mode: the page runs in the studio's frame and its panel docks beside it (same origin).
   const STUDIO = (() => {
     try {
@@ -348,7 +355,7 @@
   function tweakFor(el) {
     const key = keyOf(el);
     if (!state.tweaks.has(key)) {
-      state.tweaks.set(key, { key, el, element: describe(el), changes: {}, text: null, note: "", batchId: null });
+      state.tweaks.set(key, { key, el, at: here(), element: describe(el), changes: {}, text: null, note: "", batchId: null });
     }
     return state.tweaks.get(key);
   }
@@ -715,6 +722,8 @@
     const lost = all.filter((t) => !t.el.isConnected);
     const adopt = (tweak, again) => {
       if (!again || all.some((t) => t.el === again)) return;
+      if (tweak.at && tweak.at !== here()) return; // made on another screen
+      if (!sameSource(again, tweak.element.react && tweak.element.react.jsxSource)) return;
       if (state.selected === tweak.el) state.selected = again;
       tweak.el = again;
       elementKeys.set(again, tweak.key);
@@ -815,6 +824,8 @@
   function persist() {
     try {
       const drafts = [...state.tweaks.values()].map((t) => ({
+        at: t.at,
+        jsx: t.element.react && t.element.react.jsxSource,
         selector: t.element.selector,
         changes: t.changes,
         text: t.text,
@@ -826,7 +837,11 @@
         sentId: t.sentId,
         skipped: t.skipped,
       }));
-      localStorage.setItem(STORE_KEY, JSON.stringify({ drafts, note: state.note, sent: [...state.sentBatches] }));
+      // Drafts made on other screens stay as they are until you're back on that screen.
+      const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
+      const mine = new Set(drafts.map((d) => d.at + "|" + d.selector));
+      const elsewhere = ((saved && saved.drafts) || []).filter((d) => d.at && d.at !== here() && !mine.has(d.at + "|" + d.selector));
+      localStorage.setItem(STORE_KEY, JSON.stringify({ drafts: [...drafts, ...elsewhere], note: state.note, sent: [...state.sentBatches] }));
     } catch {}
   }
 
@@ -836,14 +851,14 @@
       if (!saved) return;
       state.note = saved.note || "";
       state.sentBatches = new Map(saved.sent || []);
-      let waiting = saved.drafts || [];
+      let waiting = (saved.drafts || []).filter((d) => (d.at || here()) === here());
       let tries = 0;
       const attempt = () => {
         waiting = waiting.filter((d) => {
           const el = document.querySelector(d.selector);
-          if (!el) return true;
+          if (!el || !sameSource(el, d.jsx)) return true;
           const tweak = tweakFor(el);
-          Object.assign(tweak, { changes: d.changes, text: d.text, note: d.note, move: d.move || null, removed: !!d.removed, scope: d.scope, batchId: d.batchId, sentId: d.sentId, skipped: d.skipped });
+          Object.assign(tweak, { at: d.at || here(), changes: d.changes, text: d.text, note: d.note, move: d.move || null, removed: !!d.removed, scope: d.scope, batchId: d.batchId, sentId: d.sentId, skipped: d.skipped });
           reapply(tweak);
           if (d.text && d.text.to !== undefined) el.textContent = d.text.to;
           return false;
@@ -2294,6 +2309,17 @@
     h.style.cssText = "margin:0 0 4px;font-size:11px;font-weight:600;display:flex;justify-content:space-between;align-items:center";
     h.textContent = list.length ? `Changes · ${list.length} element${list.length > 1 ? "s" : ""}` : "No changes yet";
     box.append(h);
+    let others = [];
+    try { others = (JSON.parse(localStorage.getItem(STORE_KEY) || "null") || { drafts: [] }).drafts.filter((d) => d.at && d.at !== here() && !list.some((t) => t.at === d.at && t.element.selector === d.selector)); } catch {}
+    if (others.length) {
+      const o = document.createElement("div");
+      o.className = "el-meta";
+      o.style.margin = "0 0 6px";
+      const screens = [...new Set(others.map((d) => d.at))];
+      o.textContent = `+ ${others.length} unsent on ${screens.length === 1 ? "another screen" : screens.length + " other screens"}: open ${screens.length === 1 ? "it" : "them"} to see and send.`;
+      o.title = screens.join("\n");
+      box.append(o);
+    }
     for (const t of list) {
       const row = document.createElement("div");
       row.className = "change";

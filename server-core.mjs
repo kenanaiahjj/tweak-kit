@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyDirect, sourceFiles } from "./direct-apply.mjs";
 import { unifiedDiff } from "./diff.mjs";
+import { scanBreakpoints, scopeFor } from "./breakpoints.mjs";
 
 const KIT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const OVERLAY_PATH = path.join(KIT_DIR, "overlay.js");
@@ -906,6 +907,11 @@ export function createTweaksHandler({ root, getVersion }) {
         } catch (error) {
           return send(res, error.status || 500, { error: error.message });
         }
+      }
+      if (req.method === "GET" && url.pathname === `${PREFIX}/breakpoints`) {
+        const summary = await scanBreakpoints(root);
+        const width = Number(url.searchParams.get("width"));
+        return send(res, 200, { ...summary, scope: width > 0 ? scopeFor(summary, width) : null });
       }
       if (req.method === "GET" && url.pathname === `${PREFIX}/routes`) {
         return send(res, 200, await findRoutes(root));

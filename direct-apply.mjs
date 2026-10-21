@@ -4,7 +4,9 @@
 // - a value on a shared rule (or one no rule sets yet) becomes an override: the element's JSX gets a
 //   class of its own (e.g. primary-button--t3f2a) and a more specific rule for it goes right after the shared one;
 // - a copy change on the element's JSX line is edited in place.
-// Notes, hover/active/focus states, width-scoped tweaks and style props are left for Haiku.
+// - a tweak scoped to a width (the panel's "At 430px and below") is written as an @media rule for the
+//   project's own breakpoint, in place when that block already has the rule.
+// Notes, hover/active/focus states and style props are left for Haiku.
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -181,6 +183,60 @@ function applyEdits(text, edits) {
   return sorted.reduce((t, e) => t.slice(0, e.start) + e.value + t.slice(e.end), text);
 }
 
+/**
+ * Writes declarations for `selector` inside an `@media <query>` block: edits the ones the block already has,
+ * adds the rest, or creates the block right after the base rule. A block that sits above the base rule can't
+ * win for new declarations (same specificity, earlier), so that case is left for a model.
+ */
+export function planMediaEdits(text, { selector, query, items }) {
+  const base = findRule(text, selector);
+  if (base.error) return { error: base.error };
+  const want = normalizeCondition(query);
+  const blocks = cssBlocks(text).filter((b) => {
+    const p = stripComments(b.prelude).trim();
+    return /^@media/i.test(p) && normalizeCondition(p.replace(/^@media/i, "")) === want;
+  });
+  if (blocks.length > 1) return { error: `${blocks.length} @media ${query} blocks` };
+  const decl = (d) => `${d.prop}: ${d.value}${d.important ? " !important" : ""};`;
+  if (!blocks.length) {
+    const body = items.map((d) => `    ${decl(d)}`).join("\n");
+    return { edits: [{ start: base.rule.close + 1, end: base.rule.close + 1, value: `\n\n@media ${query} {\n  ${selector} {\n${body}\n  }\n}` }] };
+  }
+  const block = blocks[0];
+  const below = block.start > base.rule.start;
+  const inner = cssBlocks(text, block.open + 1, block.close).filter((b) => normalizeSelector(b.prelude) === normalizeSelector(selector));
+  if (inner.length > 1) return { error: `${inner.length} rules for ${selector} in @media ${query}` };
+  const trimEnd = (at) => {
+    while (at > 0 && /\s/.test(text[at - 1])) at--;
+    return at;
+  };
+  if (inner.length === 0) {
+    if (!below) return { error: `the @media ${query} block comes before ${selector}` };
+    const body = items.map((d) => `    ${decl(d)}`).join("\n");
+    const at = trimEnd(block.close);
+    return { edits: [{ start: at, end: at, value: `\n\n  ${selector} {\n${body}\n  }` }] };
+  }
+  const rule = inner[0];
+  const existing = declarations(text, rule.open + 1, rule.close);
+  const edits = [];
+  const add = [];
+  for (const d of items) {
+    const found = existing.filter((x) => x.name === d.prop).pop();
+    if (found) edits.push({ start: found.valueStart, end: found.valueEnd, value: d.value });
+    else add.push(d);
+  }
+  if (add.length) {
+    if (!below) return { error: `the @media ${query} block comes before ${selector}` };
+    const last = existing[existing.length - 1];
+    const lineStart = last ? text.lastIndexOf("\n", last.valueStart) + 1 : 0;
+    const indent = last ? /^\s*/.exec(text.slice(lineStart))[0] : "    ";
+    const at = trimEnd(rule.close);
+    const needSemi = existing.length > 0 && text[at - 1] !== ";";
+    edits.push({ start: at, end: at, value: (needSemi ? ";" : "") + add.map((d) => `\n${indent}${decl(d)}`).join("") });
+  }
+  return { edits };
+}
+
 // ---------- ownership ----------
 
 export async function sourceFiles(root, extensions = SOURCE_EXT) {
@@ -351,7 +407,9 @@ export async function applyDirect(root, batch) {
     const changes = Object.entries(tweak.changes || {});
     const blocked = {}; // prop key -> reason
     const overridable = {}; // prop key -> true when an override rule can do it
-    const whole = tweak.note ? "has a note" : tweak.scope && tweak.scope.kind === "viewport" ? "scoped to one screen width" : null;
+    const scopeQuery = tweak.scope && tweak.scope.kind === "viewport" && tweak.scope.query ? tweak.scope.query : null;
+    const mediaWrite = {}; // prop key -> true: written as an @media rule for scopeQuery
+    const whole = tweak.note ? "has a note" : tweak.scope && tweak.scope.kind === "viewport" && !scopeQuery ? "scoped to one screen width" : null;
     let textReason = tweak.text ? whole : null;
     if (whole) {
       for (const [k] of changes) blocked[k] = whole;
@@ -360,16 +418,19 @@ export async function applyDirect(root, batch) {
         const r = c.authoredIn && c.authoredIn[0];
         const shared = (reason) => {
           blocked[k] = reason;
-          overridable[k] = true;
+          if (!scopeQuery) overridable[k] = true; // an override class has no width scope
         };
         if (c.state) blocked[k] = "changes a hover/active/focus state";
         else if (c.inlineBefore) blocked[k] = "set by the element's style prop";
         else if (!r) shared("not set by any rule yet");
         else if (!/\.css$/i.test(r.file || "")) blocked[k] = `rule lives in ${r.file || "an unknown file"}`;
+        else if (scopeQuery && tweak.reach === "all") blocked[k] = "Everywhere and a width scope together";
+        else if (scopeQuery && (r.conditions || []).length && !(r.conditions.length === 1 && normalizeCondition(r.conditions[0]) === normalizeCondition(scopeQuery))) blocked[k] = "a different @media rule wins here";
         else if (tweak.reach === "all") continue; // "Everywhere": edit the rule itself, shared or not
         else if (r.selector.includes(",")) shared(`${r.selector} is a shared selector list`);
         else if (r.matches !== 1) shared(`${r.selector} matches ${r.matches ?? "?"} elements on the page`);
         else if (r.usesVariable && !/^var\(/.test(c.to)) shared(`${r.property} uses a CSS variable`);
+        else if (scopeQuery && !(r.conditions || []).length) mediaWrite[k] = true;
       }
       const open = changes.filter(([k]) => !blocked[k]);
       if (open.length && tweak.reach !== "all") {
@@ -379,7 +440,8 @@ export async function applyDirect(root, batch) {
           const shared = classesIn(c.authoredIn[0].selector).find((cls) => uses[cls] > 1);
           if (shared) {
             blocked[k] = `.${shared} is used ${uses[shared]} times in the source`;
-            overridable[k] = true;
+            if (!scopeQuery) overridable[k] = true;
+            delete mediaWrite[k];
           }
         }
       }
@@ -388,10 +450,24 @@ export async function applyDirect(root, batch) {
     // Plan the edits for what is still open; a file whose plan fails sends its changes to Haiku.
     const plans = new Map(); // abs path -> edits
     const byFile = new Map();
+    const mediaGroups = new Map(); // `${file}|${selector}` -> { abs, selector, items, keys }
     for (const [k, c] of changes) {
       if (blocked[k]) continue;
       const abs = path.resolve(root, c.authoredIn[0].file);
+      if (mediaWrite[k]) {
+        const g = c.authoredIn[0];
+        const key = `${abs}|${g.selector}`;
+        if (!mediaGroups.has(key)) mediaGroups.set(key, { abs, selector: g.selector, items: [], keys: [] });
+        mediaGroups.get(key).items.push({ prop: c.prop || k, value: c.to, important: /!important$/.test(g.value || "") });
+        mediaGroups.get(key).keys.push(k);
+        continue;
+      }
       byFile.set(abs, { ...(byFile.get(abs) || {}), [k]: c });
+    }
+    for (const g of mediaGroups.values()) {
+      const plan = planMediaEdits(await read(g.abs).catch(() => ""), { selector: g.selector, query: scopeQuery, items: g.items });
+      if (plan.error) for (const k of g.keys) blocked[k] = plan.error;
+      else plans.set(g.abs, [...(plans.get(g.abs) || []), ...plan.edits]);
     }
     for (const [abs, fileChanges] of byFile) {
       const plan = planStyleEdits(await read(abs).catch(() => ""), fileChanges);

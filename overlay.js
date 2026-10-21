@@ -2426,6 +2426,22 @@
     return seen.size || null;
   }
 
+  // ---------- Breakpoints ----------
+  // "Only at this width" becomes the project's own breakpoint (from its @media rules) when there is one.
+  const breakpointCache = new Map(); // width -> { query, label } | null; undefined while loading
+  function breakpointScope(width) {
+    if (breakpointCache.has(width)) return breakpointCache.get(width);
+    breakpointCache.set(width, undefined);
+    fetch(API + "/breakpoints?width=" + width, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        breakpointCache.set(width, d.scope || null);
+        if (state.isOpen) renderPanel();
+      })
+      .catch(() => breakpointCache.set(width, null));
+    return undefined;
+  }
+
   // ---------- Tokens on this element ----------
   // The tokens behind this element's styles, editable here: saving rewrites the token itself, so
   // everything that uses it changes (in the theme that applies to this element).
@@ -3048,15 +3064,16 @@
       scope.className = "seg";
       scope.style.marginBottom = "6px";
       const isNarrow = !!(tweak && tweak.scope && tweak.scope.kind === "viewport");
-      for (const [kind, label] of [["all", "All screen widths"], ["viewport", `Only at ${innerWidth}px`]]) {
+      const bp = breakpointScope(innerWidth);
+      for (const [kind, label] of [["all", "All screen widths"], ["viewport", bp ? bp.label : `Only at ${innerWidth}px`]]) {
         const b = document.createElement("button");
         b.textContent = label;
-        b.title = kind === "all" ? "Change it everywhere" : "Change it only around this screen width (Claude adds a media query)";
+        b.title = kind === "all" ? "Change it everywhere" : bp ? `Written as @media ${bp.query}, a breakpoint this project already uses` : "Change it only around this screen width (Claude adds a media query)";
         if ((kind === "viewport") === isNarrow) b.classList.add("on");
         b.addEventListener("click", () => {
           const t = tweakFor(el);
           if (t.batchId) withdraw(t.batchId);
-          t.scope = kind === "viewport" ? { kind, width: innerWidth } : undefined;
+          t.scope = kind === "viewport" ? { kind, width: innerWidth, query: bp ? bp.query : undefined, label: bp ? bp.label : undefined } : undefined;
           cleanup(t);
           persist();
           render();

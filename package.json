@@ -19,6 +19,7 @@
   },
   "files": [
     "asks.mjs",
+    "breakpoints.mjs",
     "cli.mjs",
     "diff.mjs",
     "direct-apply.mjs",

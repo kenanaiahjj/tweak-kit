@@ -190,3 +190,55 @@ test("Everywhere edits a shared rule in place instead of overriding one element"
   assert.match(out.files[0].after, /\.shared, \.other \{ color: blue; \}/);
   assert.equal(out.files.length, 1); // no class added to the JSX
 });
+
+// ---------- width-scoped tweaks ----------
+
+import { planMediaEdits } from "../direct-apply.mjs";
+
+const scoped = (query = "(max-width: 430px)") => ({ kind: "viewport", width: 375, query });
+
+test("a width-scoped tweak creates an @media block right after the base rule", async () => {
+  const root = await project();
+  const out = await applyDirect(root, { tweaks: [tweak("t-0", { "font-size": { prop: "font-size", from: "40px", to: "28px", authoredIn: [rule(".hero h1", "font-size")] } }, { scope: scoped() })] });
+  assert.equal(out.remaining.length, 0);
+  const after = out.files[0].after;
+  assert.match(after, /\.hero h1 \{ font-size: 40px; \}\n\n@media \(max-width: 430px\) \{\n  \.hero h1 \{\n    font-size: 28px;\n  \}\n\}/);
+});
+
+test("a width-scoped tweak edits the rule already inside that @media block", async () => {
+  const root = await project();
+  const out = await applyDirect(root, {
+    tweaks: [tweak("t-0", { padding: { prop: "padding-top", from: "8px", to: "6px", authoredIn: [rule(".card", "padding-top", { conditions: ["(max-width: 600px)"], part: ".card" })] } }, { scope: scoped("(max-width: 600px)") })],
+  });
+  assert.equal(out.remaining.length, 0);
+  assert.match(out.files[0].after, /@media \(max-width: 600px\) \{\n {2}\.card \{ padding: 6px; \}/);
+  assert.equal(out.files[0].after.match(/@media/g).length, 1); // no second block
+});
+
+test("a width-scoped tweak on a shared rule is left for Haiku, with the reason", async () => {
+  const root = await project();
+  const out = await applyDirect(root, { tweaks: [tweak("t-0", { color: { prop: "color", from: "red", to: "blue", authoredIn: [rule(".shared", "color", { matches: 2 })] } }, { scope: scoped() })] });
+  assert.equal(out.applied.length, 0);
+  assert.match(out.remaining[0].directSkip, /matches 2 elements/);
+});
+
+test("a width scope without a query still goes to Haiku", async () => {
+  const root = await project();
+  const out = await applyDirect(root, { tweaks: [tweak("t-0", { color: { prop: "color", from: "#111", to: "#222", authoredIn: [rule(".card", "color")] } }, { scope: { kind: "viewport", width: 375 } })] });
+  assert.equal(out.applied.length, 0);
+  assert.match(out.remaining[0].directSkip, /one screen width/);
+});
+
+test("planMediaEdits adds a declaration to an existing rule in the block, after the base rule", () => {
+  const css = ".a { color: red; }\n@media (max-width: 500px) {\n  .a {\n    color: blue;\n  }\n}\n";
+  const { edits } = planMediaEdits(css, { selector: ".a", query: "(max-width: 500px)", items: [{ prop: "margin", value: "0" }] });
+  const out = edits.reduce((t, e) => t.slice(0, e.start) + e.value + t.slice(e.end), css);
+  assert.equal(out, ".a { color: red; }\n@media (max-width: 500px) {\n  .a {\n    color: blue;\n    margin: 0;\n  }\n}\n");
+});
+
+test("planMediaEdits won't add to a block that sits above the base rule", () => {
+  const css = "@media (max-width: 500px) {\n  .a { color: blue; }\n}\n.a { color: red; }\n";
+  assert.match(planMediaEdits(css, { selector: ".a", query: "(max-width: 500px)", items: [{ prop: "margin", value: "0" }] }).error, /comes before/);
+  // but editing a value the block already has is safe
+  assert.ok(planMediaEdits(css, { selector: ".a", query: "(max-width: 500px)", items: [{ prop: "color", value: "green" }] }).edits);
+});

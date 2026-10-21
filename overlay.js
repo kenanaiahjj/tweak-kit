@@ -2046,7 +2046,7 @@
       sec.classList.toggle("collapsed", folded.has(title));
       caret.textContent = folded.has(title) ? "▸" : "▾";
     });
-    sec.append(h, ...children);
+    sec.append(h, ...children.filter(Boolean));
     return sec;
   }
   // A small action at the right end of a section title.

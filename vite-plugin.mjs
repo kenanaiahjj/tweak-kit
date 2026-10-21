@@ -56,7 +56,7 @@ function linesPlugin({ sources = true } = {}) {
   };
 }
 
-function kitPlugin({ autoUpdate = false, updateCheck = true, sources = true } = {}) {
+function kitPlugin({ autoUpdate = false, updateCheck = true, sources = true, commit = false } = {}) {
   let root = process.cwd();
   return {
     name: "ui-tweaks",
@@ -76,7 +76,7 @@ function kitPlugin({ autoUpdate = false, updateCheck = true, sources = true } = 
       root = config.root;
     },
     configureServer(server) {
-      server.middlewares.use(createTweaksHandler({ root }));
+      server.middlewares.use(createTweaksHandler({ root, commit }));
       server.httpServer?.once("listening", () => {
         const address = server.httpServer.address();
         if (address && typeof address === "object") void announceServer(root, `http://localhost:${address.port}`);

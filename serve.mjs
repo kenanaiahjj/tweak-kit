@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Static server for plain HTML/CSS projects, with the UI Tweaks overlay injected and live reload.
-// Usage: node serve.mjs [folder] [--port 5500]
+// Usage: node serve.mjs [folder] [--port 5500] [--commit] [--auto-update]
 //        node serve.mjs [project] --api-only [--port 5599]   (sidecar for Next.js and other dev servers)
 import http from "node:http";
 import { promises as fs, watch } from "node:fs";
@@ -40,7 +40,7 @@ if (!args.includes("--api-only")) watch(root, { recursive: true }, (_event, file
   }
 });
 
-const tweaks = createTweaksHandler({ root, getVersion: () => version });
+const tweaks = createTweaksHandler({ root, getVersion: () => version, commit: args.includes("--commit") });
 
 const server = http.createServer((req, res) => {
   tweaks(req, res, async () => {

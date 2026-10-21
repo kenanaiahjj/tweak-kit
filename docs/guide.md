@@ -191,7 +191,7 @@ Everything below works the same in the studio or on the page.
 | Tokens on this element | The design tokens behind its styles, with the value in the theme that applies here. Editing one rewrites the token itself, so everything that uses it changes |
 | Auto layout | Row or column, a 3×3 alignment pad, Packed or Spread, gap, wrap. **＋ Add** (or **⇧A**) turns any element with children into one; **Remove** puts it back in normal flow |
 | In parent layout | For children of flex or grid containers: align-self (Auto, Start, Center, End, Stretch) |
-| Size | Width and height, each **Fixed**, **Hug** (fit the content) or **Fill** (take the space, using flex-grow or stretch inside auto layout), min/max width, and content overflow: Visible, Clip or Scroll |
+| Size | Width and height, each **Fixed**, **Hug** (fit the content) or **Fill** (take the space, using flex-grow or stretch inside auto layout), min/max width, and content overflow: Visible, Clip or Scroll. Buttons, links and form controls also show their **tap target** size and whether it reaches 44×44 |
 | Position | Auto (static), Relative, Absolute, Fixed or Sticky. Absolute and Fixed keep the element where it is, at its current size. When positioned: top/right/bottom/left offsets, z-index, and **Align in parent** (pin left, center, right, top, middle, bottom). It names the ancestor the element is positioned against. |
 | Spacing | A box diagram: margin outside, padding inside, size in the middle. Click a side to type (margin takes `auto`); ↑/↓ steps, Shift ×10, Alt applies to all four sides. **Center** sets auto side margins; **Margin 0** and **Pad 0** clear them. |
 | Text | Size, weight, line height, letter spacing, color, alignment |
@@ -229,6 +229,12 @@ Press **Send to Claude**. The toast tells you what happened, e.g. "Applied 3 dir
 
 **Diff** opens a pane with the exact changes.
 
+**Code** (in the panel's footer) shows, before you send, the diff a Send would write directly, and which tweaks are left for Haiku and why. It writes nothing.
+
+**Checked against the preview.** When a sent tweak has landed, the panel drops its preview and reads the element's computed style from the page the source now produces. If it doesn't match what the preview showed (a rule that wins, a token that resolves differently, a selector that missed), a **source differs** row appears with the two values. **Re-apply** puts the preview back as a draft with a note, so Haiku finds the rule that wins.
+
+**One commit per Send (optional).** With `uiTweaks({ commit: true })` (or `serve.mjs --commit`), what a Send writes directly is committed as `UI tweak: .card padding-top`. Only files that had no uncommitted changes are committed, so your work in progress is never swept in; otherwise the files are written and left uncommitted, and the toast says why. Haiku's edits and **Undo apply** are not committed.
+
 ### Design system page
 
 **Tokens** in the studio toolbar, or **◧** in the panel, opens `/__ui-tweaks/system`: every design token (CSS custom property) your stylesheets declare, laid out for designers.
@@ -256,10 +262,12 @@ Each tweak is split per property, and every property goes the cheapest route tha
    - **In-place edit:** the value sits on a CSS rule only this element uses (one selector, one match on the page, and its classes appear once in the source). The rule is edited in place, including inside its `@media` block, and shorthands like `padding: 10px 16px` are rewritten correctly.
    - **Override:** the value sits on a shared rule, or no rule sets it yet. The element's JSX gets a class of its own, such as `primary-button--t3f2a`, and a more specific rule for it goes right after the shared one, so the other elements keep their look. Later tweaks on the same element reuse that class and rule.
    - **Copy edit:** the text change is found on the element's JSX line and replaced.
+   - **Width scope:** "At 430px and below" (or "From 768px up") is written as an `@media` rule for a breakpoint the project already uses, in the direction it already writes them (desktop-first `max-width` or mobile-first `min-width`, read from its stylesheets; Tailwind's defaults when there are none). The rule inside that block is edited in place, or the block is created right after the base rule. Shared rules, another `@media` rule that wins at that width, and a block that sits above the base rule go to Haiku.
+   - **Tailwind:** when no hand-written rule in a source stylesheet sets the value, the tweak becomes a utility class on the element: `pt-2` becomes `pt-5`, a new colour becomes `text-[#111]`, hover becomes `hover:bg-[#000]`, a width scope becomes `max-[430px]:`. Same-property utilities at the same variant are replaced; broader ones (`p-4` beside a new `pt-5`) stay, because Tailwind orders the more specific one last. `font-size` is always an arbitrary value (`text-lg` would also change line-height). Works on `className="…"` literals and the first string of `cn()` / `clsx()` / `twMerge()`; other className expressions and components go to Haiku.
 2. **Haiku** (seconds, in the background, started by the mod):
    - notes
-   - hover/active/focus states
-   - "only at N px" tweaks
+   - hover/active/focus states (except in Tailwind projects, where they become `hover:` utilities)
+   - "only at N px" tweaks the project has no breakpoint for
    - values set through a React `style` prop
    - shared rules in plain HTML projects
    - anything the direct path couldn't place
@@ -367,7 +375,7 @@ Then remove the `uiTweaks` lines from `vite.config.ts`, or the script tag from y
 ```bash
 git clone https://github.com/kenanaiahjj/tweak-kit.git
 cd tweak-kit
-npm test                                  # direct-apply tests
+npm test                                  # unit tests, plus a Chrome smoke test of the panel (skipped without Chrome; set CHROME_PATH)
 claude plugin test claude-mod             # the mod's tests
 claude plugin validate .                  # the marketplace and the mod
 ```

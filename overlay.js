@@ -1704,6 +1704,21 @@
     return row;
   }
 
+  // Touch targets: controls smaller than 44x44 CSS px are hard to hit on a phone (Apple's guideline; WCAG 2.2 asks for 24 at least).
+  const INTERACTIVE = 'a[href], button, input:not([type="hidden"]), select, textarea, summary, [role="button"], [role="link"], [role="tab"], [role="checkbox"], [role="switch"], [role="menuitem"], [onclick]';
+  function tapTargetRow(el) {
+    if (!el.matches(INTERACTIVE)) return null;
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    const w = Math.round(r.width), h = Math.round(r.height);
+    const ok = w >= 44 && h >= 44;
+    const row = document.createElement("div");
+    row.className = "contrast";
+    row.innerHTML = `Tap target <b>${w}×${h}</b> <span class="${ok ? "ok" : "no"}">44×44 ${ok ? "✓" : "✗"}</span>`;
+    row.title = ok ? "Big enough to hit comfortably on a phone" : "Under 44×44 CSS px: hard to hit on a phone. Grow it, or pad it (padding counts, the visible shape needn't change)";
+    return row;
+  }
+
   // Changes that cannot show, with why: the panel warns as you edit, and Claude gets them too.
   function opaqueGradient(image) {
     const layers = splitTopLevel(image).filter((l) => /gradient\(/.test(l));
@@ -2999,6 +3014,7 @@
 
       scroll.append(section("Size",
         grid("size-row", sizeControl(el, "width", "Width"), sizeControl(el, "height", "Height")),
+        tapTargetRow(el),
         lbl("Min / max width"),
         grid("grid2", numberField(el, "min-width", "↤", { min: 0 }), numberField(el, "max-width", "↦", { min: 0 })),
         lbl("Content"),
@@ -3450,10 +3466,12 @@
       persist();
       render();
       const direct = (body.direct || []).length, queued = (body.queued || []).length;
+      const c = body.commit;
+      const committed = c ? (c.ok ? ` · committed ${c.sha}` : ` · not committed: ${c.reason}`) : "";
       toast(
-        queued === 0 ? `Applied ${direct} directly ✓`
+        (queued === 0 ? `Applied ${direct} directly ✓`
         : direct === 0 ? "Sent. Haiku is applying it to the source…"
-        : `Applied ${direct} directly · Haiku is doing the other ${queued}…`,
+        : `Applied ${direct} directly · Haiku is doing the other ${queued}…`) + committed,
       );
     } catch (error) {
       toast("Couldn't reach the tweaks server. Use Copy instead. (" + error.message + ")");

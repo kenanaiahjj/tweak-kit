@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { applyDirect, sourceFiles } from "./direct-apply.mjs";
 import { unifiedDiff } from "./diff.mjs";
 import { scanBreakpoints, scopeFor } from "./breakpoints.mjs";
+import { commitFiles, filesAreClean } from "./git.mjs";
 
 const KIT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const OVERLAY_PATH = path.join(KIT_DIR, "overlay.js");
@@ -874,7 +875,7 @@ export async function announceServer(root, url) {
  * Connect-style middleware. `getVersion` (optional) returns a number that changes when
  * the served files change; the overlay reloads the page when it does (static mode only).
  */
-export function createTweaksHandler({ root, getVersion }) {
+export function createTweaksHandler({ root, getVersion, commit = false }) {
   return async function handle(req, res, next) {
     const url = new URL(req.url, "http://localhost");
     if (!url.pathname.startsWith(PREFIX)) return next();
@@ -961,6 +962,8 @@ export function createTweaksHandler({ root, getVersion }) {
         batch.tweaks.forEach((t, i) => (t.id = `${batch.id}-${i}`));
         // Simple tweaks go straight into the source; the rest wait for Haiku.
         const direct = await applyDirect(root, batch);
+        // Committing is opt-in, and only for files that were clean before this write.
+        const clean = commit && direct.files.length ? await filesAreClean(root, direct.files.map((f) => f.path)) : null;
         for (const f of direct.files) await fs.writeFile(f.path, f.after);
         await fs.mkdir(tweaksDir(root), { recursive: true });
         await fs.writeFile(path.join(tweaksDir(root), ".gitignore"), GITIGNORE);
@@ -976,7 +979,13 @@ export function createTweaksHandler({ root, getVersion }) {
           pending.batches.push({ ...batch, tweaks: direct.remaining });
           await writePending(root, pending);
         }
-        return send(res, 200, { ok: true, id: batch.id, direct: direct.applied.map((a) => a.id), queued: direct.remaining.map((t) => t.id) });
+        let committed = null;
+        if (clean) {
+          const what = direct.applied.map((a) => `${label(byId.get(a.id))} ${[...a.props, ...(a.text ? ["text"] : [])].join(", ")}`).join("; ");
+          const message = `UI tweak: ${what.length > 68 ? what.slice(0, 67) + "…" : what}`;
+          committed = clean.ok ? await commitFiles(root, direct.files.map((f) => f.path), message) : { ok: false, reason: clean.reason };
+        }
+        return send(res, 200, { ok: true, id: batch.id, direct: direct.applied.map((a) => a.id), queued: direct.remaining.map((t) => t.id), commit: committed });
       }
       if (req.method === "POST" && url.pathname === `${PREFIX}/ask`) {
         try {

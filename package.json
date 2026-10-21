@@ -23,11 +23,13 @@
     "cli.mjs",
     "diff.mjs",
     "direct-apply.mjs",
+    "git.mjs",
     "update.mjs",
     "overlay.js",
     "serve.mjs",
     "server-core.mjs",
     "system-page.mjs",
+    "tailwind.mjs",
     "tokens.mjs",
     "vite-plugin.d.mts",
     "vite-plugin.mjs"

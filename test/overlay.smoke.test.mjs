@@ -27,7 +27,7 @@ const freePort = () => new Promise((resolve) => {
 
 async function withPage(fn) {
   const root = await mkdtemp(path.join(os.tmpdir(), "uitk-smoke-"));
-  await writeFile(path.join(root, "index.html"), '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="s.css"><h1 class="title">Hi</h1><p class="note">Note</p>');
+  await writeFile(path.join(root, "index.html"), '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="s.css"><h1 class="title">Hi</h1><p class="note">Note</p><button class="tiny" style="width:30px;height:20px">x</button><button class="big" style="width:60px;height:48px">y</button>');
   await writeFile(path.join(root, "s.css"), ".title { font-size: 28px; }\n.note { color: #555; }\n@media (max-width: 430px) { .title { font-size: 22px; } }\n");
   const port = await freePort();
   const server = spawn(process.execPath, [path.join(KIT, "serve.mjs"), root, "--port", String(port)], { env: { ...process.env, UI_TWEAKS_NO_UPDATE_CHECK: "1" }, stdio: "ignore" });
@@ -98,5 +98,18 @@ test("a source write that differs from the preview is flagged", { skip }, async 
       window.__uiTweaks.verifyApplied([{ el: document.querySelector(".title"), selector: ".title", label: ".title", prop: "font-size", expected: "99px" }]);
     });
     await page.waitForFunction(() => [...document.querySelectorAll("*")].some((e) => e.shadowRoot && /source differs/.test(e.shadowRoot.textContent)), null, { timeout: 8000 });
+  });
+});
+
+test("small controls get a tap-target warning, big ones a check, text none", { skip }, async () => {
+  await withPage(async (page) => {
+    const sizeSection = async (selector) => {
+      await page.evaluate((sel) => { window.__uiTweaks.open(); window.__uiTweaks.select(sel); }, selector);
+      await page.waitForTimeout(500);
+      return section(page, "Size");
+    };
+    assert.match(await sizeSection(".tiny"), /Tap target\s+30×20\s+44×44 ✗/);
+    assert.match(await sizeSection(".big"), /Tap target\s+60×48\s+44×44 ✓/);
+    assert.doesNotMatch(await sizeSection(".note"), /Tap target/);
   });
 });

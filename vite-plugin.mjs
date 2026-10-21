@@ -56,7 +56,7 @@ function linesPlugin({ sources = true } = {}) {
   };
 }
 
-function kitPlugin({ autoUpdate = true, updateCheck = true, sources = true } = {}) {
+function kitPlugin({ autoUpdate = false, updateCheck = true, sources = true } = {}) {
   let root = process.cwd();
   return {
     name: "ui-tweaks",

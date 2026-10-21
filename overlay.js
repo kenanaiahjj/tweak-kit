@@ -564,19 +564,55 @@
 
   // The order the source has, per parent, captured before anything there moves (the DOM is still in source order then).
   const ORIGINAL = new WeakMap();
+  const ordered = new Set(); // parents with a saved order
   const originalOrder = (parent) => {
-    if (!ORIGINAL.has(parent)) ORIGINAL.set(parent, kids(parent));
+    if (!ORIGINAL.has(parent)) {
+      ORIGINAL.set(parent, kids(parent));
+      ordered.add(parent);
+    }
     return ORIGINAL.get(parent);
   };
+
+  // React replaced a child of a parent we keep an order for: the new node takes the old one's place
+  // in the saved order, and inherits its tweak. Matched by tag and class, else by tag when that's unambiguous.
+  function adoptRemounts(all, adopt) {
+    for (const p of [...ordered]) {
+      if (!p.isConnected) {
+        ordered.delete(p);
+        continue;
+      }
+      const orig = ORIGINAL.get(p);
+      const stale = orig.filter((n) => n.parentElement !== p);
+      if (!stale.length) continue;
+      const fresh = kids(p).filter((n) => !orig.includes(n));
+      for (const old of stale) {
+        let i = fresh.findIndex((f) => f.tagName === old.tagName && f.className === old.className);
+        if (i === -1 && fresh.filter((f) => f.tagName === old.tagName).length === 1 && stale.filter((o) => o.tagName === old.tagName).length === 1) i = fresh.findIndex((f) => f.tagName === old.tagName);
+        if (i === -1) continue;
+        const [node] = fresh.splice(i, 1);
+        orig[orig.indexOf(old)] = node;
+        const t = all.find((x) => x.el === old);
+        if (t) adopt(t, node);
+      }
+    }
+  }
   const movedIn = (parent) => [...state.tweaks.values()].filter((t) => t.move && t.el.parentElement === parent);
 
   // Lays a parent out from the model: siblings nobody moved in source order, moved ones at their target index.
   // Touches the DOM only where it differs, so running it often is cheap.
   function layoutMoves(parent, { original = false } = {}) {
     if (!parent) return;
+    plannedOrder(parent, original ? () => false : null).forEach((n, i) => {
+      const cur = kids(parent);
+      if (cur[i] !== n) parent.insertBefore(n, cur[i] || null);
+    });
+  }
+
+  // The order layoutMoves would produce; `keep` picks which moves count (default: all).
+  function plannedOrder(parent, keep) {
     const orig = originalOrder(parent);
     const now = kids(parent);
-    const moved = original ? [] : movedIn(parent).sort((a, b) => a.move.toIndex - b.move.toIndex);
+    const moved = movedIn(parent).filter((t) => !keep || keep(t)).sort((a, b) => a.move.toIndex - b.move.toIndex);
     const movedEls = new Set(moved.map((t) => t.el));
     const free = now.filter((n) => !movedEls.has(n));
     // Known siblings go back to source order; ones React added since keep their slots.
@@ -584,10 +620,7 @@
     let k = 0;
     const order = free.map((n) => (orig.includes(n) ? known[k++] : n));
     for (const t of moved) order.splice(Math.min(t.move.toIndex, order.length), 0, t.el);
-    order.forEach((n, i) => {
-      const cur = kids(parent);
-      if (cur[i] !== n) parent.insertBefore(n, cur[i] || null);
-    });
+    return order;
   }
 
   // After the DOM changed: each moved sibling's target is where it is now.
@@ -625,7 +658,9 @@
     placeAt(el, toIndex);
     tweak.move = { fromIndex: origin, toIndex };
     syncMoves(parent);
-    if (childIndex(el) === origin) tweak.move = null; // back where the source has it
+    // Back where the source has it: the layout without this move is exactly what's on screen.
+    const now = kids(parent);
+    if (plannedOrder(parent, (t) => t !== tweak).every((n, i) => n === now[i])) tweak.move = null;
     layoutMoves(parent);
     syncMoves(parent);
     for (const t of movedIn(parent)) if (t.batchId) withdraw(t.batchId); // their neighbours changed
@@ -676,16 +711,32 @@
   // React may remount nodes; find them again by selector and re-apply the preview.
   setInterval(() => {
     if (state.comparing) return;
-    for (const tweak of state.tweaks.values()) {
-      if (!tweak.el.isConnected) {
-        const again = document.querySelector(tweak.element.selector);
-        if (!again) continue;
-        if (state.selected === tweak.el) state.selected = again;
-        tweak.el = again;
-        elementKeys.set(again, tweak.key);
-      }
-      reapply(tweak);
+    const all = [...state.tweaks.values()];
+    const lost = all.filter((t) => !t.el.isConnected);
+    const adopt = (tweak, again) => {
+      if (!again || all.some((t) => t.el === again)) return;
+      if (state.selected === tweak.el) state.selected = again;
+      tweak.el = again;
+      elementKeys.set(again, tweak.key);
+    };
+    adoptRemounts(all, adopt);
+    // Selectors count siblings in source order. Where a match sits among moved siblings,
+    // look it up again with them put back for a moment.
+    const parents = new Set(all.filter((t) => t.move && t.el.isConnected).map((t) => t.el.parentElement));
+    const recheck = [];
+    for (const tweak of lost.filter((t) => !t.el.isConnected)) {
+      const again = document.querySelector(tweak.element.selector);
+      if (!again) continue; // not on the page now: try again later, without touching anything
+      if ([...parents].some((p) => p.contains(again))) recheck.push(tweak);
+      else adopt(tweak, again);
     }
+    if (recheck.length) {
+      parents.forEach((p) => layoutMoves(p, { original: true }));
+      const found = recheck.map((t) => document.querySelector(t.element.selector));
+      parents.forEach((p) => layoutMoves(p));
+      recheck.forEach((t, i) => adopt(t, found[i]));
+    }
+    for (const tweak of all) if (tweak.el.isConnected) reapply(tweak);
   }, 600);
 
   // In the studio, only the frame whose panel is docked edits; the others mirror its previews.
@@ -2956,7 +3007,7 @@
     const onSelect = path.some((n) => n.tagName === "SELECT");
     if (sel && ownsPanel() && !onSelect) {
       if ((e.metaKey || e.ctrlKey) && /^Arrow(Up|Down|Left|Right)$/.test(e.key)) return own(() => moveBy(sel, /Up|Left/.test(e.key) ? -1 : 1));
-      if ((e.key === "Delete" || e.key === "Backspace") && !e.metaKey && !e.ctrlKey) return own(() => removeElement(sel));
+      if ((e.key === "Delete" || e.key === "Backspace") && !e.metaKey && !e.ctrlKey && !inPanel) return own(() => removeElement(sel));
       if (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !inPanel) {
         const next = e.shiftKey ? sel.parentElement : kids(sel).find((c) => c.getClientRects().length > 0);
         return own(() => next && next !== document.body && next !== document.documentElement ? select(next) : toast(e.shiftKey ? "No parent to select" : "No children"));

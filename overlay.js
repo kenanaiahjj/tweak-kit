@@ -13,6 +13,8 @@
   const STORE_KEY = "ui-tweaks:drafts:" + location.pathname;
   // The screen a tweak was made on: apps often keep every screen at one path and switch by query or #hash.
   const here = () => location.pathname + location.search + location.hash;
+  // Screens this page has held drafts for: their saved drafts are whatever it holds now (a reset there sticks).
+  const heldScreens = new Set();
   // When both are known, an element must come from the same JSX line to inherit a saved tweak.
   const sameSource = (el, jsx) => {
     const own = jsx && reactInfo(el);
@@ -512,8 +514,12 @@
         if (t.reach !== "all") continue;
         for (const [k, c] of Object.entries(t.changes)) {
           const r = !c.state && c.to !== undefined && c.authoredIn && c.authoredIn[0];
-          // Same selector, same priority, later in the page: wins exactly where editing that rule would.
-          if (r && (r.part || r.selector)) css.push(`${r.part || r.selector} { ${changeProp(k, c)}: ${c.to}${/!important$/.test(r.value || "") ? " !important" : ""}; }`);
+          // Same selector (all of a list, as the edit changes the whole rule), same priority and media
+          // conditions, later in the page: it wins exactly where editing that rule would.
+          if (!r || !(r.selector || r.part)) continue;
+          let rule = `${r.selector || r.part} { ${changeProp(k, c)}: ${c.to}${/!important$/.test(r.value || "") ? " !important" : ""}; }`;
+          for (const cond of [...(r.conditions || [])].reverse()) if (!cond.startsWith("@layer")) rule = `@media ${cond} { ${rule} }`;
+          css.push(rule);
         }
       }
     }
@@ -1136,8 +1142,11 @@
       // Drafts made on other screens stay as they are until you're back on that screen.
       const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
       const mine = new Set(drafts.map((d) => d.at + "|" + d.selector));
-      const elsewhere = ((saved && saved.drafts) || []).filter((d) => d.at && d.at !== here() && !mine.has(d.at + "|" + d.selector));
-      localStorage.setItem(STORE_KEY, JSON.stringify({ drafts: [...drafts, ...elsewhere], note: state.note, sent: [...state.sentBatches] }));
+      for (const t of state.tweaks.values()) if (t.at) heldScreens.add(t.at);
+      heldScreens.add(here());
+      const elsewhere = ((saved && saved.drafts) || []).filter((d) => d.at && !heldScreens.has(d.at) && !mine.has(d.at + "|" + d.selector));
+      const pending = (state.restoring || []).filter((d) => !mine.has((d.at || here()) + "|" + d.selector));
+      localStorage.setItem(STORE_KEY, JSON.stringify({ drafts: [...drafts, ...pending, ...elsewhere], note: state.note, sent: [...state.sentBatches] }));
     } catch {}
   }
 
@@ -1155,7 +1164,7 @@
             // A new element: rebuild its preview where it was put.
             const t = { key: "e" + ++keyCounter, insert: d.insert, el: null };
             if (!document.querySelector(d.insert.parentSelector)) return true;
-            const tweak = { key: t.key, el: document.createElement("div"), at: d.at || here(), element: null, changes: d.changes || {}, text: null, note: d.note || "", batchId: d.batchId, sentId: d.sentId, skipped: d.skipped, insert: d.insert, props: d.props, scope: d.scope };
+            const tweak = { key: t.key, el: document.createElement("div"), at: d.at || here(), element: null, changes: d.changes || {}, text: d.text || null, note: d.note || "", batchId: d.batchId, sentId: d.sentId, skipped: d.skipped, insert: d.insert, props: d.props, component: d.component, reach: d.reach, scope: d.scope };
             state.tweaks.set(tweak.key, tweak);
             if (!placeInsert(tweak)) {
               state.tweaks.delete(tweak.key);
@@ -1163,6 +1172,7 @@
             }
             tweak.element = describe(tweak.el);
             reapply(tweak);
+            if (d.text && d.text.to !== undefined) tweak.el.textContent = d.text.to;
             return false;
           }
           const el = document.querySelector(d.selector);
@@ -1173,9 +1183,12 @@
           if (d.text && d.text.to !== undefined) el.textContent = d.text.to;
           return false;
         });
+        // Drafts not matched yet are kept by persist() meanwhile, so an early save doesn't drop them.
+        state.restoring = waiting;
         render();
         // The app may still be rendering: keep looking for a few seconds.
         if (waiting.length && ++tries < 20) setTimeout(attempt, 300);
+        else state.restoring = waiting.length ? waiting : null;
       };
       attempt();
     } catch {}
@@ -2486,8 +2499,9 @@
       if (media.some((m) => { try { return !matchMedia(m.replace(/^@media\s*/, "")).matches; } catch { return false; } })) continue;
       const sel = parts[parts.length - 1];
       let n = null;
-      try { n = el.closest(sel); } catch {}
-      if (!n && /^(:root|html)$/.test(sel.trim())) n = document.documentElement;
+      // :root, html, :host and Tailwind v4's @theme all put tokens on the document root.
+      if (/^@theme\b/.test(sel.trim()) || sel.split(",").some((p) => /^(:root|html|:host)$/.test(p.trim()))) n = document.documentElement;
+      else try { n = el.closest(sel); } catch {}
       if (!n) continue;
       let depth = 0;
       for (let x = el; x && x !== n; x = x.parentElement) depth++;
@@ -3573,6 +3587,7 @@
   })();
 
   function resetAll() {
+    state.restoring = null; // drafts never matched on this screen go too
     [...state.sentBatches.keys()].forEach(withdraw);
     [...state.tweaks.values()].forEach(revertTweak);
     state.undo = [];
@@ -3922,6 +3937,11 @@
       const modeNow = { width: null, height: null };
       // Resize one axis: snap to Fill or Hug near those sizes, else a fixed length.
       const sizeAxis = (axis, contentSize, borderSize) => {
+        if (!snaps) {
+          // Absolute or fixed: not a flex item, so just the length (no Fill/Hug, no flex properties).
+          setStyle(el, axis, contentSize + "px", true);
+          return "fixed";
+        }
         const s = snaps && snaps[axis];
         const mode = s && Math.abs(borderSize - s.fill) < 6 && s.fill > s.hug + 6 ? "fill" : s && Math.abs(borderSize - s.hug) < 6 ? "hug" : "fixed";
         if (mode !== "fixed") {
@@ -4168,7 +4188,12 @@
   function mount() {
     document.body.appendChild(host);
     restore();
-    if (STUDIO && IS_PRIMARY) attachPopup(STUDIO);
+    // In the studio the screen on show holds the panel, also when it reloads; older studios used a fixed flag.
+    let shown = IS_PRIMARY;
+    try {
+      if (STUDIO && STUDIO.__studio && STUDIO.__studio.isShown) shown = STUDIO.__studio.isShown(window.frameElement);
+    } catch {}
+    if (STUDIO && shown) attachPopup(STUDIO);
     else render();
   }
   if (document.body) mount();

@@ -247,7 +247,21 @@ async function writeOutcome($: EngineInterface, id: string, outcome: AskOutcome)
 }
 
 /** Starts the oldest waiting ask, one at a time, never alongside an apply that edits files. */
+// One start at a time, claimed before the first await: a Haiku apply and an ask (or two ticks of the
+// timer) must not both see an empty slot while the other is still taking the lock.
+let starting = false
+
 async function runAsks($: EngineInterface) {
+  if (starting) return
+  starting = true
+  try {
+    await startNextAsk($)
+  } finally {
+    starting = false
+  }
+}
+
+async function startNextAsk($: EngineInterface) {
   const current = await read($, askRun)
   if (current !== null) {
     if ((await $.clock.now()) - current.startedAt > STUCK_MS) {
@@ -454,9 +468,12 @@ async function refresh($: EngineInterface) {
   if (next !== null && (await read($, run)) === null && (asking === null || asking.kind === 'variations')) {
     const tried = await read($, attempted)
     const fresh = next.tweakIds.filter(id => !tried.includes(id) && !next.skipped.some(s => s.id === id))
-    if (fresh.length) void applyWithHaiku($, fresh)
+    if (fresh.length && !starting) {
+      starting = true
+      void applyWithHaiku($, fresh).finally(() => (starting = false))
+    }
   }
-  await runAsks($)
+  if (!starting) await runAsks($)
   const before = await read($, pending)
   if (JSON.stringify(next) === JSON.stringify(before)) return
   const isNew = next !== null && next.tweakIds.some(id => !(before?.tweakIds ?? []).includes(id))
@@ -510,6 +527,7 @@ async function applyWithHaiku($: EngineInterface, ids?: string[]): Promise<strin
   const summary = await readPending($)
   if (summary === null) return `No UI tweaks are waiting (${FILE} is empty or missing).`
   if ((await read($, run)) !== null) return 'An apply is already running; wait for it to finish.'
+  if ((await read($, askRun))?.kind === 'edit') return 'Claude is making a design change; wait for it to finish.'
   const todo = ids ?? summary.tweakIds.filter(id => !summary.skipped.some(s => s.id === id))
   if (todo.length === 0) return 'Haiku already skipped every waiting tweak; use "Send to Claude".'
   if (!(await takeLock($))) return 'Another Claude Code session is applying tweaks in this project.'
@@ -537,6 +555,7 @@ async function applyWithClaude($: EngineInterface): Promise<string> {
   const summary = await readPending($)
   if (summary === null) return `No UI tweaks are waiting (${FILE} is empty or missing).`
   if ((await read($, run)) !== null) return 'An apply is already running; wait for it to finish.'
+  if ((await read($, askRun))?.kind === 'edit') return 'Claude is making a design change; wait for it to finish.'
   const startedAt = await $.clock.now()
   await update($, run, () => ({ by: 'claude' as const, tweakIds: summary.tweakIds, startedAt }))
   // Submitted once the caller returns: a command.run hook may not submit while it holds the turn.

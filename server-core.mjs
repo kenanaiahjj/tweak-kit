@@ -512,6 +512,11 @@ export function studioPage(appPath) {
       void r;
     },
     hand: setHand,
+    // A frame's overlay asks this when it loads (also after a reload): the screen on show holds the panel.
+    isShown(frame) {
+      const f = frames.get(focusedId());
+      return !!f && f.iframe === frame;
+    },
     focus(frame) {
       const a = canvas.artboards.find((x) => frames.get(x.id) && frames.get(x.id).iframe === frame);
       if (a && selected !== a.id) select(a.id, false);

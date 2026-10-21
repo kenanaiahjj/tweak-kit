@@ -31,13 +31,18 @@ export function patchViteConfig(text) {
   if (/ui-tweak-kit/.test(text)) return { text, changed: false };
   const cjs = /module\.exports\s*=/.test(text) && !/^\s*import\s/m.test(text);
   if (cjs) return { manual: "a CommonJS config" };
+  const m = /(defineConfig\(\s*\{|export\s+default\s+\{)/.exec(text);
+  if (!m) return { manual: "no defineConfig({ ... }) or export default { ... } to add plugins to" };
+  // The config object's own `plugins`, not one nested inside it (worker, optimizeDeps, rollupOptions…).
+  const open = m.index + m[0].length;
+  const depthAt = depths(text);
+  const own = [...text.matchAll(/plugins\s*:\s*\[/g)].find((p) => p.index > open && depthAt(p.index) === depthAt(open));
   let out;
-  if (/plugins\s*:\s*\[/.test(text)) {
-    out = text.replace(/plugins\s*:\s*\[/, (m) => `${m}uiTweaks(), `);
+  if (own) {
+    const at = own.index + own[0].length;
+    out = text.slice(0, at) + "uiTweaks(), " + text.slice(at);
   } else {
-    const m = /(defineConfig\(\s*\{|export\s+default\s+\{)/.exec(text);
-    if (!m) return { manual: "no defineConfig({ ... }) or export default { ... } to add plugins to" };
-    out = text.slice(0, m.index + m[0].length) + "\n  plugins: [uiTweaks()]," + text.slice(m.index + m[0].length);
+    out = text.slice(0, open) + "\n  plugins: [uiTweaks()]," + text.slice(open);
   }
   const imports = [...out.matchAll(/^import[^;]*?from\s*["'][^"']+["'];?[^\S\n]*$/gm)];
   const line = 'import uiTweaks from "ui-tweak-kit/vite";';
@@ -47,6 +52,23 @@ export function patchViteConfig(text) {
     out = out.slice(0, at) + "\n" + line + out.slice(at);
   } else out = line + "\n" + out;
   return { text: out, changed: true };
+}
+
+// Nesting depth (brackets, braces, parentheses) at each position, skipping strings and comments.
+function depths(text) {
+  const at = new Int32Array(text.length + 1);
+  let d = 0;
+  for (let i = 0; i < text.length; i++) {
+    at[i] = d;
+    const c = text[i];
+    if (c === "/" && text[i + 1] === "/") { const e = text.indexOf("\n", i); for (let j = i; j < (e < 0 ? text.length : e); j++) at[j] = d; i = e < 0 ? text.length : e - 1; continue; }
+    if (c === "/" && text[i + 1] === "*") { const e = text.indexOf("*/", i + 2); for (let j = i; j < (e < 0 ? text.length : e + 2); j++) at[j] = d; i = e < 0 ? text.length : e + 1; continue; }
+    if (c === '"' || c === "'" || c === "`") { let j = i + 1; while (j < text.length && text[j] !== c) j += text[j] === "\\" ? 2 : 1; for (let k = i; k <= j && k < text.length; k++) at[k] = d; i = j; continue; }
+    if ("([{".includes(c)) d++;
+    else if (")]}".includes(c)) d--;
+  }
+  at[text.length] = d;
+  return (i) => at[i];
 }
 
 function run(cmd, cwd, quiet = false) {

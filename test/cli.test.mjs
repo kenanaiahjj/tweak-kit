@@ -55,3 +55,13 @@ test("JSX line numbers shifted by a prepended header are put back; correct ones 
   assert.equal(fixLineNumbers(shifted, original), `jsxDEV("div", {}, void 0, true, ${src(3, 5)}); jsxDEV("b", {}, void 0, false, ${src(4, 7)});`);
   assert.equal(fixLineNumbers(`x(${src(3, 5)})`, original), null);
 });
+
+test("init adds to the config's own plugins, not a nested worker/optimizeDeps list", () => {
+  const cfg = `import { defineConfig } from "vite";\nimport react from "@vitejs/plugin-react";\nexport default defineConfig({\n  worker: { plugins: () => [] },\n  optimizeDeps: { esbuildOptions: { plugins: [] } },\n  plugins: [react()],\n});\n`;
+  const { text } = patchViteConfig(cfg);
+  assert.match(text, /worker: \{ plugins: \(\) => \[\] \}/);
+  assert.match(text, /esbuildOptions: \{ plugins: \[\] \}/);
+  assert.match(text, /\n  plugins: \[uiTweaks\(\), react\(\)\],/);
+  const nestedOnly = patchViteConfig(`import { defineConfig } from "vite";\nexport default defineConfig({ worker: { plugins: [] } });\n`).text;
+  assert.match(nestedOnly, /defineConfig\(\{\n  plugins: \[uiTweaks\(\)\], worker: \{ plugins: \[\] \}/);
+});

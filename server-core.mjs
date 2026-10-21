@@ -4,6 +4,7 @@
 import { updateStatus } from "./update.mjs";
 import { adoptToken, createToken, scanTokens, setToken } from "./tokens.mjs";
 import { systemPage } from "./system-page.mjs";
+import { addAsk, askStatus, cancelAsk } from "./asks.mjs";
 import { promises as fs, unlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -197,7 +198,7 @@ export function studioPage(appPath) {
   .pages button:hover { background: #2c2c2c; }
   .pages button i { width: 6px; height: 6px; border-radius: 3px; background: #7b61ff; flex: none; }
   .pages .src { color: var(--dim); font-size: 10px; margin-left: auto; }
-  .pages .empty { padding: 4px 12px; color: var(--dim); }
+  .pages .pages-empty { padding: 4px 12px; color: var(--dim); }
   .viewport { position: relative; flex: 1; min-width: 0; overflow: hidden; background: var(--bg); cursor: default; }
   .viewport.panning, .viewport.hand { cursor: grab; }
   .viewport.panning { cursor: grabbing; }
@@ -223,7 +224,7 @@ export function studioPage(appPath) {
   .ab-frame { position: relative; overflow: hidden; border-radius: 10px; background: #fff; box-shadow: 0 0 0 1px var(--line), 0 12px 40px rgba(0,0,0,.45); }
   .ab.selected .ab-frame { box-shadow: 0 0 0 calc(2px * var(--iz)) var(--accent), 0 12px 40px rgba(0,0,0,.45); }
   .ab-frame iframe { display: block; width: 100%; height: 100%; border: 0; }
-  .layer { position: absolute; inset: 0; pointer-events: none; }
+  .ab-layer { position: absolute; inset: 0; pointer-events: none; }
   .fold { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; transform: translateX(-50%); background: linear-gradient(90deg, transparent, rgba(0,0,0,.18), transparent); box-shadow: 0 0 12px rgba(0,0,0,.25); }
   .grid-cols { position: absolute; inset: 0; display: flex; }
   .grid-cols div { flex: 1; background: rgba(242, 72, 34, .1); }
@@ -544,8 +545,8 @@ export function studioPage(appPath) {
   function makeFrame(a, isPrimary) {
     const el = document.createElement("div");
     el.className = "ab";
-    el.innerHTML = '<div class="ab-head"></div><div class="ab-frame"><iframe title="Artboard"></iframe><div class="layer"></div></div>';
-    const f = { el, head: el.querySelector(".ab-head"), frame: el.querySelector(".ab-frame"), iframe: el.querySelector("iframe"), layer: el.querySelector(".layer"), url: null };
+    el.innerHTML = '<div class="ab-head"></div><div class="ab-frame"><iframe title="Artboard"></iframe><div class="ab-layer"></div></div>';
+    const f = { el, head: el.querySelector(".ab-head"), frame: el.querySelector(".ab-frame"), iframe: el.querySelector("iframe"), layer: el.querySelector(".ab-layer"), url: null };
     if (isPrimary) f.iframe.dataset.primary = "1";
     world.append(el);
     return f;
@@ -687,7 +688,7 @@ export function studioPage(appPath) {
     const box = $(".pages");
     let data = { routes: [], pending: [] };
     try { data = await fetch("/__ui-tweaks/routes").then((r) => r.json()); } catch {}
-    box.innerHTML = "<h4>Add a screen for</h4>" + (data.routes.length ? data.routes.map((r) => '<button data-path="' + esc(r.path) + '">' + (data.pending.includes(r.path) ? "<i title='Has pending tweaks'></i>" : "") + "<span>" + esc(r.path) + '</span><span class="src">' + esc(r.source) + "</span></button>").join("") : '<div class="empty">No routes found.</div>');
+    box.innerHTML = "<h4>Add a screen for</h4>" + (data.routes.length ? data.routes.map((r) => '<button data-path="' + esc(r.path) + '">' + (data.pending.includes(r.path) ? "<i title='Has pending tweaks'></i>" : "") + "<span>" + esc(r.path) + '</span><span class="src">' + esc(r.source) + "</span></button>").join("") : '<div class="pages-empty">No routes found.</div>');
     for (const b of box.querySelectorAll("button[data-path]")) b.addEventListener("click", () => {
       const p = b.dataset.path;
       if (/[\\[:*]/.test(p)) return note("That route needs a value: add it, then fill it in with ✎.");
@@ -924,6 +925,7 @@ export function createTweaksHandler({ root, getVersion }) {
           pendingTweaks: pending.batches.flatMap((b) => (b.tweaks || []).map((t, i) => ({ id: t.id || `${b.id}-${i}`, skipped: t.skipped }))),
           version: getVersion ? getVersion() : null,
           update: updateStatus(),
+          asks: await askStatus(root),
         });
       }
       if (req.method === "POST" && url.pathname === `${PREFIX}/undo`) {
@@ -956,6 +958,17 @@ export function createTweaksHandler({ root, getVersion }) {
           await writePending(root, pending);
         }
         return send(res, 200, { ok: true, id: batch.id, direct: direct.applied.map((a) => a.id), queued: direct.remaining.map((t) => t.id) });
+      }
+      if (req.method === "POST" && url.pathname === `${PREFIX}/ask`) {
+        try {
+          return send(res, 200, { ok: true, ask: await addAsk(root, JSON.parse(await readBody(req))) });
+        } catch (error) {
+          return send(res, error.status || 500, { error: error.message });
+        }
+      }
+      if (req.method === "DELETE" && url.pathname.startsWith(`${PREFIX}/ask/`)) {
+        await cancelAsk(root, url.pathname.slice(`${PREFIX}/ask/`.length));
+        return send(res, 200, { ok: true });
       }
       if (req.method === "DELETE" && url.pathname.startsWith(`${PREFIX}/`)) {
         const id = url.pathname.slice(PREFIX.length + 1);

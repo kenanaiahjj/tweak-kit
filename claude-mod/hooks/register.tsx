@@ -7,6 +7,11 @@ import { lineStats, unifiedDiff } from './diff'
 // Written by the ui-tweak-kit overlay (POST /__ui-tweaks) in the project being served.
 const FILE = '.ui-tweaks/pending.json'
 const APPLIER = 'ui-tweaks:applier'
+const DESIGNER = 'ui-tweaks:designer'
+const VARIATOR = 'ui-tweaks:variations'
+// "Ask Claude" from the panel: requests in asks.json (the dev server's), outcomes in asks/<id>.json (ours).
+const ASKS = '.ui-tweaks/asks.json'
+const askResult = (id: string) => `.ui-tweaks/asks/${id}.json`
 
 const pending = atom({ plugin: 'ui-tweaks', key: 'pending' } as const, null)
 const run = atom({ plugin: 'ui-tweaks', key: 'run' } as const, null)
@@ -14,6 +19,7 @@ const attempted = atom({ plugin: 'ui-tweaks', key: 'attempted' } as const, [])
 const lastApply = atom({ plugin: 'ui-tweaks', key: 'lastApply' } as const, null)
 const dismissedApply = atom({ plugin: 'ui-tweaks', key: 'dismissedApply' } as const, null)
 const diffView = atom({ plugin: 'ui-tweaks', key: 'diffView' } as const, null)
+const askRun = atom({ plugin: 'ui-tweaks', key: 'askRun' } as const, null)
 const DIFF_PANE = 'ui-tweaks-diff'
 const LOG = '.ui-tweaks/log.json'
 
@@ -23,7 +29,7 @@ const HISTORY = '.ui-tweaks/history.json'
 const SLOTS = 10
 const STUCK_MS = 10 * 60 * 1000
 
-type HistoryEntry = { id: string; at: number; by: 'haiku' | 'direct'; count: number; slot: string; files: string[] }
+type HistoryEntry = { id: string; at: number; by: 'haiku' | 'direct' | 'claude' | 'tokens'; count: number; slot: string; files: string[] }
 type SlotFile = { id: string; files: { path: string; before: string; after: string }[] }
 
 // Each file as it was before the running Haiku apply edited it (one run at a time): the files the
@@ -46,6 +52,8 @@ type Tweak = {
   text?: { from?: string; to?: string }
   move?: { where?: string }
   remove?: boolean
+  insert?: { kind?: string }
+  props?: Record<string, { from?: unknown; to?: unknown }>
   note?: string
   skipped?: string
   element?: { classes?: string[]; tag?: string; react?: { jsxSource?: string } }
@@ -61,7 +69,7 @@ export function summarize(text: string): PendingTweaks | null {
   const all = batches.flatMap(b => (b.tweaks ?? []).map((t, i) => ({ id: tweakId(b, t, i), t })))
   if (all.length === 0) return null
   const changes = all.reduce(
-    (n, { t }) => n + Object.keys(t.changes ?? {}).length + (t.text ? 1 : 0) + (t.move ? 1 : 0) + (t.remove ? 1 : 0) + (t.note ? 1 : 0),
+    (n, { t }) => n + Object.keys(t.changes ?? {}).length + (t.text ? 1 : 0) + (t.move ? 1 : 0) + (t.remove ? 1 : 0) + (t.insert ? 1 : 0) + Object.keys(t.props ?? {}).length + (t.note ? 1 : 0),
     0,
   )
 
@@ -144,6 +152,8 @@ For each tweak, edit the source so the element renders each \`to\` value, sits w
 
 - move { where: "before"|"after", anchor, parent, order, sameList } means: in the JSX, put this element directly before/after the anchor element (anchor.react.jsxSource), inside the same parent. order lists all the siblings in their final order (self marks this one). Move the whole JSX element, including its children and any condition wrapping it. sameList: both come from one array .map(): reorder the array's items if they are literal in the source, else skip.
 - remove: true means delete this element's JSX (with its children), plus a condition that only wraps it and imports or variables left unused. One item of a .map(): remove that item from the array if it is literal in the source, else skip.
+- insert { kind, where, anchor, parent } adds new JSX: put it before/after anchor (anchor.react.jsxSource), or as the first/last child of parent when where is "start"/"end". kind "copy": a copy of the element described by insert.of (copy its JSX at of.react.jsxSource, children included). kind "component": an instance of insert.component.name, written like its existing usage at insert.component.usedAt (same import, props). kind "element": a plain insert.tag with insert.text; give it a class and add a CSS rule next to its neighbours' rules. This tweak's changes, if any, are the new element's styles: put them in that rule.
+- props { name: { from, to } } changes props of the component instance whose usage is at component.usedAt: edit those props in that JSX (add one that is missing; remove one when to is null).
 - Follow the note when it is a clear change to this element (new copy, a value); a note may be the whole tweak.
 - A change with a "state" ("hover", "active", "focus-visible"; its key is "<prop>:<state>") belongs in that state's rule, e.g. .btn:hover. Edit the one in authoredIn when it is a state rule, else add it right after the element's own rule.
 - scope { kind: "viewport", width } means: only around that screen width. Put the change in a media query that holds at that width, reusing a breakpoint the file already uses.
@@ -155,8 +165,167 @@ Skip a tweak, editing nothing for it, when: you cannot find its source; the new 
 Never edit ${FILE}. End your answer with exactly one line of JSON and nothing after it:
 {"applied":["<id>"],"skipped":[{"id":"<id>","reason":"<why>"}]}`
 
+const DESIGNER_PROMPT = `You are a product designer who writes production code. You get one design request about an element of a running web app, and where it lives in the source: react.jsxSource is the file:line of its JSX; react.components lists the components around it, nearest first, with where each is used. Make the change in the source so the app renders it.
+
+- Read the JSX and the CSS that styles it first (Grep for its classes). Follow the project's patterns: its stylesheets and class naming, its components, and its design tokens (CSS custom properties such as var(--primary)). Reuse an existing component when one fits rather than writing a new one.
+- Change only what the request needs and leave everything else as it is. Keep the code compiling: imports, types and props.
+- New UI goes where the request says, next to the selected element by default.
+- No inline styles unless the project already styles that way.
+- If the request is unclear, or needs a decision you can't make from the code, make no edits and ask.
+
+End with exactly one line of JSON and nothing after it: {"summary":"<one sentence: what changed>","needs":"<your question, only if you made no edits>"}`
+
+const VARIATIONS_PROMPT = `You are a visual designer exploring alternatives for one element of a running web app. You get its subtree with the current computed styles (each node has a "target": ":scope" is the element itself, others are selectors relative to it), the project's design tokens, the screen width, and maybe a direction from the user. Propose distinct, polished visual variations made of CSS changes only (no new elements).
+
+- Each variation is a different idea (hierarchy, density, emphasis, shape, colour), not the same idea three times, and fits the app: prefer var(--token) values that exist.
+- Change only the targets given, with standard CSS properties and valid values; at most 14 changes per variation.
+- Keep text readable (contrast) and the layout intact at the given width.
+- You may Read the source files named in the request to understand the component. Do not edit anything.
+
+Answer with exactly one line of JSON and nothing after it:
+{"variants":[{"name":"<2-4 words>","why":"<one sentence>","changes":[{"target":":scope","prop":"padding","value":"16px 20px"}]}]}`
+
+type Ask = { id: string; kind: 'edit' | 'variations'; instruction: string; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
+type AskOutcome = { status: 'running' | 'done' | 'failed'; startedAt?: number; summary?: string; needs?: string; files?: string[]; variants?: unknown[]; error?: string }
+
+/** The last line of an answer that parses as a JSON object. */
+export function lastJson(answer: string): Record<string, unknown> | null {
+  for (const line of answer.trim().split('\n').reverse()) {
+    const t = line.trim()
+    if (!t.startsWith('{')) continue
+    try {
+      return JSON.parse(t) as Record<string, unknown>
+    } catch {
+      // Not this line.
+    }
+  }
+  return null
+}
+
+/** Variants as the panel can preview them: named, with changes of a target, a property and a value. */
+export function cleanVariants(raw: unknown, max = 4): { name: string; why: string; changes: { target: string; prop: string; value: string }[] }[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map(v => {
+      const o = (v ?? {}) as { name?: unknown; why?: unknown; changes?: unknown }
+      const changes = (Array.isArray(o.changes) ? o.changes : [])
+        .map(c => c as { target?: unknown; prop?: unknown; value?: unknown })
+        .filter(c => typeof c.prop === 'string' && /^-?[a-z][a-z-]*$/.test(c.prop) && typeof c.value === 'string' && !/[;{}]/.test(c.value))
+        .map(c => ({ target: typeof c.target === 'string' && c.target.trim() ? c.target.trim() : ':scope', prop: c.prop as string, value: (c.value as string).trim() }))
+        .slice(0, 20)
+      return { name: String(o.name ?? 'Variation').slice(0, 40), why: String(o.why ?? '').slice(0, 200), changes }
+    })
+    .filter(v => v.changes.length > 0)
+    .slice(0, max)
+}
+
+export function askPrompt(ask: Ask, root: string | null): string {
+  const where = root ? `The project is ${root}; file paths are relative to it.` : ''
+  if (ask.kind === 'edit') {
+    return [`Design request: ${ask.instruction}`, `Screen: ${ask.page?.url ?? '?'}`, `Selected element: ${JSON.stringify(ask.element ?? {})}`, where].join('\n')
+  }
+  return [
+    `Propose ${ask.count ?? 3} variations.${ask.instruction ? ` Direction: ${ask.instruction}` : ''}`,
+    `Screen: ${ask.page?.url ?? '?'}`,
+    `Element: ${JSON.stringify(ask.element ?? {})}`,
+    `Subtree, tokens and width: ${JSON.stringify(ask.context ?? {})}`,
+    where,
+  ].join('\n')
+}
+
+async function readAsksFile($: EngineInterface): Promise<Ask[]> {
+  try {
+    return (JSON.parse(await $.fs.read(inProject(ASKS))) as { asks?: Ask[] }).asks ?? []
+  } catch {
+    return []
+  }
+}
+
+async function writeOutcome($: EngineInterface, id: string, outcome: AskOutcome) {
+  await $.fs.write(inProject(askResult(id)), JSON.stringify(outcome, null, 2) + '\n')
+}
+
+/** Starts the oldest waiting ask, one at a time, never alongside an apply that edits files. */
+async function runAsks($: EngineInterface) {
+  const current = await read($, askRun)
+  if (current !== null) {
+    if ((await $.clock.now()) - current.startedAt > STUCK_MS) {
+      await writeOutcome($, current.id, { status: 'failed', error: 'Took too long; try again.' })
+      if (current.kind === 'edit') await releaseLock($)
+      await update($, askRun, () => null)
+    }
+    return
+  }
+  if ((await read($, run)) !== null) return
+  let next: Ask | undefined
+  for (const a of await readAsksFile($)) {
+    if ((await $.fs.read(inProject(askResult(a.id))).catch(() => null)) === null) {
+      next = a
+      break
+    }
+  }
+  if (!next) return
+  if (next.kind === 'edit') {
+    if (!(await takeLock($))) return
+    snapshots.clear()
+    const jsx = /^(.*):\d+$/.exec(next.element?.react?.jsxSource ?? '')
+    if (jsx?.[1]) {
+      const file = inProject(jsx[1])
+      const text = await $.fs.read(file).catch(() => null)
+      if (text !== null) snapshots.set(file, text)
+    }
+  }
+  const startedAt = await $.clock.now()
+  await writeOutcome($, next.id, { status: 'running', startedAt })
+  await update($, askRun, () => ({ id: next.id, kind: next.kind, startedAt }))
+  const started = await $.agent.spawn({
+    subagentType: next.kind === 'edit' ? DESIGNER : VARIATOR,
+    model: 'sonnet',
+    description: next.kind === 'edit' ? 'Design change' : 'Design variations',
+    prompt: askPrompt(next, projectRoot),
+    ...(projectRoot ? { cwd: projectRoot } : {}),
+  })
+  if ('deny' in started) {
+    await writeOutcome($, next.id, { status: 'failed', error: `Could not start: ${String(started.deny)}` })
+    if (next.kind === 'edit') await releaseLock($)
+    await update($, askRun, () => null)
+    return
+  }
+  await update($, askRun, r => (r ? { ...r, agentId: started.agentId } : r))
+  $.ui.toast(next.kind === 'edit' ? `Claude is designing: ${next.instruction.slice(0, 60)}` : 'Claude is sketching variations…')
+}
+
+/** What the panel shows for a finished ask, from the agent's answer and the files it changed. */
+export function askOutcome(kind: Ask['kind'], answer: string, changed: string[]): AskOutcome {
+  const report = lastJson(answer)
+  if (kind === 'edit') {
+    const summary = typeof report?.summary === 'string' ? report.summary : ''
+    const needs = typeof report?.needs === 'string' && report.needs ? report.needs : undefined
+    if (changed.length) return { status: 'done', summary, files: changed }
+    return { status: 'failed', summary, ...(needs ? { needs } : { error: 'No files changed.' }) }
+  }
+  const variants = cleanVariants(report?.variants)
+  return variants.length ? { status: 'done', variants } : { status: 'failed', error: 'No usable variations came back; try again.' }
+}
+
+async function finishAsk($: EngineInterface, answer: string) {
+  const current = await read($, askRun)
+  if (current === null) return
+  let names: string[] = []
+  if (current.kind === 'edit') {
+    const files = await changedFiles($)
+    await recordApply($, files.length ? 1 : 0, files, 'claude')
+    await releaseLock($)
+    names = files.map(f => f.path.split('/').at(-1) ?? f.path)
+  }
+  const outcome = askOutcome(current.kind, answer, names)
+  await writeOutcome($, current.id, outcome)
+  if (current.kind === 'edit') $.ui.toast(outcome.status === 'done' ? `Claude changed ${names.join(', ')}` : `Claude made no change${outcome.needs ? `: ${outcome.needs}` : ''}`)
+  await update($, askRun, () => null)
+}
+
 // Repeated in each spawn, so a session whose applier was registered before these rules still follows them.
-const STRUCTURE_NOTE = ' A tweak with "move" or "remove" is in scope even with no CSS changes: move puts the JSX element (with its children) directly before/after move.anchor (anchor.react.jsxSource) in the same parent; remove deletes it. For siblings from one .map(), change the literal array or skip.'
+const STRUCTURE_NOTE = ' A tweak with "move", "remove", "insert" or "props" is in scope even with no CSS changes: move puts the JSX element (with its children) directly before/after move.anchor (anchor.react.jsxSource) in the same parent; remove deletes it; insert adds new JSX as insert describes; props edits the component usage at component.usedAt. For siblings from one .map(), change the literal array or skip.'
 
 export function claudePrompt(summary: PendingTweaks): string {
   const skippedNote = summary.skipped.length
@@ -225,7 +394,7 @@ async function appendLog($: EngineInterface, items: LogItem[]) {
   await $.fs.write(inProject(LOG), JSON.stringify({ entries: [...entries, ...items].slice(-300) }, null, 2) + '\n')
 }
 
-async function recordApply($: EngineInterface, count: number, files: SlotFile['files']) {
+async function recordApply($: EngineInterface, count: number, files: SlotFile['files'], by: HistoryEntry['by'] = 'haiku') {
   if (files.length === 0) return
   const entries = await readHistory($)
   const lastSlot = Number(/(\d+)\.json$/.exec(entries.at(-1)?.slot ?? '')?.[1] ?? -1)
@@ -233,7 +402,7 @@ async function recordApply($: EngineInterface, count: number, files: SlotFile['f
   const at = await $.clock.now()
   const id = `h${at.toString(36)}`
   await $.fs.write(inProject(slot), JSON.stringify({ id, files } satisfies SlotFile))
-  const next = [...entries.filter(e => e.slot !== slot), { id, at, by: 'haiku' as const, count, slot, files: files.map(f => f.path) }]
+  const next = [...entries.filter(e => e.slot !== slot), { id, at, by, count, slot, files: files.map(f => f.path) }]
   await $.fs.write(inProject(HISTORY), JSON.stringify({ entries: next.slice(-SLOTS) }, null, 2) + '\n')
   await syncLastApply($)
 }
@@ -280,11 +449,13 @@ async function refresh($: EngineInterface) {
     await releaseLock($)
   }
   // Send to Claude in the browser applies right away: start Haiku on tweaks it has not tried yet.
-  if (next !== null && (await read($, run)) === null) {
+  const asking = await read($, askRun)
+  if (next !== null && (await read($, run)) === null && (asking === null || asking.kind === 'variations')) {
     const tried = await read($, attempted)
     const fresh = next.tweakIds.filter(id => !tried.includes(id) && !next.skipped.some(s => s.id === id))
     if (fresh.length) void applyWithHaiku($, fresh)
   }
+  await runAsks($)
   const before = await read($, pending)
   if (JSON.stringify(next) === JSON.stringify(before)) return
   const isNew = next !== null && next.tweakIds.some(id => !(before?.tweakIds ?? []).includes(id))
@@ -474,10 +645,40 @@ async function devServer($: EngineInterface): Promise<string | null> {
   return null
 }
 
+// Copies a file before the first edit of it by the running apply or design change, so it can be undone.
+// A file the agent creates has an empty "before".
+async function snapshotFor($: EngineInterface, agentId: string | undefined, file: string, isNew: boolean) {
+  if (agentId === undefined || snapshots.has(file)) return
+  const current = await read($, run)
+  const asking = await read($, askRun)
+  const ours = (current?.by === 'haiku' && (current.agentId ?? agentId) === agentId) || (asking?.kind === 'edit' && (asking.agentId ?? agentId) === agentId)
+  if (!ours) return
+  const before = await $.fs.read(file).catch(() => null)
+  if (before !== null) snapshots.set(file, before)
+  else if (isNew) snapshots.set(file, '')
+}
+
 // Registered at start, and again the first time a reloaded copy of this module runs, so prompt changes take effect.
 let applierRegistered = false
 async function registerApplier($: EngineInterface) {
   applierRegistered = true
+  await $.agent.register({
+    name: 'designer',
+    description: 'Makes a design change asked for in the ui-tweaks panel, in the source',
+    prompt: DESIGNER_PROMPT,
+    model: 'sonnet',
+    tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
+    maxTurns: 40,
+  })
+  await $.agent.register({
+    name: 'variations',
+    description: 'Proposes visual variations of an element as CSS changes',
+    prompt: VARIATIONS_PROMPT,
+    model: 'sonnet',
+    tools: ['Read', 'Grep', 'Glob'],
+    omitClaudeMd: true,
+    maxTurns: 12,
+  })
   await $.agent.register({
     name: 'applier',
     description: 'Applies visual tweaks from the ui-tweaks overlay to source code',
@@ -494,8 +695,8 @@ export const register: Register = on => {
     await registerApplier($)
     await $.command.register({
       name: 'apply-tweaks',
-      description: 'Apply the waiting browser tweaks with Haiku ("claude": main model; "undo": revert Haiku\'s last apply)',
-      argumentHint: '[claude|undo]',
+      description: 'Apply the waiting browser tweaks with Haiku ("claude": main model; "undo": revert the last apply; "asks": run waiting Ask Claude requests)',
+      argumentHint: '[claude|undo|asks]',
     })
     $.clock.every(1500, () => void refresh($))
     await refresh($)
@@ -505,23 +706,28 @@ export const register: Register = on => {
 
   // Only this mod starts the applier; keep it out of the main model's agent list.
   on('agent.offer', { agent: APPLIER }, () => ({ isOffered: false }))
+  on('agent.offer', { agent: DESIGNER }, () => ({ isOffered: false }))
+  on('agent.offer', { agent: VARIATOR }, () => ({ isOffered: false }))
 
   on('command.run', { command: 'apply-tweaks' }, async ($, e) => {
     const arg = (e.args ?? '').trim()
     if (arg === 'undo') return { text: await undoLastApply($) }
+    if (arg === 'asks') {
+      await runAsks($)
+      const asking = await read($, askRun)
+      return { text: asking ? `Running the "Ask Claude" request ${asking.id}.` : 'No "Ask Claude" request is waiting (or an apply is running).' }
+    }
 
     return { text: arg === 'claude' ? await applyWithClaude($) : await applyWithHaiku($) }
   })
 
   // Copy each file before Haiku's first edit of it in a run, so the apply can be undone.
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
-    const current = await read($, run)
-    const isHaikus = current?.by === 'haiku' && e.agentId !== undefined && (current.agentId ?? e.agentId) === e.agentId
-    if (isHaikus && !snapshots.has(e.file_path)) {
-      const before = await $.fs.read(e.file_path).catch(() => null)
-      if (before !== null) snapshots.set(e.file_path, before)
-    }
-
+    await snapshotFor($, e.agentId, e.file_path, false)
+    return next(e)
+  })
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => {
+    await snapshotFor($, e.agentId, e.file_path, true)
     return next(e)
   })
 
@@ -529,6 +735,10 @@ export const register: Register = on => {
     const current = await read($, run)
     if (current?.by === 'haiku' && e.agentId !== undefined && e.agentId === current.agentId) {
       await finishHaiku($, 'answer' in e ? e.answer : '')
+    }
+    const asking = await read($, askRun)
+    if (asking !== null && e.agentId !== undefined && e.agentId === asking.agentId) {
+      await finishAsk($, 'answer' in e ? e.answer : '')
     }
 
     return next(e)

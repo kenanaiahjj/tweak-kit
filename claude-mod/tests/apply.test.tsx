@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { lineStats, unifiedDiff } from '../hooks/diff'
-import { parseReport, settle, summarize, verifyTweak } from '../hooks/register'
+import { askOutcome, askPrompt, cleanVariants, lastJson, parseReport, settle, summarize, verifyTweak } from '../hooks/register'
 
 const PENDING = JSON.stringify({
   version: 1,
@@ -24,6 +24,8 @@ test('/apply-tweaks takes the lock and starts the Haiku applier on the waiting t
   const files: Record<string, string> = { '.ui-tweaks/pending.json': PENDING }
   fakeFs(on, files)
   on('session.cwd', () => ({ value: '/p' }) as never)
+  on('ui.toast', () => ({ value: undefined }) as never)
+  on('turn.complete', () => ({ text: '' }))
   on('agent.spawn', ($, e) => {
     spawns.push({ subagentType: e.subagentType, model: e.model, prompt: e.prompt })
     return { model: 'haiku', agentId: 'agent-1' } as never
@@ -125,7 +127,7 @@ test("/apply-tweaks undo restores the files Haiku's last apply changed", async (
   const result = await $.command.run({ command: 'apply-tweaks', args: 'undo' } as never)
   expect(JSON.stringify(result)).toContain('styles.css restored')
   expect(files['/p/src/styles.css']).toBe('a { color: red }')
-  expect(JSON.parse(files['.ui-tweaks/history.json'] ?? '{}').entries).toEqual([])
+  expect(JSON.parse(fileAt(files, '.ui-tweaks/history.json')).entries).toEqual([])
 })
 
 test('undo refuses a file that changed after Haiku edited it', async ($, on) => {
@@ -159,3 +161,66 @@ test('line stats and unified diffs', () => {
   expect(diff.split('\n').filter(l => l.startsWith('@@'))).toEqual(['@@ -1,6 +1,6 @@', '@@ -8,3 +8,4 @@'])
   expect(diff).toContain('-c\n+C')
 })
+
+const ASKS = JSON.stringify({
+  asks: [
+    { id: 'ask1', kind: 'edit', instruction: 'Add a status pill', element: { selector: '.card', react: { jsxSource: 'src/App.tsx:4' } }, page: { url: 'http://localhost/' } },
+    { id: 'ask2', kind: 'variations', instruction: '', element: { selector: '.card' }, context: { width: 390 }, count: 3 },
+  ],
+})
+
+test('/apply-tweaks asks takes the lock, snapshots nothing extra and starts the designer on the oldest waiting ask', async ($, on) => {
+  const spawns: { model?: string; prompt: string }[] = []
+  const clock = mock.clock(on, { now: 1000 })
+  const files: Record<string, string> = { '.ui-tweaks/asks.json': ASKS, 'src/App.tsx': 'old' }
+  fakeFs(on, files)
+  on('ui.toast', () => ({ value: undefined }) as never)
+  on('agent.spawn', ($, e) => {
+    spawns.push({ model: e.model, prompt: e.prompt })
+    return { model: 'sonnet', agentId: 'design-1' } as never
+  })
+  const started = $.command.run({ command: 'apply-tweaks', args: 'asks' } as never)
+  await clock.advance(400)
+  expect(JSON.stringify(await started)).toContain('ask1')
+  expect(spawns[0]?.model).toBe('sonnet')
+  expect(spawns[0]?.prompt).toContain('Design request: Add a status pill')
+  expect(JSON.parse(fileAt(files, '.ui-tweaks/asks/ask1.json')).status).toBe('running')
+  expect(JSON.parse(fileAt(files, '.ui-tweaks/lock.json')).owner).toMatch(/^s/)
+})
+
+test('the next ask waits for the running one; a finished one is skipped', async ($, on) => {
+  const clock = mock.clock(on, { now: 1000 })
+  const files: Record<string, string> = { '.ui-tweaks/asks.json': ASKS, '.ui-tweaks/asks/ask1.json': '{"status":"done"}' }
+  fakeFs(on, files)
+  on('ui.toast', () => ({ value: undefined }) as never)
+  const prompts: string[] = []
+  on('agent.spawn', ($, e) => {
+    prompts.push(e.prompt)
+    return { model: 'sonnet', agentId: 'var-1' } as never
+  })
+  const first = $.command.run({ command: 'apply-tweaks', args: 'asks' } as never)
+  await clock.advance(400)
+  await first
+  expect(prompts.length).toBe(1)
+  expect(prompts[0]).toContain('Propose 3 variations')
+  await $.command.run({ command: 'apply-tweaks', args: 'asks' } as never)
+  expect(prompts.length).toBe(1)
+})
+
+test('ask outcomes: changed files, a question back, cleaned variants', () => {
+  expect(askOutcome('edit', 'ok\n{"summary":"Added a pill"}', ['App.tsx'])).toEqual({ status: 'done', summary: 'Added a pill', files: ['App.tsx'] })
+  expect(askOutcome('edit', '{"summary":"","needs":"Which card?"}', [])).toEqual({ status: 'failed', summary: '', needs: 'Which card?' })
+  expect(askOutcome('edit', 'nothing', [])).toEqual({ status: 'failed', summary: '', error: 'No files changed.' })
+  const v = askOutcome('variations', '{"variants":[{"name":"Bold","why":"x","changes":[{"target":":scope","prop":"padding","value":"20px"},{"prop":"color; x","value":"red"}]}]}', [])
+  expect(v.variants).toEqual([{ name: 'Bold', why: 'x', changes: [{ target: ':scope', prop: 'padding', value: '20px' }] }])
+  expect(askOutcome('variations', 'no json', []).status).toBe('failed')
+})
+
+test('answer parsing and prompts', () => {
+  expect(lastJson('text\n{"a":1}\n')).toEqual({ a: 1 })
+  expect(lastJson('{bad\nno json')).toBe(null)
+  expect(cleanVariants([{ name: 'A', changes: [] }, 'x', { name: 'B', changes: [{ prop: 'gap', value: '8px' }] }])).toEqual([{ name: 'B', why: '', changes: [{ target: ':scope', prop: 'gap', value: '8px' }] }])
+  expect(askPrompt({ id: 'a', kind: 'variations', instruction: 'calmer', count: 2 }, '/p')).toContain('Propose 2 variations. Direction: calmer')
+})
+
+const fileAt = (files: Record<string, string>, rel: string) => Object.entries(files).find(([k]) => k === rel || k.endsWith('/' + rel))?.[1] ?? '{}'

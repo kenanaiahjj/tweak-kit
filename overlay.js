@@ -395,7 +395,18 @@
       const el = (state.tweaks.get(entry.key) || entry).el;
       const tweak = tweakFor(el);
       if (tweak.batchId) withdraw(tweak.batchId);
-      if (entry.move) {
+      if (entry.inserted) {
+        const t = state.tweaks.get(entry.key);
+        if (t) {
+          revertTweak(t);
+          if (state.selected === t.el) state.selected = null;
+        }
+        continue;
+      } else if (entry.prop === undefined && entry.propsKey) {
+        tweak.props = { ...(tweak.props || {}) };
+        if (entry.before) tweak.props[entry.propsKey] = entry.before;
+        else delete tweak.props[entry.propsKey];
+      } else if (entry.move) {
         placeAt(el, entry.prevIndex);
         tweak.move = entry.before ? { ...entry.before, toIndex: entry.prevIndex } : null;
         syncMoves(el.parentElement);
@@ -533,7 +544,7 @@
   }
 
   function cleanup(tweak) {
-    if (!Object.keys(tweak.changes).length && tweak.text === null && !tweak.note && !tweak.move && !tweak.removed) state.tweaks.delete(tweak.key);
+    if (!Object.keys(tweak.changes).length && tweak.text === null && !tweak.note && !tweak.move && !tweak.removed && !tweak.insert && !(tweak.props && Object.keys(tweak.props).length)) state.tweaks.delete(tweak.key);
   }
 
   function revertTweak(tweak) {
@@ -542,6 +553,7 @@
     for (const [key, change] of changes) clearChange(tweak.el, key, change);
     if (tweak.text) tweak.el.textContent = tweak.text.from;
     if (tweak.removed) clearRemoved(tweak);
+    if (tweak.insert) tweak.el.remove();
     if (tweak.move && tweak.el.parentElement) {
       tweak.move = null;
       layoutMoves(tweak.el.parentElement);
@@ -704,6 +716,13 @@
     if (!el || !el.parentElement || el === document.body) return;
     const tweak = tweakFor(el);
     if (tweak.removed) return;
+    if (tweak.insert) {
+      // Not in the source yet: removing it just drops the preview.
+      const parent = el.parentElement;
+      revertTweak(tweak);
+      persist();
+      return select(parent !== document.body ? parent : null);
+    }
     const flow = flowSiblings(el);
     const next = flow[flow.indexOf(el) + 1] || flow[flow.indexOf(el) - 1] || el.parentElement;
     recordUndo({ el, key: tweak.key, removal: true });
@@ -713,6 +732,167 @@
     persist();
     toast("Removed (⌘Z to undo). Claude deletes it from the source on Send.");
     select(next !== document.body ? next : null);
+  }
+
+  // ---------- inserting new elements ----------
+  // A new element is a preview node of ours (React doesn't know it) until Haiku writes its JSX.
+  // It remembers its parent and index, so it can be put back after a reload or a re-render.
+  const BASICS = {
+    frame: { label: "Frame", tag: "div", text: "", style: "display:flex;flex-direction:column;gap:8px;padding:16px;min-height:48px;border:1px dashed #0d99ff;border-radius:8px" },
+    text: { label: "Text", tag: "p", text: "New text", style: "margin:0" },
+    button: { label: "Button", tag: "button", text: "Button", style: "padding:10px 16px;border-radius:8px" },
+    image: { label: "Image", tag: "div", text: "Image", style: "width:160px;height:100px;border-radius:8px;background:#d9d9d9;color:#666;display:grid;place-items:center;font:12px system-ui" },
+  };
+  let insertCounter = 0;
+
+  function insertWhere(node) {
+    const list = kids(node.parentElement);
+    const i = list.indexOf(node);
+    if (i > 0) return { where: "after", anchor: describe(list[i - 1]) };
+    if (list[i + 1]) return { where: "before", anchor: describe(list[i + 1]) };
+    return { where: "end", anchor: null };
+  }
+
+  // Places a new element as a preview and records it as a tweak. `spec` is { kind, ... } (see insertSpec).
+  function insertNode(node, parent, index, spec) {
+    node.dataset.uitInsert = String(++insertCounter);
+    const others = kids(parent);
+    parent.insertBefore(node, others[index] || (others.length ? others[others.length - 1].nextSibling : null));
+    const tweak = tweakFor(node);
+    tweak.insert = { ...spec, html: node.outerHTML, parentSelector: describe(parent).selector, index: childIndex(node) };
+    recordUndo({ el: node, key: tweak.key, inserted: true });
+    persist();
+    select(node);
+    return node;
+  }
+
+  function placeInsert(tweak) {
+    const ins = tweak.insert;
+    const parent = document.querySelector(ins.parentSelector);
+    if (!parent) return false;
+    const tpl = document.createElement("template");
+    tpl.innerHTML = ins.html;
+    const node = tpl.content.firstElementChild;
+    if (!node) return false;
+    const others = kids(parent);
+    parent.insertBefore(node, others[ins.index] || (others.length ? others[others.length - 1].nextSibling : null));
+    if (state.selected === tweak.el) state.selected = node;
+    tweak.el = node;
+    elementKeys.set(node, tweak.key);
+    return true;
+  }
+
+  function duplicateElement(el) {
+    if (!el || !el.parentElement || el === document.body) return;
+    const copy = el.cloneNode(true);
+    copy.removeAttribute("data-ui-tweak-force");
+    insertNode(copy, el.parentElement, childIndex(el) + 1, { kind: "copy", of: describe(el) });
+    toast("Duplicated (⌘Z to undo). Claude writes the copy into the source on Send.");
+  }
+
+  // The components on this page: each instance's root element, the name and where it's used.
+  function pageComponents() {
+    const found = new Map();
+    for (const n of document.body.querySelectorAll("*")) {
+      if (n === host || host.contains(n) || n.dataset.uitInsert) continue;
+      const key = Object.keys(n).find((k) => k.startsWith("__reactFiber$"));
+      if (!key) continue;
+      const fiber = n[key];
+      const owner = fiber.return;
+      const type = owner && owner.type;
+      if (!type || typeof type === "string" || owner.child !== fiber) continue; // only an instance's first element
+      const name = type.displayName || type.name || (type.render && (type.render.displayName || type.render.name));
+      if (!name || /^[a-z_]/.test(name)) continue;
+      const usedAt = owner._debugSource ? `${relativePath(owner._debugSource.fileName)}:${owner._debugSource.lineNumber}` : null;
+      const entry = found.get(name) || { name, usedAt, sample: n, count: 0 };
+      entry.count++;
+      found.set(name, entry);
+      if (found.size > 60) break;
+    }
+    return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  // Click-to-place: pick something in the Insert list, then click on the page where it goes.
+  function armInsert(item) {
+    state.placing = item;
+    state.isPicking = true;
+    toast(`Click where the ${item.label} goes (Shift: one level up). Esc cancels.`);
+    render();
+  }
+  // Where a click would put it, as in Figma: over a container's empty space (its padding or the gaps
+  // between children) it goes inside, between the children nearest the pointer; over an element it goes
+  // before or after that element, in its parent.
+  function dropTarget(t, x, y, beside = false) {
+    if (!t || t === document.body || t === document.documentElement || t === host) return null;
+    const shown = kids(t).filter((c) => c.getClientRects().length > 0);
+    const overChild = shown.some((c) => {
+      const r = c.getBoundingClientRect();
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    });
+    const cs = getComputedStyle(t);
+    const canHold = !/^(P|SPAN|A|BUTTON|LABEL|H[1-6]|IMG|SVG|INPUT|TEXTAREA|SELECT)$/i.test(t.tagName) && !/^inline/.test(cs.display);
+    if (!beside && canHold && !overChild && (shown.length > 0 || /flex|grid|block/.test(cs.display))) {
+      const row = cs.display.includes("flex") && cs.flexDirection.startsWith("row");
+      let index = kids(t).length;
+      for (const c of shown) {
+        const r = c.getBoundingClientRect();
+        if (row ? x < r.left + r.width / 2 : y < r.top + r.height / 2) {
+          index = kids(t).indexOf(c);
+          break;
+        }
+      }
+      return { parent: t, index, row };
+    }
+    const parent = t.parentElement;
+    if (!parent || parent === document.documentElement) return null;
+    const r = t.getBoundingClientRect();
+    const pcs = getComputedStyle(parent);
+    const row = pcs.display.includes("flex") && pcs.flexDirection.startsWith("row");
+    const after = row ? x > r.left + r.width / 2 : y > r.top + r.height / 2;
+    return { parent, index: kids(parent).indexOf(t) + (after ? 1 : 0), row };
+  }
+  // Shift goes one level up: drop beside the hovered element's parent (between cards, say).
+  // With Shift: the nearest ancestor that is one of a repeated set (cards in a list, rows in a menu),
+  // so the new element goes between those; else simply the parent.
+  function placingOver(t, e) {
+    if (!e.shiftKey || !t) return t;
+    const sig = (n) => n.tagName + "." + (n.classList[0] || "");
+    for (let n = t; n && n.parentElement && n.parentElement !== document.body; n = n.parentElement) {
+      const same = kids(n.parentElement).filter((c) => c !== n && sig(c) === sig(n) && c.getClientRects().length > 0);
+      if (same.length) return n;
+    }
+    return t.parentElement && t.parentElement !== document.body ? t.parentElement : t;
+  }
+  function showDrop(target) {
+    const line = $(".drop-line");
+    if (!target) return line.classList.add("hidden");
+    const list = kids(target.parent);
+    const before = list[target.index], prev = list[target.index - 1];
+    const pr = target.parent.getBoundingClientRect();
+    if (target.row) {
+      const x = before ? before.getBoundingClientRect().left - 2 : prev ? prev.getBoundingClientRect().right + 2 : pr.left + 4;
+      place(line, { left: x - 1, top: pr.top + 2, width: 3, height: Math.max(12, pr.height - 4) });
+    } else {
+      const y = before ? before.getBoundingClientRect().top - 2 : prev ? prev.getBoundingClientRect().bottom + 2 : pr.top + 4;
+      place(line, { left: pr.left + 2, top: y - 1, width: Math.max(12, pr.width - 4), height: 3 });
+    }
+  }
+  function placeAt_(target) {
+    const item = state.placing;
+    state.placing = null;
+    $(".drop-line").classList.add("hidden");
+    if (!target || !item) return render();
+    let node;
+    if (item.component) {
+      node = item.component.sample.cloneNode(true);
+      insertNode(node, target.parent, target.index, { kind: "component", component: { name: item.component.name, usedAt: item.component.usedAt } });
+    } else {
+      const b = BASICS[item.basic];
+      node = document.createElement(b.tag);
+      node.textContent = b.text;
+      node.setAttribute("style", b.style);
+      insertNode(node, target.parent, target.index, { kind: "element", tag: b.tag, text: b.text, basic: item.basic, style: b.style });
+    }
   }
 
   // React may remount nodes; find them again by selector and re-apply the preview.
@@ -733,7 +913,8 @@
     // look it up again with them put back for a moment.
     const parents = new Set(all.filter((t) => t.move && t.el.isConnected).map((t) => t.el.parentElement));
     const recheck = [];
-    for (const tweak of lost.filter((t) => !t.el.isConnected)) {
+    for (const tweak of lost.filter((t) => t.insert && (!t.at || t.at === here()))) placeInsert(tweak);
+    for (const tweak of lost.filter((t) => !t.el.isConnected && !t.insert)) {
       const again = document.querySelector(tweak.element.selector);
       if (!again) continue; // not on the page now: try again later, without touching anything
       if ([...parents].some((p) => p.contains(again))) recheck.push(tweak);
@@ -758,6 +939,7 @@
       for (const [key, change] of Object.entries(t.changes)) clearChange(t.el, key, change);
       if (t.text) t.el.textContent = t.text.from;
       if (t.removed) clearRemoved(t);
+      if (t.insert) t.el.remove();
       if (t.move && t.el.parentElement) layoutMoves(t.el.parentElement, { original: true });
     }
     state.tweaks.clear();
@@ -779,6 +961,7 @@
       }
       if (t.text) t.el.textContent = on ? t.text.from : t.text.to;
       if (t.removed) on ? clearRemoved(t) : applyRemoved(t);
+      if (t.insert) t.el.hidden = on;
       if (t.move && t.el.parentElement) layoutMoves(t.el.parentElement, { original: on });
     }
     updateStateSheet();
@@ -832,6 +1015,9 @@
         note: t.note,
         move: t.move || undefined,
         removed: t.removed || undefined,
+        insert: t.insert || undefined,
+        props: t.props && Object.keys(t.props).length ? t.props : undefined,
+        component: t.component || undefined,
         scope: t.scope,
         batchId: t.batchId,
         sentId: t.sentId,
@@ -855,10 +1041,24 @@
       let tries = 0;
       const attempt = () => {
         waiting = waiting.filter((d) => {
+          if (d.insert) {
+            // A new element: rebuild its preview where it was put.
+            const t = { key: "e" + ++keyCounter, insert: d.insert, el: null };
+            if (!document.querySelector(d.insert.parentSelector)) return true;
+            const tweak = { key: t.key, el: document.createElement("div"), at: d.at || here(), element: null, changes: d.changes || {}, text: null, note: d.note || "", batchId: d.batchId, sentId: d.sentId, skipped: d.skipped, insert: d.insert, props: d.props, scope: d.scope };
+            state.tweaks.set(tweak.key, tweak);
+            if (!placeInsert(tweak)) {
+              state.tweaks.delete(tweak.key);
+              return true;
+            }
+            tweak.element = describe(tweak.el);
+            reapply(tweak);
+            return false;
+          }
           const el = document.querySelector(d.selector);
           if (!el || !sameSource(el, d.jsx)) return true;
           const tweak = tweakFor(el);
-          Object.assign(tweak, { at: d.at || here(), changes: d.changes, text: d.text, note: d.note, move: d.move || null, removed: !!d.removed, scope: d.scope, batchId: d.batchId, sentId: d.sentId, skipped: d.skipped });
+          Object.assign(tweak, { at: d.at || here(), changes: d.changes, text: d.text, note: d.note, move: d.move || null, removed: !!d.removed, props: d.props, component: d.component, scope: d.scope, batchId: d.batchId, sentId: d.sentId, skipped: d.skipped });
           reapply(tweak);
           if (d.text && d.text.to !== undefined) el.textContent = d.text.to;
           return false;
@@ -892,7 +1092,8 @@
     .panel { position: fixed; top: 12px; right: 12px; bottom: 12px; width: 272px; pointer-events: auto; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 40px rgba(0,0,0,.45); display: flex; flex-direction: column; font-size: 11px; overflow: hidden; }
     .panel.left { right: auto; left: 12px; }
     .bar { display: flex; align-items: center; gap: 4px; padding: 8px; border-bottom: 1px solid var(--line); }
-    .bar .title { font-weight: 600; font-size: 12px; margin-right: auto; padding-left: 4px; }
+    .bar .title { font-weight: 600; font-size: 12px; margin-right: auto; padding-left: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .bar button { flex: none; white-space: nowrap; padding: 0 6px; }
     button.icon, button.btn { background: transparent; border: 1px solid transparent; color: var(--text); border-radius: 5px; cursor: pointer; font-size: 11px; height: 26px; padding: 0 8px; }
     button.icon:hover, button.btn:hover { background: var(--bg2); }
     button.icon.on { background: var(--accent); color: #fff; }
@@ -1019,6 +1220,37 @@
     .layer-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
     .layer-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
     .layer-row.dragging { opacity: .4; }
+    .ask-box textarea { min-height: 44px; }
+    .ask-actions { display: flex; gap: 4px; margin-top: 6px; }
+    .ask-actions button { flex: 1; height: 26px; border-radius: 5px; border: 1px solid var(--line); background: var(--bg2); color: var(--text); cursor: pointer; font-size: 11px; }
+    .ask-actions button.go { background: var(--accent2); border-color: transparent; color: #fff; font-weight: 600; }
+    .ask-actions button:disabled { opacity: .45; cursor: default; }
+    .ask-item { margin-top: 8px; padding: 7px 8px; border-radius: 6px; background: var(--bg2); }
+    .ask-top { display: flex; gap: 6px; align-items: flex-start; }
+    .ask-what { flex: 1; min-width: 0; line-height: 1.35; word-break: break-word; }
+    .ask-state { font-size: 9.5px; padding: 1px 6px; border-radius: 8px; background: #3a3a3a; color: var(--dim); white-space: nowrap; }
+    .ask-state.running { background: #3d2f66; color: #c7b8ff; }
+    .ask-state.done { background: #163d2a; color: #6fe0a0; }
+    .ask-state.failed { background: #4a2a12; color: #ffc46b; }
+    .ask-x { background: transparent; border: 0; color: var(--dim); cursor: pointer; padding: 0 2px; font-size: 11px; }
+    .ask-sub { color: var(--dim); font-size: 10.5px; margin-top: 4px; line-height: 1.4; word-break: break-word; }
+    .variant { display: flex; gap: 6px; align-items: center; margin-top: 5px; padding: 5px 6px; border-radius: 5px; border: 1px solid var(--line); cursor: pointer; }
+    .variant:hover, .variant.on { border-color: var(--accent2); background: rgba(123,97,255,.12); }
+    .variant .v-text { flex: 1; min-width: 0; }
+    .variant .v-text b { display: block; font-size: 11px; }
+    .variant .v-text span { color: var(--dim); font-size: 10px; }
+    .variant button { height: 22px; padding: 0 8px; border-radius: 4px; border: 0; background: var(--accent2); color: #fff; cursor: pointer; font-size: 10.5px; }
+    .ins-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+    .ins-grid button, .ins-list button { background: var(--bg2); border: 1px solid transparent; border-radius: 5px; color: var(--text); cursor: pointer; font-size: 10.5px; height: 30px; }
+    .ins-grid button:hover, .ins-list button:hover, .ins-list button.on, .ins-grid button.on { border-color: var(--accent); }
+    .ins-list { display: flex; flex-direction: column; gap: 3px; max-height: 200px; overflow-y: auto; }
+    .ins-list button { display: flex; justify-content: space-between; align-items: center; padding: 0 8px; text-align: left; height: 26px; }
+    .ins-list button span { color: var(--dim); font-size: 10px; }
+    .prop-row { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 6px; align-items: center; margin-top: 4px; }
+    .prop-row > span { color: var(--dim); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .prop-row input { width: 100%; height: 26px; background: var(--bg2); border: 1px solid transparent; border-radius: 5px; color: var(--text); font-size: 11px; padding: 0 6px; outline: none; }
+    .prop-row input:focus { border-color: var(--accent); }
+    .prop-row.changed > span { color: var(--accent2); }
     .handle { position: fixed; width: 8px; height: 8px; margin: -4px 0 0 -4px; background: #fff; border: 1px solid var(--accent); border-radius: 1px; pointer-events: auto; z-index: 1; }
     .handle[data-dir=n], .handle[data-dir=s] { cursor: ns-resize; }
     .handle[data-dir=e], .handle[data-dir=w] { cursor: ew-resize; }
@@ -1240,9 +1472,13 @@
 
   // CSS variables declared on :root / html, split into colors and lengths.
   let tokenCache = null, tokenCacheKey = "";
-  function designTokens() {
+  // Tokens declared anywhere (:root, a theme class, a component), with the values they have at `el`:
+  // themes often set them on an app wrapper rather than :root.
+  let tokenNames = null, tokenNamesKey = "";
+  function designTokens(el = state.selected && state.selected.isConnected ? state.selected : document.documentElement) {
     const cacheKey = [...document.styleSheets].map((s) => (s.ownerNode && s.ownerNode.dataset && s.ownerNode.dataset.viteDevId) || s.href || "").join("|") + document.styleSheets.length;
-    if (tokenCache && cacheKey === tokenCacheKey) return tokenCache;
+    if (tokenCache && cacheKey === tokenCacheKey && tokenCache.el === el) return tokenCache;
+    if (tokenNames && tokenNamesKey === cacheKey) return resolveTokens(el, cacheKey);
     const names = new Set();
     for (const sheet of document.styleSheets) {
       if (sheet.ownerNode && sheet.ownerNode.id === STATE_SHEET_ID) continue;
@@ -1254,12 +1490,15 @@
       }
       const all = [];
       collectRules(rules, sheet, [], all);
-      for (const { rule } of all) {
-        if (!rule.selectorText.split(",").some((p) => /^(:root|html)$/.test(p.trim()))) continue;
-        for (let i = 0; i < rule.style.length; i++) if (rule.style[i].startsWith("--")) names.add(rule.style[i]);
-      }
+      for (const { rule } of all) for (let i = 0; i < rule.style.length; i++) if (rule.style[i].startsWith("--")) names.add(rule.style[i]);
     }
-    const root = getComputedStyle(document.documentElement);
+    tokenNames = names;
+    tokenNamesKey = cacheKey;
+    return resolveTokens(el, cacheKey);
+  }
+  function resolveTokens(el, cacheKey) {
+    const names = tokenNames;
+    const root = getComputedStyle(el);
     const colors = [], lengths = [];
     for (const name of names) {
       const value = root.getPropertyValue(name).trim();
@@ -1267,7 +1506,7 @@
       if (/^-?[\d.]+(px|rem|em)$/.test(value)) lengths.push({ name, value });
       else if (!/^(inherit|initial|unset|currentcolor|none)$/i.test(value) && CSS.supports("color", value)) colors.push({ name, value });
     }
-    tokenCache = { colors: colors.slice(0, 80), lengths: lengths.slice(0, 80) };
+    tokenCache = { el, colors: colors.slice(0, 80), lengths: lengths.slice(0, 80) };
     tokenCacheKey = cacheKey;
     return tokenCache;
   }
@@ -1756,13 +1995,18 @@
     if (axis === "width" && !pFlex && !(pcs && pcs.display.includes("grid")) && /^(block|flex|grid|table|list-item)$/.test(cs.display) && (!authored || authored === "auto")) return "fill";
     return "hug";
   }
-  function setSizeMode(el, axis, mode) {
+  function setSizeMode(el, axis, mode, { quiet = false, size } = {}) {
     const { pFlex, main } = sizeContext(el, axis);
-    const now = Math.round(el.getBoundingClientRect()[axis]) + "px";
+    const now = Math.round(size ?? el.getBoundingClientRect()[axis]) + "px";
     const grow = parseFloat(computed(el, "flex-grow")) > 0;
     if (mode === "fixed") {
       setStyle(el, axis, now, true);
-      if (pFlex && main) { if (grow) setStyle(el, "flex-grow", "0", true); setStyle(el, "flex-shrink", "0", true); }
+      if (pFlex && main) {
+        // A fixed size only holds once the element stops growing into the free space.
+        if (grow) setStyle(el, "flex-grow", "0", true);
+        if (computed(el, "flex-basis") !== "auto") setStyle(el, "flex-basis", "auto", true);
+        setStyle(el, "flex-shrink", "0", true);
+      }
       if (pFlex && !main && computed(el, "align-self") === "stretch") setStyle(el, "align-self", "auto", true);
     } else if (mode === "hug") {
       if (pFlex && main) {
@@ -1783,7 +2027,27 @@
         setStyle(el, "align-self", "stretch", true);
       } else setStyle(el, axis, "100%", true);
     }
-    render();
+    if (!quiet) render();
+  }
+
+  // The size an element would have as Hug and as Fill, measured by trying each for a moment.
+  function measureModes(el, axis) {
+    const props = [axis, "flex-grow", "flex-basis", "flex-shrink", "align-self", `min-${axis}`];
+    const saved = props.map((p) => [p, el.style.getPropertyValue(p), el.style.getPropertyPriority(p)]);
+    const restore = () => saved.forEach(([p, v, pr]) => (v ? el.style.setProperty(p, v, pr) : el.style.removeProperty(p)));
+    const { pFlex, main } = sizeContext(el, axis);
+    const set = (p, v) => el.style.setProperty(p, v, "important");
+    if (pFlex && main) { set("flex-grow", "0"); set("flex-basis", "auto"); set(axis, "auto"); }
+    else if (pFlex) { set("align-self", "flex-start"); set(axis, "auto"); }
+    else set(axis, axis === "width" ? "fit-content" : "auto");
+    const hug = el.getBoundingClientRect()[axis];
+    restore();
+    if (pFlex && main) { set("flex-grow", "1"); set("flex-basis", "0px"); set(`min-${axis}`, "0px"); }
+    else if (pFlex) { set("align-self", "stretch"); set(axis, "auto"); }
+    else set(axis, "100%");
+    const fill = el.getBoundingClientRect()[axis];
+    restore();
+    return { hug, fill };
   }
   function sizeControl(el, axis, label) {
     const box = document.createElement("div");
@@ -2012,6 +2276,255 @@
     nudgeTimer = setTimeout(renderPanel, 150);
   }
 
+  // ---------- Insert ----------
+  function insertSection() {
+    const basics = document.createElement("div");
+    basics.className = "ins-grid";
+    for (const [key, b] of Object.entries(BASICS)) {
+      const btn = Object.assign(document.createElement("button"), { textContent: b.label, title: `Insert a ${b.label.toLowerCase()}: then click where it goes` });
+      if (state.placing && state.placing.basic === key) btn.classList.add("on");
+      btn.addEventListener("click", () => armInsert({ label: b.label.toLowerCase(), basic: key }));
+      basics.append(btn);
+    }
+    const list = document.createElement("div");
+    list.className = "ins-list";
+    const comps = pageComponents();
+    for (const c of comps) {
+      const btn = document.createElement("button");
+      btn.title = `Insert a <${c.name}> like the one at ${c.usedAt || "?"}: then click where it goes`;
+      btn.append(Object.assign(document.createElement("b"), { textContent: c.name }), Object.assign(document.createElement("span"), { textContent: c.count > 1 ? `×${c.count}` : "" }));
+      if (state.placing && state.placing.component && state.placing.component.name === c.name) btn.classList.add("on");
+      btn.addEventListener("click", () => armInsert({ label: c.name, component: c }));
+      list.append(btn);
+    }
+    const hint = lbl(state.placing ? `Click on the page where the ${state.placing.label} goes. Over empty space it goes inside; over an element, beside it. Shift: one level up. Esc cancels.` : "Pick one, then click where it goes on the page");
+    return section("Insert", hint, basics, lbl(comps.length ? "Components on this page" : "No React components found on this page"), list);
+  }
+
+  // ---------- Component props ----------
+  function componentInstance(el) {
+    const key = Object.keys(el).find((k) => k.startsWith("__reactFiber$"));
+    const fiber = key && el[key];
+    const owner = fiber && fiber.return;
+    const type = owner && owner.type;
+    if (!type || typeof type === "string" || owner.child !== fiber) return null;
+    const name = type.displayName || type.name || (type.render && (type.render.displayName || type.render.name));
+    if (!name || /^[a-z_]/.test(name)) return null;
+    const usedAt = owner._debugSource ? `${relativePath(owner._debugSource.fileName)}:${owner._debugSource.lineNumber}` : null;
+    return { name, usedAt, props: owner.memoizedProps || {} };
+  }
+
+  function setProp(el, inst, name, from, to) {
+    const tweak = tweakFor(el);
+    recordUndo({ el, key: tweak.key, propsKey: name, before: tweak.props && tweak.props[name] ? { ...tweak.props[name] } : null });
+    if (tweak.batchId) withdraw(tweak.batchId);
+    tweak.props = { ...(tweak.props || {}) };
+    const original = tweak.props[name] ? tweak.props[name].from : from;
+    if (to === original) delete tweak.props[name];
+    else tweak.props[name] = { from: original, to };
+    tweak.component = { name: inst.name, usedAt: inst.usedAt };
+    cleanup(tweak);
+    persist();
+    render();
+  }
+
+  function componentSection(el) {
+    const inst = componentInstance(el);
+    if (!inst) return null;
+    const tweak = state.tweaks.get(keyOf(el));
+    const rows = [];
+    for (const [name, raw] of Object.entries(inst.props)) {
+      if (rows.length >= 14 || name === "key" || name === "ref") continue;
+      const value = tweak && tweak.props && tweak.props[name] ? tweak.props[name].to : raw;
+      if (!["string", "number", "boolean"].includes(typeof raw)) continue;
+      const row = document.createElement("div");
+      row.className = "prop-row" + (tweak && tweak.props && tweak.props[name] ? " changed" : "");
+      row.append(Object.assign(document.createElement("span"), { textContent: name, title: name }));
+      if (typeof raw === "boolean") {
+        const seg = document.createElement("div");
+        seg.className = "seg";
+        for (const v of [true, false]) {
+          const b = Object.assign(document.createElement("button"), { textContent: String(v) });
+          if (value === v) b.classList.add("on");
+          b.addEventListener("click", () => setProp(el, inst, name, raw, v));
+          seg.append(b);
+        }
+        row.append(seg);
+      } else {
+        const input = Object.assign(document.createElement("input"), { value: String(value), spellcheck: false });
+        input.addEventListener("keydown", (e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") input.blur();
+        });
+        input.addEventListener("change", () => setProp(el, inst, name, raw, typeof raw === "number" && input.value.trim() !== "" && !isNaN(+input.value) ? +input.value : input.value));
+        row.append(input);
+      }
+      rows.push(row);
+    }
+    const sub = lbl(inst.usedAt ? `Used at ${inst.usedAt}. Prop changes apply when you send.` : "Prop changes apply when you send.");
+    return section(`Component · ${inst.name}`, sub, ...(rows.length ? rows : [lbl("No simple props to edit.")]));
+  }
+
+  // ---------- Ask Claude ----------
+  // The element's subtree with the styles that shape it, for the variations agent.
+  const CONTEXT_PROPS = ["display", "flex-direction", "gap", "justify-content", "align-items", "padding", "margin", "width", "height", "font-family", "font-size", "font-weight", "line-height", "letter-spacing", "color", "background-color", "background-image", "border", "border-radius", "box-shadow", "opacity", "text-align"];
+  function subtreeContext(el) {
+    const nodes = [];
+    const walk = (n, target, depth) => {
+      if (nodes.length >= 24 || n === host) return;
+      const cs = getComputedStyle(n);
+      const styles = {};
+      for (const p of CONTEXT_PROPS) {
+        const v = cs.getPropertyValue(p).trim();
+        if (v && !/^(normal|none|auto|0px|rgba\(0, 0, 0, 0\)|0px none.*|static)$/.test(v)) styles[p] = v.length > 120 ? v.slice(0, 117) + "..." : v;
+      }
+      const own = [...n.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent.trim()).join(" ").trim();
+      nodes.push({ target, tag: n.tagName.toLowerCase(), classes: [...n.classList].slice(0, 4), text: own.slice(0, 40) || undefined, styles });
+      if (depth >= 3) return;
+      [...n.children].forEach((c, i) => c.getClientRects().length && walk(c, `${target} > :nth-child(${i + 1})`, depth + 1));
+    };
+    walk(el, ":scope", 0);
+    const t = designTokens();
+    const jsx = describe(el).react;
+    return {
+      width: innerWidth,
+      nodes,
+      tokens: [...t.colors.slice(0, 40), ...t.lengths.slice(0, 30)].map((x) => `${x.name}: ${x.value}`),
+      files: jsx && jsx.jsxSource ? [jsx.jsxSource.replace(/:\d+$/, "")] : [],
+    };
+  }
+
+  async function ask(kind, el, instruction) {
+    try {
+      const body = { kind, instruction, element: el ? describe(el) : null, page: { url: here(), path: location.pathname }, context: kind === "variations" && el ? subtreeContext(el) : null, count: 3 };
+      const res = await fetch(API + "/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error || res.statusText);
+      state.asks = [...(state.asks || []), { id: out.ask.id, kind, instruction, status: "waiting", page: here(), selector: body.element && body.element.selector }];
+      if (kind === "edit") state.askDraft = "";
+      toast(kind === "edit" ? "Sent to Claude. It edits the code in the background." : "Claude is sketching variations…");
+      render();
+    } catch (error) {
+      toast("Couldn't reach the tweaks server (" + error.message + ")");
+    }
+  }
+
+  function askSection(el) {
+    const box = document.createElement("div");
+    box.className = "ask-box";
+    const input = document.createElement("textarea");
+    input.placeholder = el ? "Ask Claude to change this, e.g. \"make it a card with an avatar and a status pill\"" : "Ask Claude to change this screen, e.g. \"add a notifications row under Settings\"";
+    input.value = state.askDraft || "";
+    input.addEventListener("input", () => (state.askDraft = input.value));
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && input.value.trim()) ask("edit", el, input.value.trim());
+    });
+    const actions = document.createElement("div");
+    actions.className = "ask-actions";
+    const go = Object.assign(document.createElement("button"), { className: "go", textContent: "Do it", title: "Claude edits the code (⌘Enter). Undo with Undo apply" });
+    go.addEventListener("click", () => input.value.trim() ? ask("edit", el, input.value.trim()) : toast("Say what to change first"));
+    const vary = Object.assign(document.createElement("button"), { textContent: "3 variations", title: "Claude proposes three looks for this element (styles only); preview them and pick one. The text above, if any, sets the direction" });
+    vary.disabled = !el;
+    vary.addEventListener("click", () => el && ask("variations", el, input.value.trim()));
+    actions.append(go, vary);
+    const list = document.createElement("div");
+    list.className = "ask-list";
+    box.append(input, actions, list);
+    renderAskList(list);
+    return section("Ask Claude", box);
+  }
+
+  // Previewing a variation: its styles go on as inline styles, which come off again when it's closed.
+  function previewVariant(a, v) {
+    clearVariantPreview();
+    const root = a.selector && document.querySelector(a.selector);
+    if (!root) return toast("That element isn't on this screen any more");
+    const undo = [];
+    for (const c of v.changes) {
+      let node = null;
+      try { node = c.target === ":scope" ? root : root.querySelector(c.target); } catch {}
+      if (!node) continue;
+      undo.push([node, c.prop, node.style.getPropertyValue(c.prop), node.style.getPropertyPriority(c.prop)]);
+      node.style.setProperty(c.prop, c.value, "important");
+    }
+    state.variantPreview = { id: a.id, name: v.name, undo };
+  }
+  function clearVariantPreview() {
+    const p = state.variantPreview;
+    if (!p) return;
+    for (const [node, prop, value, priority] of p.undo.reverse()) value ? node.style.setProperty(prop, value, priority) : node.style.removeProperty(prop);
+    state.variantPreview = null;
+  }
+  // Using a variation turns its styles into ordinary tweaks (one undo), ready to send.
+  function useVariant(a, v) {
+    clearVariantPreview();
+    const root = a.selector && document.querySelector(a.selector);
+    if (!root) return toast("That element isn't on this screen any more");
+    state.dragStamp = ++stampCounter;
+    let n = 0;
+    for (const c of v.changes) {
+      let node = null;
+      try { node = c.target === ":scope" ? root : root.querySelector(c.target); } catch {}
+      if (node) {
+        setStyle(node, c.prop, c.value, true);
+        n++;
+      }
+    }
+    state.dragStamp = 0;
+    select(root);
+    toast(`Using "${v.name}": ${n} change${n === 1 ? "" : "s"}, ready to send`);
+  }
+
+  function renderAskList(list) {
+    if (!list) return;
+    list.innerHTML = "";
+    const mine = (state.asks || []).filter((a) => !a.page || a.page === here()).slice(-4).reverse();
+    for (const a of mine) {
+      const item = document.createElement("div");
+      item.className = "ask-item";
+      const top = document.createElement("div");
+      top.className = "ask-top";
+      const what = Object.assign(document.createElement("div"), { className: "ask-what", textContent: a.kind === "variations" ? `Variations${a.instruction ? `: ${a.instruction}` : ""}` : a.instruction });
+      const label = { waiting: "Queued", running: "Working…", done: a.kind === "edit" ? "Done" : "Ready", failed: a.needs ? "Question" : "Failed" }[a.status] || a.status;
+      const st = Object.assign(document.createElement("span"), { className: "ask-state " + a.status, textContent: label });
+      const x = Object.assign(document.createElement("button"), { className: "ask-x", textContent: "✕", title: a.status === "done" || a.status === "failed" ? "Dismiss" : "Cancel (a running request still finishes)" });
+      x.addEventListener("click", () => {
+        if (state.variantPreview && state.variantPreview.id === a.id) clearVariantPreview();
+        state.asks = state.asks.filter((o) => o.id !== a.id);
+        fetch(API + "/ask/" + encodeURIComponent(a.id), { method: "DELETE" }).catch(() => {});
+        renderAskList(list);
+      });
+      top.append(what, st, x);
+      item.append(top);
+      if (a.status === "done" && a.kind === "edit") item.append(Object.assign(document.createElement("div"), { className: "ask-sub", textContent: `${a.summary ? a.summary + " · " : ""}${(a.files || []).join(", ")}. Undo apply puts it back.` }));
+      if (a.status === "failed") item.append(Object.assign(document.createElement("div"), { className: "ask-sub", textContent: a.needs ? `Claude asks: ${a.needs}` : a.error || "It didn't work out." }));
+      if (a.status === "done" && a.kind === "variations") {
+        for (const v of a.variants || []) {
+          const row = document.createElement("div");
+          row.className = "variant" + (state.variantPreview && state.variantPreview.id === a.id && state.variantPreview.name === v.name ? " on" : "");
+          const t = document.createElement("div");
+          t.className = "v-text";
+          t.append(Object.assign(document.createElement("b"), { textContent: v.name }), Object.assign(document.createElement("span"), { textContent: v.why }));
+          const use = Object.assign(document.createElement("button"), { textContent: "Use" });
+          use.addEventListener("click", (e) => {
+            e.stopPropagation();
+            useVariant(a, v);
+          });
+          row.title = "Click to preview it on the page; click again to go back";
+          row.addEventListener("click", () => {
+            const on = state.variantPreview && state.variantPreview.id === a.id && state.variantPreview.name === v.name;
+            on ? clearVariantPreview() : previewVariant(a, v);
+            renderAskList(list);
+          });
+          row.append(t, use);
+          item.append(row);
+        }
+      }
+      list.append(item);
+    }
+  }
+
   function renderPanel() {
     panel.innerHTML = "";
     const bar = document.createElement("div");
@@ -2062,7 +2575,15 @@
       if (STUDIO) STUDIO.location.href = url;
       else if (!window.open(url, "_blank")) location.href = url;
     });
-    bar.append(title, undo, system, pick, pop, close);
+    const ins = document.createElement("button");
+    ins.className = "icon" + (state.showInsert ? " on" : "");
+    ins.textContent = "＋";
+    ins.title = "Insert an element or one of this page's components";
+    ins.addEventListener("click", () => {
+      state.showInsert = !state.showInsert;
+      render();
+    });
+    bar.append(title, undo, ins, system, pick, pop, close);
     panel.append(bar);
 
     const scroll = document.createElement("div");
@@ -2074,8 +2595,11 @@
       const empty = document.createElement("div");
       empty.className = "empty";
       empty.innerHTML = `<b>Click any element</b> to tweak it.<br/>Drag it to reorder or move it, drag its handles to resize. ⌘-drag places it freely.<br/>Drag a field's label to scrub its value; Shift for ×10.<br/>Double-click text to edit it.<br/><br/>When you're happy, press <b>Send to Claude</b>. Claude edits the real source to match.`;
+      if (state.showInsert) scroll.append(insertSection());
       scroll.append(empty);
+      scroll.append(askSection(null));
     } else {
+      if (state.showInsert) scroll.append(insertSection());
       const info = describe(el);
       const cs = getComputedStyle(el);
       const head = document.createElement("div");
@@ -2112,9 +2636,10 @@
       const arrange = document.createElement("div");
       arrange.className = "arrange";
       for (const [label, title, run, cls] of [
-        ["↑ Earlier", "Move before its previous sibling (⌘↑), or drag it on the page", () => moveBy(el, -1)],
-        ["↓ Later", "Move after its next sibling (⌘↓), or drag it on the page", () => moveBy(el, 1)],
+        ["↑", "Move before its previous sibling (⌘↑), or drag it on the page", () => moveBy(el, -1)],
+        ["↓", "Move after its next sibling (⌘↓), or drag it on the page", () => moveBy(el, 1)],
         ["Parent", "Select the parent (Shift+Enter). Enter selects the first child, Tab the next sibling", () => el.parentElement && el.parentElement !== document.body && select(el.parentElement)],
+        ["Duplicate", "Duplicate it (⌘D). Claude writes the copy into the source on Send", () => duplicateElement(el)],
         ["Remove", "Remove this element (Delete). Claude deletes it from the source on Send", () => removeElement(el), "danger"],
       ]) {
         const b = Object.assign(document.createElement("button"), { textContent: label, title });
@@ -2136,6 +2661,9 @@
       }
       head.append(states);
       scroll.append(head);
+      scroll.append(askSection(el));
+      const props = componentSection(el);
+      if (props) scroll.append(props);
 
       const current = state.tweaks.get(keyOf(el));
       const warnings = current && el.isConnected ? hiddenReasons(current) : [];
@@ -2287,6 +2815,8 @@
       parts.push(`moved ${i > 0 ? "after" : "before"} ${n ? n.tagName.toLowerCase() + (n.classList[0] ? "." + n.classList[0] : "") : "its sibling"}`);
     }
     if (tweak.removed) parts.push("removed");
+    if (tweak.insert) parts.push(tweak.insert.kind === "copy" ? "new copy" : tweak.insert.kind === "component" ? `new <${tweak.insert.component.name}>` : `new ${tweak.insert.basic || tweak.insert.tag}`);
+    for (const [name, p] of Object.entries(tweak.props || {})) parts.push(`${name}: ${short(String(p.from))} → ${short(String(p.to))}`);
     if (tweak.note) parts.push(`note: ${tweak.note.slice(0, 40)}`);
     return parts;
   }
@@ -2454,6 +2984,9 @@
         text: t.text || undefined,
         move: t.move || undefined,
         remove: t.removed || undefined,
+        insert: t.insert ? { ...t.insert, html: undefined, parentSelector: undefined, ...(t.el.isConnected ? { ...insertWhere(t.el), parent: describe(t.el.parentElement) } : {}) } : undefined,
+        props: t.props && Object.keys(t.props).length ? t.props : undefined,
+        component: t.component || undefined,
         note: t.note || undefined,
       })),
     };
@@ -2500,7 +3033,20 @@
   async function poll() {
     try {
       const res = await fetch(API + "/status", { cache: "no-store" });
-      const { pendingIds, pendingTweaks = [], version, lastApply = null, update = null } = await res.json();
+      const { pendingIds, pendingTweaks = [], version, lastApply = null, update = null, asks = [] } = await res.json();
+      const asksNow = JSON.stringify(asks);
+      if (asksNow !== state.asksJson) {
+        state.asksJson = asksNow;
+        for (const a of asks) {
+          const before = (state.asks || []).find((o) => o.id === a.id);
+          if (ownsPanel() && before && before.status !== a.status && a.page === here()) {
+            if (a.status === "done") toast(a.kind === "edit" ? `Claude finished: ${a.summary || (a.files || []).join(", ")}` : "Variations are ready in the panel");
+            if (a.status === "failed") toast(a.needs ? `Claude has a question: ${a.needs}` : `Claude couldn't do it: ${a.error || ""}`);
+          }
+        }
+        state.asks = asks;
+        if (state.isOpen) renderAskList(panel.querySelector(".ask-list"));
+      }
       if (JSON.stringify(update) !== JSON.stringify(state.update)) {
         state.update = update;
         if (state.isOpen) renderChanges();
@@ -2532,7 +3078,8 @@
         }
         state.tweaks.delete(t.key);
         for (const [key, change] of Object.entries(t.changes)) clearChange(t.el, key, change);
-        if (t.move || t.removed) structural = true;
+        if (t.insert) t.el.remove();
+        if (t.move || t.removed || t.insert) structural = true;
         state.undo = state.undo.filter((u) => u.key !== t.key);
         applied++;
       }
@@ -2899,6 +3446,23 @@
       const w0 = parseFloat(computed(el, "width")) || el.getBoundingClientRect().width;
       const h0 = parseFloat(computed(el, "height")) || el.getBoundingClientRect().height;
       const positioned = /^(absolute|fixed)$/.test(computed(el, "position"));
+      // Border-box sizes to compare with Hug and Fill, which are measured as border boxes.
+      const box0 = el.getBoundingClientRect();
+      const snaps = positioned ? null : { width: measureModes(el, "width"), height: measureModes(el, "height") };
+      const modeNow = { width: null, height: null };
+      // Resize one axis: snap to Fill or Hug near those sizes, else a fixed length.
+      const sizeAxis = (axis, contentSize, borderSize) => {
+        const s = snaps && snaps[axis];
+        const mode = s && Math.abs(borderSize - s.fill) < 6 && s.fill > s.hug + 6 ? "fill" : s && Math.abs(borderSize - s.hug) < 6 ? "hug" : "fixed";
+        if (mode !== "fixed") {
+          if (modeNow[axis] !== mode) setSizeMode(el, axis, mode, { quiet: true });
+        } else {
+          if (modeNow[axis] !== "fixed") setSizeMode(el, axis, "fixed", { quiet: true });
+          setStyle(el, axis, contentSize + "px", true);
+        }
+        modeNow[axis] = mode;
+        return mode;
+      };
       const axes = positioned ? offsetAxes(el) : null;
       const x0 = e.clientX, y0 = e.clientY;
       state.dragStamp = ++stampCounter;
@@ -2914,12 +3478,13 @@
         }
         w = Math.max(1, Math.round(w));
         hh = Math.max(1, Math.round(hh));
-        if (sx) setStyle(el, "width", w + "px", true);
-        if (sy) setStyle(el, "height", hh + "px", true);
+        const mw = sx ? sizeAxis("width", w, box0.width + (w - w0)) : null;
+        const mh = sy ? sizeAxis("height", hh, box0.height + (hh - h0)) : null;
         // Dragging the side an absolute element is pinned to moves that offset too.
         if (axes && sx && (axes.h.prop === "left") === (sx < 0)) setStyle(el, axes.h.prop, Math.round(axes.h.start - (w - w0)) + "px", true);
         if (axes && sy && (axes.v.prop === "top") === (sy < 0)) setStyle(el, axes.v.prop, Math.round(axes.v.start - (hh - h0)) + "px", true);
-        tip(`${sx ? "W " + w : ""}${sx && sy ? " · " : ""}${sy ? "H " + hh : ""}`, ev.clientX, ev.clientY);
+        const label = (m, v) => (m === "fill" ? "Fill" : m === "hug" ? "Hug" : v);
+        tip(`${sx ? "W " + label(mw, w) : ""}${sx && sy ? " · " : ""}${sy ? "H " + label(mh, hh) : ""}`, ev.clientX, ev.clientY);
       };
       const up = () => {
         h.removeEventListener("pointermove", move);
@@ -2947,6 +3512,7 @@
   document.addEventListener("pointermove", (e) => {
     if (!picking()) return;
     state.hovered = target(e);
+    if (state.placing) showDrop(dropTarget(placingOver(state.hovered, e), e.clientX, e.clientY, e.shiftKey));
   }, true);
 
   for (const type of ["pointerdown", "mousedown", "mouseup", "click", "pointerup"]) {
@@ -2957,6 +3523,10 @@
       if (t.isContentEditable && t.dataset.uiTweaksEditing) return;
       e.preventDefault();
       e.stopPropagation();
+      if (state.placing) {
+        if (type === "click") placeAt_(dropTarget(placingOver(t, e), e.clientX, e.clientY, e.shiftKey));
+        return;
+      }
       // Press on the selection (or inside it) and drag to move it; a plain click still selects.
       if (type === "pointerdown" && e.button === 0 && state.selected && state.selected.contains(t) && ownsPanel()) beginDrag(e, state.selected);
       if (type === "click" && performance.now() > suppressClickUntil) select(t);
@@ -3025,6 +3595,12 @@
       return;
     }
     if (!state.isOpen || typing) return;
+    if (state.placing && e.key === "Escape") {
+      e.preventDefault();
+      state.placing = null;
+      $(".drop-line").classList.add("hidden");
+      return render();
+    }
     const sel = state.selected && state.selected.isConnected && state.isPicking ? state.selected : null;
     const own = (run) => { e.preventDefault(); e.stopPropagation(); run(); };
     const path = e.composedPath();
@@ -3034,6 +3610,7 @@
     if (sel && ownsPanel() && !onSelect) {
       if ((e.metaKey || e.ctrlKey) && /^Arrow(Up|Down|Left|Right)$/.test(e.key)) return own(() => moveBy(sel, /Up|Left/.test(e.key) ? -1 : 1));
       if ((e.key === "Delete" || e.key === "Backspace") && !e.metaKey && !e.ctrlKey && !inPanel) return own(() => removeElement(sel));
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d" && !e.shiftKey) return own(() => duplicateElement(sel));
       if (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !inPanel) {
         const next = e.shiftKey ? sel.parentElement : kids(sel).find((c) => c.getClientRects().length > 0);
         return own(() => next && next !== document.body && next !== document.documentElement ? select(next) : toast(e.shiftKey ? "No parent to select" : "No children"));

@@ -17,6 +17,7 @@
     "ui-tweaks-serve": "./serve.mjs"
   },
   "files": [
+    "asks.mjs",
     "direct-apply.mjs",
     "update.mjs",
     "overlay.js",

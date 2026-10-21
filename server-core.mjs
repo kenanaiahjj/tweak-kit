@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyDirect, sourceFiles } from "./direct-apply.mjs";
+import { unifiedDiff } from "./diff.mjs";
 
 const KIT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const OVERLAY_PATH = path.join(KIT_DIR, "overlay.js");
@@ -931,6 +932,18 @@ export function createTweaksHandler({ root, getVersion }) {
       if (req.method === "POST" && url.pathname === `${PREFIX}/undo`) {
         const { status, body } = await undoLastApply(root);
         return send(res, status, body);
+      }
+      // Dry run of a Send: what would be written directly (as diffs) and what is left for Haiku. Writes nothing.
+      if (req.method === "POST" && url.pathname === `${PREFIX}/preview`) {
+        const batch = JSON.parse(await readBody(req));
+        if (!batch || !Array.isArray(batch.tweaks) || batch.tweaks.length === 0) return send(res, 400, { error: "batch.tweaks must be a non-empty array" });
+        batch.tweaks.forEach((t, i) => (t.id = `preview-${i}`));
+        const direct = await applyDirect(root, batch);
+        return send(res, 200, {
+          files: direct.files.map((f) => ({ path: path.relative(root, f.path), diff: unifiedDiff(path.relative(root, f.path), f.before, f.after) })),
+          direct: direct.applied.map((a) => ({ id: a.id, props: a.props, text: a.text })),
+          queued: direct.remaining.map((t) => ({ id: t.id, reason: t.directSkip })),
+        });
       }
       if (req.method === "POST" && url.pathname === PREFIX) {
         const batch = JSON.parse(await readBody(req));

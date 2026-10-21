@@ -48,6 +48,8 @@
     sentBatches: new Map(), // batch id -> tweak keys
     undo: [], // preview edits, newest last: { stamp, at, el, key, prop | text, before }
     lastApply: null, // Haiku's newest undoable apply, from the server
+    codePreview: null, // dry run of the next Send: { files: [{ path, diff }], direct, queued }
+    verifyIssues: [], // applied tweaks whose source didn't reproduce the preview: { selector, label, prop, expected, got }
     update: null, // a newer kit on GitHub, from the server
     note: "",
   };
@@ -1111,6 +1113,7 @@
   }
 
   function persist() {
+    state.codePreview = null; // a dry run is stale once anything changes
     try {
       const drafts = [...state.tweaks.values()].map((t) => ({
         at: t.at,
@@ -1288,6 +1291,13 @@
     .token { display: flex; align-items: center; gap: 4px; background: var(--bg2); border: 0; border-radius: 4px; color: var(--text); font-size: 10px; padding: 3px 6px; cursor: pointer; }
     .token:hover { background: #3a3a3a; }
     .token i { width: 10px; height: 10px; border-radius: 2px; border: 1px solid rgba(255,255,255,.2); }
+    .code-preview { margin: 4px 0 8px; }
+    .code-preview .diff-file { margin-top: 6px; }
+    .code-preview .diff-name { font-weight: 600; font-size: 10.5px; color: var(--text); }
+    .code-preview pre { margin: 2px 0 0; padding: 6px 8px; background: #141414; border-radius: 4px; font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--dim); overflow-x: auto; max-height: 180px; overflow-y: auto; white-space: pre; }
+    .code-preview .add { color: #7ee2a8; }
+    .code-preview .del { color: #ff9b8f; }
+    .code-preview .hunk { color: #8fb4ff; }
     .pill.warn { background: #5a3a12; color: #ffc46b; }
     .pill { font-size: 9.5px; padding: 1px 5px; border-radius: 3px; background: #3d2f66; color: #c7b8ff; margin-left: 4px; font-weight: 600; }
     .foot { display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--line); }
@@ -3154,6 +3164,83 @@
       row.append(what, undo);
       box.append(row);
     }
+    for (const issue of state.verifyIssues) {
+      const row = document.createElement("div");
+      row.className = "change";
+      const what = document.createElement("div");
+      what.className = "what";
+      const b = document.createElement("b");
+      b.textContent = issue.label;
+      const pill = document.createElement("span");
+      pill.className = "pill warn";
+      pill.textContent = "source differs";
+      b.append(pill);
+      const s = document.createElement("span");
+      s.textContent = `${issue.prop}: the preview had ${issue.expected}, the source gives ${issue.got}`;
+      what.append(b, s);
+      what.addEventListener("click", () => issue.el && issue.el.isConnected && select(issue.el));
+      const fix = document.createElement("button");
+      fix.className = "btn ghost";
+      fix.textContent = "Re-apply";
+      fix.title = "Put the preview back as a draft with a note, so Haiku finds why the written rule doesn't win";
+      fix.addEventListener("click", () => {
+        const el = issue.el && issue.el.isConnected ? issue.el : document.querySelector(issue.selector);
+        state.verifyIssues = state.verifyIssues.filter((i) => i !== issue);
+        if (!el) return render();
+        setStyle(el, issue.prop, issue.expected);
+        const t = tweakFor(el);
+        t.note = `A previous write left ${issue.prop} at ${issue.got} but the design wants ${issue.expected}. Find which rule wins and fix that one.`;
+        persist();
+        render();
+      });
+      const dismiss = document.createElement("button");
+      dismiss.className = "icon";
+      dismiss.textContent = "×";
+      dismiss.title = "Dismiss";
+      dismiss.addEventListener("click", () => {
+        state.verifyIssues = state.verifyIssues.filter((i) => i !== issue);
+        renderChanges();
+      });
+      row.append(what, fix, dismiss);
+      box.append(row);
+    }
+    if (state.codePreview) {
+      const cp = state.codePreview;
+      const wrap = document.createElement("div");
+      wrap.className = "code-preview";
+      const head = document.createElement("div");
+      head.className = "el-meta";
+      const direct = cp.direct.length, queued = cp.queued.length;
+      head.textContent = (direct ? `${direct} written directly` : "Nothing written directly") + (queued ? ` · ${queued} for Haiku (${[...new Set(cp.queued.map((q) => q.reason))].filter(Boolean).join("; ")})` : "") + " · ";
+      const close = document.createElement("a");
+      close.textContent = "close";
+      close.href = "#";
+      close.style.color = "var(--accent)";
+      close.addEventListener("click", (e) => {
+        e.preventDefault();
+        state.codePreview = null;
+        renderChanges();
+      });
+      head.append(close);
+      wrap.append(head);
+      for (const f of cp.files) {
+        const file = document.createElement("div");
+        file.className = "diff-file";
+        const name = document.createElement("div");
+        name.className = "diff-name";
+        name.textContent = f.path;
+        const pre = document.createElement("pre");
+        for (const line of f.diff.split("\n").slice(2)) {
+          const span = document.createElement("span");
+          span.className = line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : line.startsWith("@@") ? "hunk" : "";
+          span.textContent = line + "\n";
+          pre.append(span);
+        }
+        file.append(name, pre);
+        wrap.append(file);
+      }
+      box.append(wrap);
+    }
     if (state.update) {
       const u = state.update;
       const row = document.createElement("div");
@@ -3240,7 +3327,13 @@
     sendBtn.textContent = drafts.length ? `Send ${drafts.length} to Claude` : "Send to Claude";
     sendBtn.disabled = !drafts.length;
     sendBtn.addEventListener("click", () => send(drafts));
-    foot.append(reset, copy, sendBtn);
+    const codeBtn = document.createElement("button");
+    codeBtn.className = "btn ghost";
+    codeBtn.textContent = "Code";
+    codeBtn.title = "Show the code a Send would write directly, as a diff (nothing is written)";
+    codeBtn.disabled = !drafts.length;
+    codeBtn.addEventListener("click", previewCode);
+    foot.append(reset, copy, codeBtn, sendBtn);
   }
 
   function buildBatch(list) {
@@ -3266,16 +3359,71 @@
     };
   }
 
+  // Refresh descriptions: the DOM may have changed since the first edit.
+  // A moved element keeps the selector of its original place, which is where the source has it.
+  function refreshDescriptions(list) {
+    list.forEach((t) => {
+      if (!t.el.isConnected) return;
+      t.element = describe(t.el);
+      if (t.move) t.move = moveInfo(t.el, t.move.fromIndex);
+    });
+  }
+
+  // Dry run of a Send: the code it would write, as diffs, and what is left for Haiku.
+  async function previewCode() {
+    const drafts = [...state.tweaks.values()].filter((t) => !t.batchId);
+    if (!drafts.length) return;
+    try {
+      refreshDescriptions(drafts);
+      const res = await fetch(API + "/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(buildBatch(drafts)) });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || res.statusText);
+      state.codePreview = body;
+      renderChanges();
+    } catch (error) {
+      toast("Couldn't preview the code. (" + error.message + ")");
+    }
+  }
+
+  // A sent tweak that has left the queue is in the source now, so its preview is dropped and the page shows
+  // what the source says. Compare that with what the preview showed: a difference means the write didn't
+  // reproduce the design (a rule that wins, a token that resolves differently, a selector that missed).
+  const sameValue = (a, b) => {
+    if (a === b) return true;
+    const num = /-?\d*\.?\d+/g;
+    const na = String(a).match(num), nb = String(b).match(num);
+    if (!na || !nb || na.length !== nb.length || String(a).replace(num, "#") !== String(b).replace(num, "#")) return false;
+    const tolerance = /px/.test(String(a)) ? 0.5 : 0.01;
+    return na.every((n, i) => Math.abs(parseFloat(n) - parseFloat(nb[i])) <= tolerance);
+  };
+  function verifyApplied(checks, attempt = 0) {
+    setTimeout(() => {
+      const bad = [];
+      for (const c of checks) {
+        let el = c.el;
+        if (!el.isConnected) {
+          try { el = document.querySelector(c.selector); } catch { el = null; }
+        }
+        if (!el) continue; // gone or re-rendered elsewhere: nothing to compare
+        const got = computed(el, c.prop);
+        if (!sameValue(got, c.expected)) bad.push({ ...c, el, got });
+      }
+      if (!bad.length) return;
+      if (attempt < 3) return verifyApplied(bad, attempt + 1); // a transition may still be running
+      for (const b of bad) {
+        state.verifyIssues = state.verifyIssues.filter((i) => !(i.selector === b.selector && i.prop === b.prop));
+        state.verifyIssues.push({ selector: b.selector, label: b.label, prop: b.prop, expected: b.expected, got: b.got, at: here(), el: b.el });
+      }
+      renderChanges();
+      toast(`The source doesn't match the preview: ${bad[0].prop} is ${bad[0].got}, the preview had ${bad[0].expected}${bad.length > 1 ? ` (+${bad.length - 1} more)` : ""}`);
+    }, attempt ? 900 : 1200);
+  }
+
   async function send(list) {
     if (!list.length) return;
     try {
-      // Refresh descriptions: the DOM may have changed since the first edit.
-      // A moved element keeps the selector of its original place, which is where the source has it.
-      list.forEach((t) => {
-        if (!t.el.isConnected) return;
-        t.element = describe(t.el);
-        if (t.move) t.move = moveInfo(t.el, t.move.fromIndex);
-      });
+      refreshDescriptions(list);
+      state.codePreview = null;
       const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(buildBatch(list)) });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || res.statusText);
@@ -3340,6 +3488,7 @@
       const waiting = new Map(pendingTweaks.map((p) => [p.id, p.skipped || null]));
       let applied = 0, structural = false;
       const newlySkipped = [];
+      const verify = [];
       for (const t of [...state.tweaks.values()]) {
         if (!t.sentId) continue;
         if (waiting.has(t.sentId)) {
@@ -3351,6 +3500,14 @@
           continue;
         }
         state.tweaks.delete(t.key);
+        if (t.el.isConnected && !t.insert && !t.removed) {
+          const label = (t.element.classes[0] ? "." + t.element.classes[0] : t.element.tag);
+          for (const [key, change] of Object.entries(t.changes)) {
+            if (change.state || change.to === undefined) continue; // state previews can't be read without forcing the state
+            const prop = changeProp(key, change);
+            verify.push({ el: t.el, selector: t.element.selector, label, prop, expected: computed(t.el, prop) });
+          }
+        }
         for (const [key, change] of Object.entries(t.changes)) clearChange(t.el, key, change);
         if (t.insert) t.el.remove();
         if (t.move || t.removed || t.insert) structural = true;
@@ -3364,6 +3521,7 @@
         location.reload();
         return;
       }
+      if (verify.length) verifyApplied(verify);
       if (applied || newlySkipped.length) {
         persist();
         render();
@@ -3988,6 +4146,11 @@
     attachPopup,
     close: () => toggle(false),
     select: (selector) => select(document.querySelector(selector)),
+    // Scripted edits, for tests and automation: the same path as typing a value in the panel.
+    setStyle: (selector, prop, value) => setStyle(document.querySelector(selector), prop, value),
+    previewCode,
+    verifyApplied,
+    send: () => send([...state.tweaks.values()].filter((t) => !t.batchId)),
     compare,
     // Hides outlines and the launcher (for snapshots).
     hideOverlay: (on) => (host.style.visibility = on ? "hidden" : ""),

@@ -41,6 +41,16 @@ It does nothing in a project until tweaks arrive there, so it's safe to leave on
 
 ## 2. Hook up a project
 
+The quickest way, in the project folder:
+
+```bash
+npx github:kenanaiahjj/tweak-kit init
+```
+
+It detects Vite, Next.js or plain HTML and the package manager, installs the kit, adds `uiTweaks()` to a Vite config (or a `tweaks` sidecar script elsewhere), and installs the Claude Code mod (`--no-mod` skips that, `--no-install` skips the package). It changes nothing it doesn't recognise: a config it can't safely edit gets printed instructions instead. The rest of this section is the manual setup.
+
+**React versions.** With the Vite plugin, the kit wraps React's development JSX runtime to remember where each element is written (file and line). React 18 did this itself; React 19 no longer does, so without it source-aware features (direct edits to JSX, text edits, moving and inserting, component props) would fall back to Haiku searching. It also corrects line numbers that some setups shift (e.g. `@vitejs/plugin-react` 4 adds a Fast Refresh header before compiling JSX). Nothing is added to your DOM. Turn it off with `uiTweaks({ sources: false })`.
+
 Install the kit as a dev dependency:
 
 ```bash

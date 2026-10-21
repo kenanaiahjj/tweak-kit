@@ -228,11 +228,19 @@
     return f;
   }
 
+  // Where a fiber's JSX was written: React 18 keeps it on the fiber; on React 19 the kit's Vite plugin
+  // records it by the element's props object (see vite-plugin.mjs).
+  function sourceOf(f) {
+    if (!f) return null;
+    const s = f._debugSource || (window.__uitSources && f.memoizedProps && typeof f.memoizedProps === "object" && window.__uitSources.get(f.memoizedProps));
+    return s && s.fileName ? `${relativePath(s.fileName)}:${s.lineNumber}` : null;
+  }
+
   function reactInfo(el) {
     const fiberKey = Object.keys(el).find((k) => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
     if (!fiberKey) return null;
     const fiber = el[fiberKey];
-    const src = (f) => (f && f._debugSource ? `${relativePath(f._debugSource.fileName)}:${f._debugSource.lineNumber}` : null);
+    const src = sourceOf;
     const components = [];
     let node = fiber.return;
     while (node && components.length < 5) {
@@ -899,7 +907,7 @@
       if (!type || typeof type === "string" || owner.child !== fiber) continue; // only an instance's first element
       const name = type.displayName || type.name || (type.render && (type.render.displayName || type.render.name));
       if (!name || /^[a-z_]/.test(name)) continue;
-      const usedAt = owner._debugSource ? `${relativePath(owner._debugSource.fileName)}:${owner._debugSource.lineNumber}` : null;
+      const usedAt = sourceOf(owner);
       const entry = found.get(name) || { name, usedAt, sample: n, count: 0 };
       entry.count++;
       found.set(name, entry);
@@ -2559,7 +2567,7 @@
     if (!type || typeof type === "string" || owner.child !== fiber) return null;
     const name = type.displayName || type.name || (type.render && (type.render.displayName || type.render.name));
     if (!name || /^[a-z_]/.test(name)) return null;
-    const usedAt = owner._debugSource ? `${relativePath(owner._debugSource.fileName)}:${owner._debugSource.lineNumber}` : null;
+    const usedAt = sourceOf(owner);
     return { name, usedAt, props: owner.memoizedProps || {} };
   }
 

@@ -5,6 +5,8 @@ export interface UiTweaksOptions {
   autoUpdate?: boolean;
   /** Check GitHub for a newer kit when the dev server starts. Default true. */
   updateCheck?: boolean;
+  /** Keep where each JSX element was written (needed on React 19) by wrapping react/jsx-dev-runtime in dev. Default true. */
+  sources?: boolean;
 }
 
-export default function uiTweaks(options?: UiTweaksOptions): Plugin;
+export default function uiTweaks(options?: UiTweaksOptions): Plugin[];

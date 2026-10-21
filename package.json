@@ -14,10 +14,12 @@
     "./overlay.js": "./overlay.js"
   },
   "bin": {
+    "ui-tweak-kit": "./cli.mjs",
     "ui-tweaks-serve": "./serve.mjs"
   },
   "files": [
     "asks.mjs",
+    "cli.mjs",
     "direct-apply.mjs",
     "update.mjs",
     "overlay.js",

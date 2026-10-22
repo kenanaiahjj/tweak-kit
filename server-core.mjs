@@ -279,7 +279,11 @@ export function studioPage(appPath) {
         <button class="focus-turn" title="Rotate">⟲</button>
         <input type="range" class="width-slider" min="280" max="1920" step="1" list="bp-ticks" title="Width: drag to watch the layout respond (ticks are your breakpoints); pick a device to reset" />
         <datalist id="bp-ticks"></datalist>
-        <span class="zoom focus-zoom"></span>
+        <button class="fz-out" title="Zoom out (⌘−)">−</button>
+        <span class="zoom focus-zoom" title="Pinch or ⌘-scroll to zoom; scroll or drag to pan"></span>
+        <button class="fz-in" title="Zoom in (⌘+)">+</button>
+        <button class="fz-fit" title="Fit the screen (⇧1)">Fit</button>
+        <button class="fz-100" title="Actual size (⇧0)">1:1</button>
         <button class="overview" title="All screens at a glance">▦</button>
       </span>
       <span class="sep"></span>
@@ -402,19 +406,52 @@ export function studioPage(appPath) {
   }
   // Focus: one artboard alone, at actual size (100%) on its device. Centered when it fits; scroll or drag
   // to see the rest when it doesn't. The canvas camera is kept for when you switch back.
+  // One screen on a canvas of its own: it opens at 100% when it fits and scaled to fit when it doesn't
+  // (a 1920×1080 desktop on a laptop), and you can zoom (pinch, ⌘-scroll, − + Fit 1:1) and pan around it.
+  // Each screen keeps its zoom until you change its size.
   let focusPan = { x: 0, y: 0, id: null };
+  const focusZoom = new Map(); // artboard id -> { z, size }
+  const fitZoom = (w, h) => Math.min(1, (viewport.clientWidth - 48) / w, (viewport.clientHeight - 48) / h);
+  function zoomOf(a) {
+    const [w, h] = size(a);
+    const key = w + "x" + h;
+    let z = focusZoom.get(a.id);
+    if (!z || z.size !== key) focusZoom.set(a.id, (z = { z: Math.max(0.05, fitZoom(w, h)), size: key, auto: true }));
+    return z.z;
+  }
   function layoutFocus() {
     const a = canvas.artboards.find((x) => x.id === focusedId());
     if (!a) return;
     const [w, h] = size(a);
+    const z = zoomOf(a);
+    const sw = w * z, sh = h * z;
     const vw = viewport.clientWidth, vh = viewport.clientHeight, pad = 24;
     const clamp = (v, size, room) => (size + pad * 2 <= room ? (room - size) / 2 : Math.min(pad, Math.max(room - size - pad, v)));
-    if (focusPan.id !== a.id + ":" + w + "x" + h) focusPan = { x: (vw - w) / 2, y: pad, id: a.id + ":" + w + "x" + h };
-    focusPan.x = clamp(focusPan.x, w, vw);
-    focusPan.y = clamp(focusPan.y, h, vh);
-    world.style.transform = "translate(" + focusPan.x + "px," + focusPan.y + "px) translate(" + -a.x + "px," + -a.y + "px)";
-    world.style.setProperty("--iz", "1");
-    $(".focus-zoom").textContent = w + "×" + h + " · 100%";
+    const id = a.id + ":" + w + "x" + h;
+    if (focusPan.id !== id) focusPan = { x: (vw - sw) / 2, y: sh + pad * 2 <= vh ? (vh - sh) / 2 : pad, id };
+    focusPan.x = clamp(focusPan.x, sw, vw);
+    focusPan.y = clamp(focusPan.y, sh, vh);
+    world.style.transform = "translate(" + focusPan.x + "px," + focusPan.y + "px) scale(" + z + ") translate(" + -a.x + "px," + -a.y + "px)";
+    world.style.setProperty("--iz", String(1 / z));
+    $(".focus-zoom").textContent = w + "×" + h + " · " + Math.round(z * 100) + "%";
+  }
+  // Zoom the shown screen keeping the point under (mx, my) in place.
+  function zoomFocus(z, mx = viewport.clientWidth / 2, my = viewport.clientHeight / 2) {
+    const a = canvas.artboards.find((x) => x.id === focusedId());
+    if (!a) return;
+    const cur = zoomOf(a);
+    z = Math.min(4, Math.max(0.05, z));
+    focusPan.x = mx - ((mx - focusPan.x) * z) / cur;
+    focusPan.y = my - ((my - focusPan.y) * z) / cur;
+    focusZoom.set(a.id, { ...focusZoom.get(a.id), z, auto: false });
+    layoutFocus();
+  }
+  function fitFocus() {
+    const a = canvas.artboards.find((x) => x.id === focusedId());
+    if (!a) return;
+    focusZoom.delete(a.id);
+    focusPan.id = null;
+    layoutFocus();
   }
 
   function setMode(mode, id) {
@@ -471,7 +508,12 @@ export function studioPage(appPath) {
   function onWheel(e) {
     e.preventDefault();
     if (isFocus()) {
-      if (e.ctrlKey || e.metaKey) return;
+      if (e.ctrlKey || e.metaKey) {
+        const r = viewport.getBoundingClientRect();
+        const a = canvas.artboards.find((x) => x.id === focusedId());
+        // Trackpads send small deltas, mouse wheels big ones: cap a step so one notch is a gentle zoom.
+        return a && zoomFocus(zoomOf(a) * Math.exp(-Math.max(-25, Math.min(25, e.deltaY)) * 0.01), e.clientX - r.left, e.clientY - r.top);
+      }
       focusPan.x -= e.deltaX;
       focusPan.y -= e.deltaY;
       return layoutFocus();
@@ -515,10 +557,11 @@ export function studioPage(appPath) {
   addEventListener("keydown", (e) => {
     if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
     if (e.code === "Space" && !e.repeat) { e.preventDefault(); setHand(true); }
-    if ((e.metaKey || e.ctrlKey) && (e.key === "=" || e.key === "+")) { e.preventDefault(); zoomAt(cam.z * 1.25, ...center()); }
-    if ((e.metaKey || e.ctrlKey) && e.key === "-") { e.preventDefault(); zoomAt(cam.z / 1.25, ...center()); }
-    if (e.shiftKey && e.code === "Digit1") fitTo(canvas.artboards);
-    if (e.shiftKey && e.code === "Digit0") zoomAt(1, ...center());
+    const shown = canvas.artboards.find((x) => x.id === focusedId());
+    if ((e.metaKey || e.ctrlKey) && (e.key === "=" || e.key === "+")) { e.preventDefault(); shown && zoomFocus(zoomOf(shown) * 1.25); }
+    if ((e.metaKey || e.ctrlKey) && e.key === "-") { e.preventDefault(); shown && zoomFocus(zoomOf(shown) / 1.25); }
+    if (e.shiftKey && e.code === "Digit1") fitFocus();
+    if (e.shiftKey && e.code === "Digit0") zoomFocus(1);
     if (isFocus() && e.key === "ArrowLeft") step(-1);
     if (isFocus() && e.key === "ArrowRight") step(1);
     if (!isFocus() && (e.key === "Backspace" || e.key === "Delete") && selected) removeArtboard(selected);
@@ -841,6 +884,10 @@ export function studioPage(appPath) {
       pop.append(card);
     }
   }
+  $(".fz-out").addEventListener("click", () => { const a = current(); a && zoomFocus(zoomOf(a) / 1.25); });
+  $(".fz-in").addEventListener("click", () => { const a = current(); a && zoomFocus(zoomOf(a) * 1.25); });
+  $(".fz-fit").addEventListener("click", fitFocus);
+  $(".fz-100").addEventListener("click", () => zoomFocus(1));
   $(".overview").addEventListener("click", () => {
     const pop = $(".overview-pop");
     pop.hidden = !pop.hidden;
@@ -939,7 +986,13 @@ export function studioPage(appPath) {
     }
   });
 
-  new ResizeObserver(() => { drawMinimap(); if (isFocus()) { render(); applyCam(); } }).observe(viewport);
+  new ResizeObserver(() => {
+    // Screens still at their automatic fit refit to the new space.
+    for (const [id, z] of focusZoom) if (z.auto) focusZoom.delete(id);
+    focusPan.id = null;
+    drawMinimap();
+    if (isFocus()) { render(); applyCam(); }
+  }).observe(viewport);
   (async () => {
     try {
       const data = await fetch("/__ui-tweaks/canvas", { cache: "no-store" }).then((r) => r.json());

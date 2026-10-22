@@ -5,6 +5,7 @@ import { updateStatus } from "./update.mjs";
 import { adoptToken, createToken, scanTokens, setToken } from "./tokens.mjs";
 import { systemPage } from "./system-page.mjs";
 import { addAsk, askStatus, cancelAsk } from "./asks.mjs";
+import { jsxAt, toTailwind } from "./code.mjs";
 import { promises as fs, unlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -512,6 +513,14 @@ export function studioPage(appPath) {
       void r;
     },
     hand: setHand,
+    // The command palette lists and opens screens.
+    screens() {
+      return canvas.artboards.map((a) => ({ id: a.id, name: a.name || a.url, shown: a.id === focusedId() }));
+    },
+    show(id) {
+      select(id);
+      setMode("focus", id);
+    },
     // A frame's overlay asks this when it loads (also after a reload): the screen on show holds the panel.
     isShown(frame) {
       const f = frames.get(focusedId());
@@ -991,6 +1000,14 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
           committed = clean.ok ? await commitFiles(root, direct.files.map((f) => f.path), message) : { ok: false, reason: clean.reason };
         }
         return send(res, 200, { ok: true, id: batch.id, direct: direct.applied.map((a) => a.id), queued: direct.remaining.map((t) => t.id), commit: committed });
+      }
+      // "Copy as code": an element's JSX as written, and styles as Tailwind classes.
+      if (req.method === "GET" && url.pathname === `${PREFIX}/jsx`) {
+        const code = await jsxAt(root, url.searchParams.get("loc"));
+        return send(res, code === null ? 404 : 200, code === null ? { error: "No JSX found at that line" } : { code });
+      }
+      if (req.method === "POST" && url.pathname === `${PREFIX}/tailwind`) {
+        return send(res, 200, toTailwind(JSON.parse(await readBody(req)).styles));
       }
       if (req.method === "POST" && url.pathname === `${PREFIX}/ask`) {
         try {

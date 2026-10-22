@@ -164,10 +164,12 @@ export async function scanTokens(root) {
   const uses = new Map();
   for (const t of texts) for (const m of t.matchAll(/var\(\s*(--[\w-]+)/g)) uses.set(m[1], (uses.get(m[1]) || 0) + 1);
 
-  const big = [...scopes].filter(([, m]) => m.size >= MIN_MODE);
+  // A root-level scope (:root, html, :host, @theme) is always a mode, however few tokens it has.
+  const rootLike = (k) => /^(@theme\b|:root|html|:host)/.test(k);
+  const big = [...scopes].filter(([k, m]) => m.size >= MIN_MODE || rootLike(k));
   const base = big.find(([k]) => /^(:root|html|:host|@theme)\b/.test(k)) || big.sort((a, b) => b[1].size - a[1].size)[0];
   const modes = [base, ...big.filter((s) => s !== base)].filter(Boolean).map(([key]) => ({ key, label: modeLabel(key) }));
-  const local = [...scopes].filter(([, m]) => m.size < MIN_MODE);
+  const local = [...scopes].filter(([k, m]) => m.size < MIN_MODE && !rootLike(k));
 
   const names = new Map(); // name -> token
   for (const { key } of modes) {

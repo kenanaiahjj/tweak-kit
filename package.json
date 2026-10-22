@@ -21,6 +21,7 @@
     "asks.mjs",
     "breakpoints.mjs",
     "cli.mjs",
+    "code.mjs",
     "diff.mjs",
     "direct-apply.mjs",
     "git.mjs",

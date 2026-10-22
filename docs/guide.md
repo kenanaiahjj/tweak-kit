@@ -203,6 +203,10 @@ Everything below works the same in the studio or on the page.
 - **Drag the selected element** on the page to reorder it among its siblings: a blue line shows where it lands. Absolute and fixed elements move instead, snapping their edges and centre to the parent (hold ⌘/Ctrl to place freely, Shift to lock an axis). **⌘-drag** an element in the flow to offset it (`position: relative`) without moving anything else.
 - **Drag the handles** on the selection to resize; Shift on a corner keeps the proportions. On an absolute element, the handle on the side it's pinned to moves that side.
 - **Drag a row in the layers list** onto a sibling's row to reorder.
+- **⌘K** opens the command palette: type to find any action (select parent, duplicate, add auto layout, copy as code, insert, send…), any section or property ("padding-left" jumps to that field), or another screen in the studio. ↑/↓ and Enter run it.
+- **⌘⇧Z** (or Ctrl+Y, or ↷ in the bar) redoes what ⌘Z undid: styles, text, moves, removals, inserts and props alike.
+- **Colour fields** show the token a colour comes from (e.g. `var(--brand)`), the project's colour tokens as swatches to click (◇ lists them with names), and **⊙** picks a colour from anywhere on screen (Chrome, Edge).
+- **CSS / Tailwind / JSX** in the element header copy its styles as a CSS block or Tailwind classes, or its JSX exactly as written in the source.
 - **Keys:** ⌘↑/⌘↓ reorder, ⌘D duplicates, Delete removes, Enter selects the first child, Shift+Enter the parent, Tab / Shift+Tab the next or previous sibling, ⇧A adds or removes auto layout.
 - **＋ Insert** (panel bar) lists basic elements (frame, text, button, image) and the React components on the page. Pick one, then click where it goes: over a container's empty space it goes inside, over an element it goes beside it; hold **Shift** to place it between the repeated items around the pointer (cards, rows). It previews at once; Haiku writes the JSX on Send.
 - **Resizing** from the handles snaps to **Fill** (the space available) and **Hug** (the content's own size) as you pass them, and switches a Fill element to a fixed size properly (its flex-grow off).

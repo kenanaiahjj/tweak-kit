@@ -430,6 +430,7 @@
   }
 
   function recordUndo(entry) {
+    if (!state.redoing) state.redo = []; // a new edit ends the redo trail
     const last = state.undo[state.undo.length - 1];
     const now = Date.now();
     // During a drag keep only each property's first "before".
@@ -443,11 +444,52 @@
     if (state.undo.length > 200) state.undo.shift();
   }
 
+  // Redo puts back what each tweak an undo touched looked like just before it: one mechanism for
+  // styles, text, moves, removals, inserts and props.
+  const cloneTweak = (t) => t && { ...t, changes: JSON.parse(JSON.stringify(t.changes || {})), text: t.text && { ...t.text }, move: t.move && { ...t.move }, insert: t.insert && { ...t.insert }, props: t.props && JSON.parse(JSON.stringify(t.props)), scope: t.scope && { ...t.scope } };
+
+  function redoPreview() {
+    const step = (state.redo || []).pop();
+    if (!step) return toast("Nothing to redo");
+    state.redoing = true;
+    for (const { key, snap, el } of step.snaps) {
+      const now = state.tweaks.get(key);
+      if (now) revertTweak(now);
+      if (!snap) continue;
+      const t = { ...cloneTweak(snap), batchId: null, sentId: null, skipped: null };
+      if (t.insert) {
+        state.tweaks.set(key, t);
+        if (!placeInsert(t)) state.tweaks.delete(key);
+      } else {
+        t.el = snap.el && snap.el.isConnected ? snap.el : el;
+        if (!t.el || !t.el.isConnected) continue;
+        state.tweaks.set(key, t);
+        elementKeys.set(t.el, key);
+      }
+      if (!state.tweaks.has(key)) continue;
+      if (t.text && t.text.to !== undefined) t.el.textContent = t.text.to;
+      reapply(t);
+    }
+    for (const e of step.entries) state.undo.push(e);
+    state.redoing = false;
+    updateReachSheet();
+    persist();
+    render();
+  }
+
   function undoPreview() {
     const top = state.undo[state.undo.length - 1];
     if (!top) return toast("Nothing to undo");
+    const group = state.undo.filter((u) => u.stamp === top.stamp);
+    const keys = [...new Set(group.map((u) => u.key))];
+    const snaps = keys.map((key) => {
+      const t = state.tweaks.get(key);
+      return { key, snap: cloneTweak(t), el: (t || group.find((u) => u.key === key)).el };
+    });
+    const undone = [];
     while (state.undo.length && state.undo[state.undo.length - 1].stamp === top.stamp) {
       const entry = state.undo.pop();
+      undone.unshift(entry);
       const { prop, before, prevText } = entry;
       // React may have remounted the node since; the tweak tracks the live one.
       const el = (state.tweaks.get(entry.key) || entry).el;
@@ -487,6 +529,7 @@
       }
       cleanup(tweak);
     }
+    state.redo = [...(state.redo || []), { snaps, entries: undone }].slice(-100);
     persist();
     render();
   }
@@ -1099,6 +1142,55 @@
     toast("Style copied");
   }
 
+  // ---------- copy as code ----------
+  // The styles that shape the element (with your previews), as CSS or Tailwind; or its JSX from the source.
+  const CODE_PROPS = ["display", "position", "top", "right", "bottom", "left", "z-index", "flex-direction", "flex-wrap", "justify-content", "align-items", "align-self", "flex-grow", "gap", "row-gap", "column-gap", "width", "height", "min-width", "max-width", "min-height", "max-height", "padding-top", "padding-right", "padding-bottom", "padding-left", "margin-top", "margin-right", "margin-bottom", "margin-left", "font-family", "font-size", "font-weight", "line-height", "letter-spacing", "text-align", "color", "background-color", "background-image", "border-top-width", "border-top-style", "border-top-color", "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius", "box-shadow", "opacity", "overflow"];
+  // Values worth writing down: set by a rule, inline, or by you; not just inherited defaults.
+  function codeStyles(el) {
+    const t = state.tweaks.get(keyOf(el));
+    const out = {};
+    for (const p of CODE_PROPS) {
+      const own = t && t.changes[p] && t.changes[p].to;
+      const rule = matchedRules(el, p)[0];
+      const set = own || el.style.getPropertyValue(p) || (rule && rule.value.replace(/\s*!important$/, ""));
+      if (!set) continue;
+      // A shorthand in the rule: take this longhand's resolved value (keeps var() when it's the whole value).
+      out[p] = own || (/^var\(/.test(set) && rule && rule.property === p ? set : computed(el, p));
+    }
+    return out;
+  }
+  async function copyCode(el, kind) {
+    let text = "";
+    try {
+      if (kind === "jsx") {
+        const loc = describe(el).react && describe(el).react.jsxSource;
+        if (!loc) return toast("No source location for this element");
+        const res = await fetch(API + "/jsx?loc=" + encodeURIComponent(loc));
+        const out = await res.json();
+        if (!res.ok) return toast(out.error || "Couldn't read the JSX");
+        text = out.code;
+      } else {
+        const styles = codeStyles(el);
+        if (kind === "css") {
+          const sel = el.classList[0] ? "." + el.classList[0] : el.tagName.toLowerCase();
+          text = `${sel} {\n${Object.entries(styles).map(([p, v]) => `  ${p}: ${v};`).join("\n")}\n}`;
+        } else {
+          const res = await fetch(API + "/tailwind", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ styles }) });
+          const out = await res.json();
+          text = out.classes;
+          if (out.skipped && out.skipped.length) toast(`No utility for: ${out.skipped.slice(0, 3).join(", ")}${out.skipped.length > 3 ? "…" : ""}`);
+        }
+      }
+      await navigator.clipboard.writeText(text);
+      toast(`Copied ${kind === "jsx" ? "JSX" : kind === "css" ? "CSS" : "Tailwind classes"}`);
+    } catch (error) {
+      // The clipboard can refuse (no focus, permissions): show it to copy by hand instead.
+      state.copyFallback = text;
+      toast(text ? "Couldn't use the clipboard; the text is in the console" : `Couldn't copy: ${error.message}`);
+      if (text) console.log(text);
+    }
+  }
+
   function pasteStyle(el) {
     let clip = null;
     try {
@@ -1381,6 +1473,18 @@
     .prop-row input { width: 100%; height: 26px; background: var(--bg2); border: 1px solid transparent; border-radius: 5px; color: var(--text); font-size: 11px; padding: 0 6px; outline: none; }
     .prop-row input:focus { border-color: var(--accent); }
     .prop-row.changed > span { color: var(--accent2); }
+    .eyedrop { flex: none; width: 22px; height: 22px; margin-right: 3px; border: 0; border-radius: 4px; background: transparent; color: var(--dim); cursor: pointer; font-size: 12px; padding: 0; }
+    .eyedrop:hover { background: #3a3a3a; color: var(--text); }
+    .swatch-row { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+    .swatch-row button { width: 16px; height: 16px; border-radius: 4px; border: 1px solid rgba(255,255,255,.18); padding: 0; cursor: pointer; }
+    .swatch-row button.on { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .palette { position: fixed; z-index: 5; background: #1a1a1a; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 16px 48px rgba(0,0,0,.55); overflow: hidden; pointer-events: auto; }
+    .palette input { width: 100%; height: 38px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--text); font-size: 13px; padding: 0 12px; outline: none; }
+    .palette .p-list { max-height: 320px; overflow-y: auto; padding: 4px; }
+    .palette .p-item { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 11.5px; }
+    .palette .p-item.on { background: rgba(13,153,255,.22); }
+    .palette .p-item span { color: var(--dim); font-size: 10px; white-space: nowrap; }
+    .palette .p-empty { padding: 10px; color: var(--dim); font-size: 11px; }
     .handle { position: fixed; width: 8px; height: 8px; margin: -4px 0 0 -4px; background: #fff; border: 1px solid var(--accent); border-radius: 1px; pointer-events: auto; z-index: 1; }
     .handle[data-dir=n], .handle[data-dir=s] { cursor: ns-resize; }
     .handle[data-dir=e], .handle[data-dir=w] { cursor: ew-resize; }
@@ -1800,6 +1904,23 @@
     });
     sw.append(fill, picker);
     wrap.append(sw, text);
+    // Pick a colour from anywhere on screen (Chrome and Edge).
+    if (window.EyeDropper) {
+      const drop = Object.assign(document.createElement("button"), { className: "eyedrop", textContent: "⊙", title: "Pick a colour from the screen" });
+      drop.addEventListener("click", async () => {
+        try {
+          const { sRGBHex } = await new window.EyeDropper().open();
+          setStyle(el, prop, sRGBHex);
+        } catch {}
+      });
+      wrap.append(drop);
+    }
+    // A colour that comes from a token reads as that token, e.g. var(--primary).
+    // Through a shorthand too: background: var(--brand) gives background-color its token.
+    const rule = matchedRules(el, prop)[0];
+    const authored = el.style.getPropertyValue(prop) || (rule ? rule.value.replace(/\s*!important$/, "") : "");
+    const usedVar = /^var\(\s*(--[\w-]+)\s*\)$/.exec(String(authored).trim());
+    if (usedVar && !(tweak && tweak.changes[changeKey(prop)])) text.value = `var(${usedVar[1]})`;
     const colors = designTokens().colors;
     if (!colors.length) return wrap;
     const box = document.createElement("div");
@@ -1825,7 +1946,18 @@
     const current = state.tweaks.get(keyOf(el))?.changes[changeKey(prop)]?.to;
     if (current && current.startsWith("var(")) text.value = current;
     wrap.append(toggle);
-    box.append(wrap, list);
+    // The project's colour tokens at a glance: click one to use it (◇ lists them with names).
+    const inUse = (current && /^var\(\s*(--[\w-]+)/.exec(current)?.[1]) || (usedVar && usedVar[1]);
+    const row = document.createElement("div");
+    row.className = "swatch-row";
+    for (const t of colors.slice(0, 16)) {
+      const b = Object.assign(document.createElement("button"), { title: `var(${t.name}) · ${t.value}` });
+      b.style.background = t.value;
+      if (t.name === inUse) b.classList.add("on");
+      b.addEventListener("click", () => setStyle(el, prop, `var(${t.name})`));
+      row.append(b);
+    }
+    box.append(wrap, row, list);
     return box;
   }
 
@@ -2837,7 +2969,139 @@
     }
   }
 
+  // ---------- command palette (⌘K) ----------
+  function paletteCommands() {
+    const el = state.selected && state.selected.isConnected ? state.selected : null;
+    const cmds = [];
+    const add = (label, hint, run) => cmds.push({ label, hint, run });
+    // Fields and sections in the panel as it is now.
+    for (const sec of panel.querySelectorAll(".sec")) {
+      const title = sec.querySelector("h4 .h-title");
+      if (!title) continue;
+      const name = title.textContent;
+      add(`Go to ${name}`, "section", () => {
+        if (sec.classList.contains("collapsed")) sec.querySelector("h4").click();
+        sec.scrollIntoView({ block: "start" });
+        const first = sec.querySelector("input:not([type=color]), textarea, select, button");
+        first && first.focus();
+      });
+      for (const input of sec.querySelectorAll(".field input, .field select, .bm input, .prop-row input")) {
+        const field = input.closest(".field, .prop-row");
+        const prop = (field && field.querySelector("label") && field.querySelector("label").title) || (input.title || "").split(":")[0];
+        if (!prop || /\s/.test(prop.trim()) && !/^--/.test(prop)) continue;
+        add(`Edit ${prop}`, name, () => {
+          if (sec.classList.contains("collapsed")) sec.querySelector("h4").click();
+          input.scrollIntoView({ block: "center" });
+          input.focus();
+          input.select && input.select();
+        });
+      }
+    }
+    if (el) {
+      const kid = kids(el).find((c) => c.getClientRects().length > 0);
+      add("Select parent", "⇧↵", () => el.parentElement && el.parentElement !== document.body && select(el.parentElement));
+      if (kid) add("Select first child", "↵", () => select(kid));
+      add("Select next sibling", "Tab", () => { const f = flowSiblings(el); select(f[(f.indexOf(el) + 1) % f.length]); });
+      add("Select previous sibling", "⇧Tab", () => { const f = flowSiblings(el); select(f[(f.indexOf(el) - 1 + f.length) % f.length]); });
+      add("Move earlier", "⌘↑", () => moveBy(el, -1));
+      add("Move later", "⌘↓", () => moveBy(el, 1));
+      add("Duplicate", "⌘D", () => duplicateElement(el));
+      add("Remove element", "Delete", () => removeElement(el));
+      add(/flex|grid/.test(computed(el, "display")) ? "Remove auto layout" : "Add auto layout", "⇧A", () => toggleAutoLayout(el));
+      add("Copy CSS", "", () => copyCode(el, "css"));
+      add("Copy Tailwind classes", "", () => copyCode(el, "tailwind"));
+      add("Copy JSX", "", () => copyCode(el, "jsx"));
+      add("Copy style", "⌘⌥C", () => copyStyle(el));
+      add("Paste style", "⌘⌥V", () => pasteStyle(el));
+      add("Apply to everywhere this style is used", "", () => setReach(el, "all"));
+      add("Apply to this element only", "", () => setReach(el, "one"));
+      add("3 variations of this element", "Ask Claude", () => ask("variations", el, ""));
+    }
+    add("Ask Claude…", "", () => {
+      const ta = panel.querySelector(".ask-box textarea");
+      if (ta) { ta.scrollIntoView({ block: "center" }); ta.focus(); }
+    });
+    for (const [key, b] of Object.entries(BASICS)) add(`Insert ${b.label.toLowerCase()}`, "click to place", () => armInsert({ label: b.label.toLowerCase(), basic: key }));
+    add("Undo", "⌘Z", undoPreview);
+    add("Redo", "⌘⇧Z", redoPreview);
+    add("Send to Claude", "", () => { const b = [...panel.querySelectorAll(".foot button")].find((x) => /Send/.test(x.textContent)); b && b.click(); });
+    add("Reset all previews", "", () => resetAll());
+    add(state.isPicking ? "Stop picking" : "Start picking", "V", () => { state.isPicking = !state.isPicking; render(); });
+    add("Design system (tokens)", "", () => { const url = API + "/system"; if (STUDIO) STUDIO.location.href = url; else if (!window.open(url, "_blank")) location.href = url; });
+    try {
+      for (const sc of (STUDIO && STUDIO.__studio && STUDIO.__studio.screens && STUDIO.__studio.screens()) || []) if (!sc.shown) add(`Go to screen: ${sc.name}`, "screen", () => STUDIO.__studio.show(sc.id));
+    } catch {}
+    return cmds;
+  }
+  // Every query character in order; earlier, word-start and contiguous matches rank higher.
+  function score(label, q) {
+    const l = label.toLowerCase();
+    if (!q) return 1;
+    const at = l.indexOf(q);
+    if (at >= 0) return 1000 - at - (/\b/.test(l[at - 1] || " ") ? 0 : 50);
+    let i = 0, s = 0;
+    for (const ch of q) {
+      const j = l.indexOf(ch, i);
+      if (j < 0) return 0;
+      s += j === i ? 3 : 1;
+      i = j + 1;
+    }
+    return s;
+  }
+  function openPalette() {
+    closePalette();
+    const doc = panel.ownerDocument;
+    const box = doc.createElement("div");
+    box.className = "palette";
+    const r = panel.getBoundingClientRect();
+    Object.assign(box.style, { left: r.left + 8 + "px", top: r.top + 44 + "px", width: Math.max(220, r.width - 16) + "px" });
+    const input = doc.createElement("input");
+    input.placeholder = state.selected ? "Search actions and properties…" : "Search actions…";
+    const list = doc.createElement("div");
+    list.className = "p-list";
+    box.append(input, list);
+    panel.append(box);
+    const all = paletteCommands();
+    let shown = [], index = 0;
+    const draw = () => {
+      const q = input.value.trim().toLowerCase();
+      shown = all.map((c) => ({ c, s: score(c.label + " " + c.hint, q) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, 40).map((x) => x.c);
+      index = Math.min(index, Math.max(0, shown.length - 1));
+      list.innerHTML = "";
+      if (!shown.length) list.append(Object.assign(doc.createElement("div"), { className: "p-empty", textContent: "Nothing matches" }));
+      shown.forEach((c, i) => {
+        const row = doc.createElement("div");
+        row.className = "p-item" + (i === index ? " on" : "");
+        row.append(doc.createTextNode(c.label), Object.assign(doc.createElement("span"), { textContent: c.hint }));
+        row.addEventListener("mousedown", (e) => { e.preventDefault(); run(c); });
+        list.append(row);
+      });
+      list.querySelector(".on")?.scrollIntoView({ block: "nearest" });
+    };
+    const run = (c) => {
+      closePalette();
+      c.run();
+    };
+    input.addEventListener("input", () => { index = 0; draw(); });
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "ArrowDown") { e.preventDefault(); index = Math.min(shown.length - 1, index + 1); draw(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); index = Math.max(0, index - 1); draw(); }
+      else if (e.key === "Enter") { e.preventDefault(); shown[index] && run(shown[index]); }
+      else if (e.key === "Escape") { e.preventDefault(); closePalette(); }
+    });
+    input.addEventListener("blur", () => setTimeout(() => state.paletteBox === box && closePalette(), 150));
+    state.paletteBox = box;
+    draw();
+    input.focus();
+  }
+  function closePalette() {
+    if (state.paletteBox) state.paletteBox.remove();
+    state.paletteBox = null;
+  }
+
   function renderPanel() {
+    closePalette();
     matchCache = new WeakMap(); // one rule match per element per render; the DOM may have changed since
     panel.innerHTML = "";
     const bar = document.createElement("div");
@@ -2879,6 +3143,13 @@
     undo.disabled = state.undo.length === 0;
     undo.style.opacity = undo.disabled ? "0.35" : "1";
     undo.addEventListener("click", undoPreview);
+    const redo = document.createElement("button");
+    redo.className = "icon";
+    redo.textContent = "↷";
+    redo.title = "Redo (⌘⇧Z / Ctrl+Y)";
+    redo.disabled = !(state.redo && state.redo.length);
+    redo.style.opacity = redo.disabled ? "0.35" : "1";
+    redo.addEventListener("click", redoPreview);
     const system = document.createElement("button");
     system.className = "icon";
     system.textContent = "◧";
@@ -2896,7 +3167,7 @@
       state.showInsert = !state.showInsert;
       render();
     });
-    bar.append(title, undo, ins, system, pick, pop, close);
+    bar.append(title, undo, redo, ins, system, pick, pop, close);
     panel.append(bar);
 
     const scroll = document.createElement("div");
@@ -2939,7 +3210,13 @@
       });
       const styleTools = document.createElement("div");
       styleTools.className = "crumbs";
-      for (const [label, title, run] of [["Copy style", "Copy this element's type, fill, border, radius, shadow and padding (⌘⌥C)", copyStyle], ["Paste style", "Paste the copied style onto this element (⌘⌥V)", pasteStyle]]) {
+      for (const [label, title, run] of [
+        ["Copy style", "Copy this element's type, fill, border, radius, shadow and padding (⌘⌥C)", copyStyle],
+        ["Paste style", "Paste the copied style onto this element (⌘⌥V)", pasteStyle],
+        ["CSS", "Copy its styles as CSS", (n) => copyCode(n, "css")],
+        ["Tailwind", "Copy its styles as Tailwind classes", (n) => copyCode(n, "tailwind")],
+        ["JSX", "Copy its JSX as written in the source", (n) => copyCode(n, "jsx")],
+      ]) {
         const b = document.createElement("button");
         b.textContent = label;
         b.title = title;
@@ -4085,6 +4362,11 @@
       return;
     }
     if (!state.isOpen || typing) return;
+    if (state.isOpen && ownsPanel() && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      e.stopPropagation();
+      return state.paletteBox ? closePalette() : openPalette();
+    }
     if (state.placing && e.key === "Escape") {
       e.preventDefault();
       state.placing = null;
@@ -4116,6 +4398,12 @@
       e.preventDefault();
       e.stopPropagation();
       return nudge(state.selected, e.key, e.shiftKey);
+    }
+    if (((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "z") || (e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "y")) {
+      e.preventDefault();
+      e.stopPropagation();
+      redoPreview();
+      return;
     }
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
       e.preventDefault();

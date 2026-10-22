@@ -112,3 +112,12 @@ test("a ; inside url() or quotes doesn't split a declaration", async () => {
   const f = await setToken(root, { name: "--icon", file: "a.css", line: 1, from: 'url("data:image/svg+xml;utf8,<svg/>")', to: "none" });
   assert.match(f.after, /^:root \{ --icon: none; --after: 1px; \}/);
 });
+
+test("a :root with only a couple of tokens is still the base mode", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "uitk-small-"));
+  await writeFile(path.join(root, "a.css"), `:root { --brand: #3355ff; --space: 12px; }\n.card { --pad: 4px; }\n`);
+  const r = await scanTokens(root);
+  assert.deepEqual(r.modes.map((m) => m.key), [":root"]);
+  assert.deepEqual(r.tokens.map((t) => t.name).sort(), ["--brand", "--space"]);
+  assert.deepEqual(r.local.map((t) => t.name), ["--pad"]);
+});

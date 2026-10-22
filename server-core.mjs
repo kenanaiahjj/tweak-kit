@@ -6,6 +6,7 @@ import { adoptToken, createToken, scanTokens, setToken } from "./tokens.mjs";
 import { systemPage } from "./system-page.mjs";
 import { addAsk, askStatus, cancelAsk } from "./asks.mjs";
 import { jsxAt, toTailwind } from "./code.mjs";
+import { findRoutes as findAppRoutes } from "./routes.mjs";
 import { promises as fs, unlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -211,6 +212,12 @@ export function studioPage(appPath) {
   .pages button:hover { background: #2c2c2c; }
   .pages button i { width: 6px; height: 6px; border-radius: 3px; background: #7b61ff; flex: none; }
   .pages .src { color: var(--dim); font-size: 10px; margin-left: auto; }
+  .pages .src + .src { margin-left: 6px; }
+  .pages button[data-params] span:first-of-type { color: var(--dim); }
+  .pages-actions { display: grid; gap: 6px; padding: 4px 12px 8px; }
+  .pages-actions button { justify-content: center; height: 30px; border-radius: 8px; background: rgba(255,255,255,.06); font-size: 12px; font-weight: 500; }
+  .pages-actions button:hover { background: rgba(255,255,255,.1); }
+  .pages-actions button:disabled { opacity: .45; cursor: default; }
   .pages .pages-empty { padding: 4px 12px; color: var(--dim); }
   .viewport { position: relative; flex: 1; min-width: 0; overflow: hidden; background: var(--bg); cursor: default; }
   .viewport.panning, .viewport.hand { cursor: grab; }
@@ -715,17 +722,52 @@ export function studioPage(appPath) {
   function drawMinimap() {}
 
   // ---------- pages ----------
+  // The app's routes, with ways to add them as screens. Routes with parameters ask for values.
+  const FIND_SCREENS = "Find the screens of this app and set them up for the UI tweak kit's studio. " +
+    "1) Find every distinct screen, and the states worth designing for each (empty, loading, error, signed out, a long list…). " +
+    "2) If screens or states can't be reached by URL, add a small development-only hook: ?screen=<name> opens a screen, and ?fixture=<name> loads a named, made-up data state instead of the saved one and never writes it back; both are ignored outside development (e.g. behind import.meta.env.DEV). Keep it to one small new file plus the few lines where the app picks its first screen and loads its state, and don't change what users see. " +
+    '3) Write .ui-tweaks/canvas.json as {"version":1,"artboards":[{"id":"a1","name":"Home","device":"i16","url":"/","x":0,"y":0}, …],"notes":[],"arrows":[]}: one artboard per screen or state, named like "Wallet · verified", keeping the artboards already there.';
+  const fillParams = (p) => {
+    let cancelled = false;
+    const out = p.replace(/\\[\\.\\.\\.(\\w+)\\]|\\[\\[\\.\\.\\.(\\w+)\\]\\]|\\[(\\w+)\\]|:(\\w+)\\??|\\$(\\w+)|\\*/g, (m, a, b, c, d, e) => {
+      if (cancelled) return m;
+      const v = prompt("Value for " + (a || b || c || d || e || "the rest of the path") + " in " + p, "");
+      if (v === null) cancelled = true;
+      return v === null ? m : v.replace(/^\\/+/, "");
+    });
+    return cancelled ? null : out;
+  };
   async function loadPages() {
     if (!view.pages) return;
     const box = $(".pages");
     let data = { routes: [], pending: [] };
     try { data = await fetch("/__ui-tweaks/routes").then((r) => r.json()); } catch {}
-    box.innerHTML = "<h4>Add a screen for</h4>" + (data.routes.length ? data.routes.map((r) => '<button data-path="' + esc(r.path) + '">' + (data.pending.includes(r.path) ? "<i title='Has pending tweaks'></i>" : "") + "<span>" + esc(r.path) + '</span><span class="src">' + esc(r.source) + "</span></button>").join("") : '<div class="pages-empty">No routes found.</div>');
+    const have = new Set(canvas.artboards.map((a) => (a.url || "/").split(/[?#]/)[0]));
+    const fresh = data.routes.filter((r) => !r.params && !have.has(r.path));
+    const needValues = data.routes.filter((r) => r.params).length;
+    box.innerHTML = '<div class="pages-actions"><button class="pg-all"' + (fresh.length ? "" : " disabled") + ">Add all" + (fresh.length ? " (" + fresh.length + ")" : "") + '</button><button class="pg-find" title="For apps that switch screens without URLs: Claude adds a dev-only ?screen= / ?fixture= hook and lists the screens here (needs the ui-tweaks mod in an open Claude Code session)">✨ Find screens with Claude</button></div>' +
+      "<h4>Routes · " + data.routes.length + (needValues ? " (" + needValues + " need a value)" : "") + "</h4>" +
+      (data.routes.length ? data.routes.map((r) => '<button data-path="' + esc(r.path) + '"' + (r.params ? ' data-params="1"' : "") + ">" + (data.pending.includes(r.path) ? "<i title='Has pending tweaks'></i>" : "") + "<span>" + esc(r.path) + "</span>" + (have.has(r.path) ? '<span class="src" title="Already a screen">✓</span>' : "") + '<span class="src">' + (r.params ? "needs a value" : esc(r.source)) + "</span></button>").join("") : '<div class="pages-empty">No routes found. If the app switches screens without URLs, use Find screens.</div>');
     for (const b of box.querySelectorAll("button[data-path]")) b.addEventListener("click", () => {
-      const p = b.dataset.path;
-      if (/[\\[:*]/.test(p)) return note("That route needs a value: add it, then fill it in with ✎.");
+      const p = b.dataset.params ? fillParams(b.dataset.path) : b.dataset.path;
+      if (!p) return;
       const a = addArtboard({ url: p, name: p === "/" ? "Home" : p });
       setMode("focus", a.id);
+      loadPages();
+    });
+    box.querySelector(".pg-all").addEventListener("click", () => {
+      for (const r of fresh) addArtboard({ url: r.path, name: r.path === "/" ? "Home" : r.path });
+      note("Added " + fresh.length + " screen" + (fresh.length === 1 ? "" : "s") + (needValues ? "; routes with parameters need a value: click them" : ""));
+      loadPages();
+    });
+    box.querySelector(".pg-find").addEventListener("click", async () => {
+      try {
+        const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "edit", instruction: FIND_SCREENS, page: { url: "/", path: "/" } }) });
+        if (!res.ok) throw new Error((await res.json()).error);
+        note("Claude is finding the screens; they'll appear in the screen list as it adds them (keep a Claude Code session with the ui-tweaks mod open).");
+      } catch (e) {
+        note("Couldn't ask Claude: " + e.message);
+      }
     });
   }
 
@@ -921,36 +963,9 @@ export function studioPage(appPath) {
  * in the source, and HTML files. Dynamic segments ([id], :id) are kept as written.
  */
 export async function findRoutes(root) {
-  const routes = new Map(); // path -> source
-  const add = (p, source) => {
-    const clean = ("/" + p).replace(/\/+/g, "/").replace(/(.)\/$/, "$1");
-    if (!routes.has(clean)) routes.set(clean, source);
-  };
-  for (const file of await sourceFiles(root)) {
-    const rel = path.relative(root, file).split(path.sep).join("/");
-    const next = /^(?:src\/)?app\/(.*?)\/?page\.(?:tsx|jsx|ts|js|mdx)$/.exec(rel) || /^(?:src\/)?app\/()page\.(?:tsx|jsx|ts|js|mdx)$/.exec(rel);
-    if (next) {
-      add(next[1].split("/").filter((seg) => !/^\(.*\)$/.test(seg) && !seg.startsWith("@")).join("/"), "app");
-      continue;
-    }
-    const pages = /^(?:src\/)?pages\/(.*)\.(?:tsx|jsx|ts|js)$/.exec(rel);
-    if (pages && !/(^|\/)(_app|_document|_error)$/.test(pages[1]) && !pages[1].startsWith("api/")) {
-      add(pages[1].replace(/(^|\/)index$/, ""), "pages");
-      continue;
-    }
-    if (rel.endsWith(".html") && !rel.startsWith(".")) {
-      add(rel === "index.html" ? "" : rel.replace(/(^|\/)index\.html$/, "$1"), "html");
-      continue;
-    }
-    const text = await fs.readFile(file, "utf8").catch(() => "");
-    for (const m of text.matchAll(/\bpath\s*[:=]\s*\{?\s*["'`](\/[^"'`\s]*)["'`]/g)) add(m[1], "router");
-  }
-  if (!routes.size) add("", "");
+  const routes = await findAppRoutes(root);
   const pending = (await readPending(root)).batches.map((b) => b.page && b.page.path).filter(Boolean);
-  return {
-    routes: [...routes].map(([p, source]) => ({ path: p, source })).sort((a, b) => a.path.localeCompare(b.path)),
-    pending: [...new Set(pending)],
-  };
+  return { routes, pending: [...new Set(pending)] };
 }
 
 /**

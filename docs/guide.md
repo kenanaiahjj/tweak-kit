@@ -142,7 +142,9 @@ Nothing to do: the kit writes a `.gitignore` containing `*` inside `.ui-tweaks/`
 
 **Screens**
 - **‹ ›** (or ←/→) step through your screens; the dropdown jumps to one. A screen loads the first time you open it and stays loaded, so switching back is instant.
-- **＋** adds a copy of the screen in view (then change its URL with **✎**), **✎** renames it or changes its URL, **🗑** removes it (your app isn't touched). **☰** lists the app's routes; click one to add a screen for it.
+- **＋** adds a copy of the screen in view (then change its URL with **✎**), **✎** renames it or changes its URL, **🗑** removes it (your app isn't touched).
+- **☰** lists the app's routes, found in its files: Next.js (app and pages routers), SvelteKit, Nuxt, Remix and React Router (flat routes and `routes.ts`), TanStack Router, Astro, plain HTML, and route paths written in code (React Router, Vue Router and the like), nested ones joined to their parents. Click one to add a screen for it; **Add all** adds every route that isn't a screen yet. A route with parameters (`/users/:id`, `/blog/[slug]`) asks for a value first.
+- **✨ Find screens with Claude** is for apps that switch screens without URLs: Claude adds a small development-only `?screen=` / `?fixture=` hook (see the dev hook below) and writes the screens into `canvas.json`, so they appear in the list. It runs through Ask Claude, so keep a Claude Code session with the mod open.
 - The device menu and **⟲** (rotate) apply to the screen in view. The **width slider** resizes it live to watch the layout respond; its ticks are your project's breakpoints, and picking a device resets it.
 - **▦** shows every screen at a glance: a sketch of each one you've opened (drawn from its page, so web fonts and images may be missing), with its size and URL; click one to open it. Scroll or drag to see a device bigger than the space.
 - Tweaks belong to the screen they were made on, identified by its path, query and #hash, and only preview there. The panel notes unsent changes on other screens; open a screen to see and send its changes.

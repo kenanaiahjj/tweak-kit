@@ -28,6 +28,7 @@
     "update.mjs",
     "overlay.js",
     "serve.mjs",
+    "routes.mjs",
     "server-core.mjs",
     "system-page.mjs",
     "tailwind.mjs",

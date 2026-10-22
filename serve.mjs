@@ -6,6 +6,7 @@ import http from "node:http";
 import { promises as fs, watch } from "node:fs";
 import path from "node:path";
 import { announceServer, createTweaksHandler, overlayScriptTag } from "./server-core.mjs";
+import { MIRROR_SCRIPT } from "./versions.mjs";
 import { checkForUpdate } from "./update.mjs";
 
 const args = process.argv.slice(2);
@@ -14,6 +15,8 @@ const port = portFlag >= 0 ? Number(args[portFlag + 1]) : 5500;
 const folderArg = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--port");
 const root = path.resolve(folderArg || ".");
 const apiOnly = args.includes("--api-only");
+// --mirror: another version opened by the studio; its pages only follow the studio, without the panel.
+const mirror = args.includes("--mirror");
 
 const TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -60,7 +63,7 @@ const server = http.createServer((req, res) => {
       const ext = path.extname(file).toLowerCase();
       let body = await fs.readFile(file);
       if (ext === ".html") {
-        const tag = overlayScriptTag(root, { liveReload: true });
+        const tag = mirror ? `<script>${MIRROR_SCRIPT}</script>` : overlayScriptTag(root, { liveReload: true });
         const html = body.toString("utf8");
         body = html.includes("</body>") ? html.replace("</body>", `${tag}\n</body>`) : html + tag;
       }
@@ -75,6 +78,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, () => {
+  if (mirror) return console.log(`UI Tweaks: this version on http://localhost:${port}`);
   void announceServer(root, `http://localhost:${port}`);
   void checkForUpdate(root, { autoUpdate: !args.includes("--no-auto-update") });
   if (apiOnly) {

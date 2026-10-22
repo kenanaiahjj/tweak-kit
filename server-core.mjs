@@ -7,6 +7,7 @@ import { systemPage } from "./system-page.mjs";
 import { addAsk, askStatus, cancelAsk } from "./asks.mjs";
 import { jsxAt, toTailwind } from "./code.mjs";
 import { findRoutes as findAppRoutes } from "./routes.mjs";
+import { listRefs, startVersion, stopVersion, versionStatus } from "./versions.mjs";
 import { promises as fs, unlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -255,6 +256,26 @@ export function studioPage(appPath) {
   .minimap .mini-ab.selected { background: var(--accent); }
   .minimap .mini-view { border: 1px solid var(--accent); background: rgba(13,153,255,.08); }
   #ui-tweaks-root { width: 336px; flex: none; background: #212121; border-left: 1px solid var(--line); overflow: hidden; }
+  /* Another version side by side: a second frame to the right, each with its label above. */
+  .vs-label { display: none; position: absolute; left: 0; right: 0; bottom: 100%; padding-bottom: calc(8px * var(--iz)); font-size: calc(13px * var(--iz)); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
+  .vs-label b { color: var(--text); font-weight: 600; }
+  .viewport.versus .vs-label { display: block; }
+  .vs-ab .ab-frame { background: #fff; }
+  .vs-wait { position: absolute; inset: 0; display: grid; place-items: center; background: #1b1b1b; color: var(--dim); font-size: calc(14px * var(--iz)); text-align: center; padding: 24px; white-space: pre-wrap; }
+  .vs-wait[hidden] { display: none; }
+  .vs-pop { position: fixed; top: 44px; right: 348px; width: 340px; max-height: 70vh; display: flex; flex-direction: column; z-index: 20; background: var(--bar); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 16px 48px rgba(0,0,0,.5); overflow: hidden; }
+  .vs-pop[hidden] { display: none; }
+  .vs-pop .vs-now { padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--dim); }
+  .vs-pop .vs-now b { color: var(--text); }
+  .vs-pop .vs-now button { margin-top: 8px; width: 100%; height: 28px; border-radius: 7px; border: 0; background: rgba(255,255,255,.08); cursor: pointer; }
+  .vs-pop input { margin: 8px 12px; height: 28px; border-radius: 7px; border: 1px solid var(--line); background: #1b1b1b; color: var(--text); padding: 0 8px; }
+  .vs-pop .vs-list { overflow-y: auto; padding-bottom: 6px; }
+  .vs-pop h4 { margin: 8px 12px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); font-weight: 600; }
+  .vs-pop .vs-ref { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 6px 12px; cursor: pointer; }
+  .vs-pop .vs-ref:hover, .vs-pop .vs-ref.on { background: #2c2c2c; }
+  .vs-pop .vs-ref span { display: block; color: var(--dim); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vs-pop .vs-err { padding: 10px 12px; color: #ff8a80; white-space: pre-wrap; font-size: 11px; }
+  .vs-toggle.on { color: var(--accent); }
   .waiting { padding: 24px 18px; color: var(--dim); line-height: 1.5; text-align: center; }
   @media (max-width: 720px) { #ui-tweaks-root { width: 300px; } .minimap { display: none; } }
 </style>
@@ -290,7 +311,8 @@ export function studioPage(appPath) {
       <button class="grid" title="Column grid">Grid</button>
       <button class="base" title="8pt baseline">8pt</button>
       <button class="compare" title="Hold to see every artboard without your previews (or hold \\ in the app)">Compare</button>
-      <button class="shot" title="Snapshot of the selected artboard as a PNG">📷</button>
+      <button class="shot" title="Copy a picture of the screen to the clipboard (both versions when comparing). Shift-click also saves a PNG">📷</button>
+      <button class="vs-toggle" title="Compare with another branch or commit, side by side">⑂ Versions</button>
       <span class="sep"></span>
       <a class="tb" href="/__ui-tweaks/system" title="Design system: every token in your CSS, editable">Tokens</a>
     </div>
@@ -307,6 +329,7 @@ export function studioPage(appPath) {
 </div>
 <div class="note"></div>
 <div class="overview-pop" hidden></div>
+<div class="vs-pop" hidden></div>
 <script>
   // Screen sizes in CSS px (portrait), and what each device draws over the page.
   const DEVICES = [
@@ -411,12 +434,15 @@ export function studioPage(appPath) {
   // Each screen keeps its zoom until you change its size.
   let focusPan = { x: 0, y: 0, id: null };
   const focusZoom = new Map(); // artboard id -> { z, size }
-  const fitZoom = (w, h) => Math.min(1, (viewport.clientWidth - 48) / w, (viewport.clientHeight - 48) / h);
+  const fitZoom = (w, h) => Math.min(1, (viewport.clientWidth - 48) / w, (viewport.clientHeight - (versusOn() ? 80 : 48)) / h);
+  // With another version open, the canvas holds both screens and the gap between them.
+  const VS_GAP = 64;
+  const spanW = (w) => (versusOn() ? w * 2 + VS_GAP : w);
   function zoomOf(a) {
     const [w, h] = size(a);
-    const key = w + "x" + h;
+    const key = w + "x" + h + (versusOn() ? ":vs" : "");
     let z = focusZoom.get(a.id);
-    if (!z || z.size !== key) focusZoom.set(a.id, (z = { z: Math.max(0.05, fitZoom(w, h)), size: key, auto: true }));
+    if (!z || z.size !== key) focusZoom.set(a.id, (z = { z: Math.max(0.05, fitZoom(spanW(w), h)), size: key, auto: true }));
     return z.z;
   }
   function layoutFocus() {
@@ -424,10 +450,11 @@ export function studioPage(appPath) {
     if (!a) return;
     const [w, h] = size(a);
     const z = zoomOf(a);
-    const sw = w * z, sh = h * z;
-    const vw = viewport.clientWidth, vh = viewport.clientHeight, pad = 24;
+    placeVersus(a);
+    const sw = spanW(w) * z, sh = h * z;
+    const vw = viewport.clientWidth, vh = viewport.clientHeight, pad = versusOn() ? 40 : 24;
     const clamp = (v, size, room) => (size + pad * 2 <= room ? (room - size) / 2 : Math.min(pad, Math.max(room - size - pad, v)));
-    const id = a.id + ":" + w + "x" + h;
+    const id = a.id + ":" + w + "x" + h + (versusOn() ? ":vs" : "");
     if (focusPan.id !== id) focusPan = { x: (vw - sw) / 2, y: sh + pad * 2 <= vh ? (vh - sh) / 2 : pad, id };
     focusPan.x = clamp(focusPan.x, sw, vw);
     focusPan.y = clamp(focusPan.y, sh, vh);
@@ -626,7 +653,7 @@ export function studioPage(appPath) {
   function makeFrame(a, isPrimary) {
     const el = document.createElement("div");
     el.className = "ab";
-    el.innerHTML = '<div class="ab-head"></div><div class="ab-frame"><iframe title="Artboard"></iframe><div class="ab-layer"></div></div>';
+    el.innerHTML = '<div class="ab-head"></div><div class="vs-label"></div><div class="ab-frame"><iframe title="Artboard"></iframe><div class="ab-layer"></div></div>';
     const f = { el, head: el.querySelector(".ab-head"), frame: el.querySelector(".ab-frame"), iframe: el.querySelector("iframe"), layer: el.querySelector(".ab-layer"), url: null };
     if (isPrimary) f.iframe.dataset.primary = "1";
     world.append(el);
@@ -950,41 +977,277 @@ export function studioPage(appPath) {
   cmp.addEventListener("pointerdown", () => { cmp.classList.add("on"); compare(true); });
   for (const ev of ["pointerup", "pointerleave"]) cmp.addEventListener(ev, () => { if (cmp.classList.contains("on")) { cmp.classList.remove("on"); compare(false); } });
 
-  // Snapshot: the browser captures this tab (it asks each time), cropped to the selected artboard.
-  $(".shot").addEventListener("click", async () => {
-    const a = canvas.artboards.find((x) => x.id === focusedId()) || canvas.artboards[0];
+  // Snapshot: the browser captures this tab (Chrome asks which tab each time), cropped to the screen, or to
+  // both screens when another version is open, laid side by side with their labels. It goes to the clipboard,
+  // ready to paste; Shift-click also saves a PNG (and so does a browser that won't allow the copy).
+  $(".shot").addEventListener("click", async (e) => {
+    const a = current();
     const f = a && frames.get(a.id);
     if (!f) return;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return note("This browser can't capture the page; use Chrome.");
+    const download = e.shiftKey;
     let stream;
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({ video: { displaySurface: "browser" }, audio: false, preferCurrentTab: true, selfBrowserSurface: "include" });
     } catch { return note("Snapshot cancelled."); }
     const hide = (on) => frames.forEach((x) => { try { x.iframe.contentWindow.__uiTweaks.hideOverlay(on); } catch {} });
+    // Fit the screen(s) in view for the capture, then put the zoom back.
+    const kept = { zoom: focusZoom.get(a.id), pan: { ...focusPan } };
+    fitFocus();
     hide(true);
     try {
       const video = document.createElement("video");
       video.srcObject = stream;
       video.muted = true;
       await video.play();
-      await new Promise((r) => setTimeout(r, 250));
+      await new Promise((r) => setTimeout(r, 300));
       const sx = video.videoWidth / innerWidth, sy = video.videoHeight / innerHeight;
-      const box = f.frame.getBoundingClientRect();
+      const shots = [{ box: f.frame.getBoundingClientRect(), label: versusOn() ? labelParts("here") : null }];
+      if (versusOn()) shots.push({ box: vs.frame.getBoundingClientRect(), label: labelParts("there") });
+      const crops = shots.map((s) => ({ ...s, w: Math.round(s.box.width * sx), h: Math.round(s.box.height * sy) }));
       const out = document.createElement("canvas");
-      out.width = Math.round(box.width * sx);
-      out.height = Math.round(box.height * sy);
-      out.getContext("2d").drawImage(video, box.left * sx, box.top * sy, out.width, out.height, 0, 0, out.width, out.height);
+      const ctx = out.getContext("2d");
+      if (crops.length === 1) {
+        out.width = crops[0].w;
+        out.height = crops[0].h;
+        ctx.drawImage(video, crops[0].box.left * sx, crops[0].box.top * sy, crops[0].w, crops[0].h, 0, 0, crops[0].w, crops[0].h);
+      } else {
+        // Side by side on a light card: each screen under its label (version, commit, when).
+        const u = Math.max(1, crops[0].w / 600), pad = Math.round(32 * u), gap = Math.round(32 * u), lh = Math.round(52 * u);
+        out.width = pad * 2 + crops.reduce((n, c) => n + c.w, 0) + gap * (crops.length - 1);
+        out.height = pad * 2 + lh + Math.max(...crops.map((c) => c.h));
+        ctx.fillStyle = "#f4f4f5";
+        ctx.fillRect(0, 0, out.width, out.height);
+        let x = pad;
+        for (const c of crops) {
+          ctx.fillStyle = "#18181b";
+          ctx.font = "600 " + Math.round(17 * u) + "px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+          ctx.fillText(c.label[0], x, pad + Math.round(18 * u), c.w);
+          ctx.fillStyle = "#71717a";
+          ctx.font = Math.round(13 * u) + "px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+          ctx.fillText(c.label[1], x, pad + Math.round(38 * u), c.w);
+          ctx.drawImage(video, c.box.left * sx, c.box.top * sy, c.w, c.h, x, pad + lh, c.w, c.h);
+          ctx.strokeStyle = "rgba(0,0,0,.12)";
+          ctx.lineWidth = Math.max(1, u);
+          ctx.strokeRect(x - 0.5, pad + lh - 0.5, c.w + 1, c.h + 1);
+          x += c.w + gap;
+        }
+      }
       const blob = await new Promise((r) => out.toBlob(r, "image/png"));
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = (a.name || "artboard").replace(/[^\\w-]+/g, "-") + ".png";
-      link.click();
-      try { await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]); note("Snapshot saved and copied."); } catch { note("Snapshot saved."); }
+      const name = (a.name || "screen").replace(/[^\\w-]+/g, "-") + (versusOn() ? "-vs-" + versus.ref.replace(/[^\\w-]+/g, "-") : "") + ".png";
+      const save = () => {
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = name;
+        link.click();
+      };
+      let copied = false;
+      try {
+        window.focus();
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+        copied = true;
+      } catch {}
+      if (download || !copied) save();
+      note(copied ? (download ? "Copied to the clipboard and saved." : "Copied to the clipboard, ready to paste.") : "Couldn't copy (the browser refused), so it's saved as a PNG instead.");
     } finally {
       stream.getTracks().forEach((t) => t.stop());
       hide(false);
+      if (kept.zoom) focusZoom.set(a.id, kept.zoom);
+      focusPan = kept.pan;
+      layoutFocus();
     }
   });
+
+  // ---------- another version, side by side ----------
+  // A branch or commit runs from its own checkout on its own dev server (see versions.mjs); its frame sits
+  // to the right of the screen you're editing, the same size, and follows its scrolling and navigation.
+  let versus = null; // { ref, status, url, sha, subject, when, error }
+  let refsInfo = null;
+  const versusOn = () => !!(versus && view.versus);
+  const vs = (() => {
+    const el = document.createElement("div");
+    el.className = "ab vs-ab hidden";
+    el.innerHTML = '<div class="vs-label"></div><div class="ab-frame"><iframe title="Other version"></iframe><div class="ab-layer"></div><div class="vs-wait"></div></div>';
+    return { el, label: el.querySelector(".vs-label"), frame: el.querySelector(".ab-frame"), iframe: el.querySelector("iframe"), layer: el.querySelector(".ab-layer"), wait: el.querySelector(".vs-wait"), src: null };
+  })();
+  world.append(vs.el);
+  const STEPS = { preparing: "Getting ready…", "checking out": "Checking out", updating: "Updating the checkout of", installing: "Installing the dependencies of", starting: "Starting the dev server for" };
+  function labelParts(side) {
+    const cur = (refsInfo && refsInfo.current) || {};
+    if (side === "here") return [(cur.name || "This version") + (cur.dirty ? " (with your changes)" : ""), [cur.sha, cur.dirty ? "uncommitted changes" : "last commit"].filter(Boolean).join(" · ")];
+    return [versus.ref, [versus.sha, versus.when, versus.subject].filter(Boolean).join(" · ")];
+  }
+  const labelHtml = (side) => { const [t, sub] = labelParts(side); return "<b>" + esc(t) + "</b>  " + esc(sub); };
+  function placeVersus(a) {
+    const on = versusOn();
+    viewport.classList.toggle("versus", on);
+    vs.el.classList.toggle("hidden", !on);
+    $(".vs-toggle").classList.toggle("on", on);
+    $(".vs-toggle").textContent = on ? "⑂ " + versus.ref : "⑂ Versions";
+    const f = frames.get(a.id);
+    if (!on) return;
+    const [w, h] = size(a);
+    Object.assign(vs.el.style, { left: a.x + w + VS_GAP + "px", top: a.y + "px" });
+    Object.assign(vs.frame.style, { width: w + "px", height: h + "px" });
+    // Runs a few times a second while comparing: only touch the DOM when something changed.
+    const put = (el, html) => { if (el && el.__html !== html) { el.__html = html; el.innerHTML = html; } };
+    put(vs.layer, overlays(w));
+    if (f) put(f.el.querySelector(".vs-label"), labelHtml("here"));
+    put(vs.label, labelHtml("there"));
+    const ready = versus.status === "ready" && versus.url;
+    vs.wait.hidden = !!ready;
+    if (!ready) vs.wait.textContent = versus.status === "failed" ? "Couldn't open " + versus.ref + ":\\n" + (versus.error || "") : (STEPS[versus.status] || "Opening") + " " + versus.ref + "…";
+    const want = ready ? versus.url + pathOf(f) : null;
+    if (want && vs.src !== want) {
+      // A new version or screen loads; after that the frame follows by message instead of reloading.
+      if (!vs.src || !vs.src.startsWith(versus.url)) { vs.src = want; vs.iframe.src = want; }
+      else { vs.src = want; mirror({ nav: want.slice(versus.url.length) }); }
+    }
+  }
+  // Where the screen you're editing is now (it may have moved in-app since it loaded).
+  function pathOf(f) {
+    try { const l = f.iframe.contentWindow.location; if (l.origin === location.origin) return l.pathname + l.search + l.hash; } catch {}
+    const a = current();
+    return a ? a.url : "/";
+  }
+  function mirror(msg) {
+    if (!versusOn() || versus.status !== "ready" || !vs.iframe.contentWindow) return;
+    try { vs.iframe.contentWindow.postMessage({ uit: "mirror", ...msg }, versus.url); } catch {}
+  }
+  // Scrolling in the screen you're editing: the page, or the element that scrolled (by position from <body>).
+  function scrollMsg(doc, target) {
+    if (!target || target === doc || target === doc.documentElement || target === doc.scrollingElement) {
+      const se = doc.scrollingElement || doc.documentElement;
+      return { path: null, top: se.scrollTop, left: se.scrollLeft };
+    }
+    const path = [];
+    for (let el = target; el && el !== doc.body; el = el.parentElement) {
+      if (!el.parentElement) return null;
+      path.unshift(Array.prototype.indexOf.call(el.parentElement.children, el));
+    }
+    return { path, top: target.scrollTop, left: target.scrollLeft };
+  }
+  const followed = new WeakSet();
+  function follow(f) {
+    let win;
+    try { win = f.iframe.contentWindow; if (!win || followed.has(win.document)) return; followed.add(win.document); } catch { return; }
+    let queued = null;
+    win.addEventListener("scroll", (e) => {
+      if (!versusOn() || frames.get(focusedId()) !== f) return;
+      queued = e.target;
+      requestAnimationFrame(() => { if (queued) { const m = scrollMsg(win.document, queued); queued = null; if (m) mirror({ scroll: m }); } });
+    }, { capture: true, passive: true });
+  }
+  addEventListener("message", (e) => {
+    if (!versus || !versus.url || e.origin !== versus.url || !e.data || e.data.uit !== "mirror-ready") return;
+    const f = frames.get(focusedId());
+    try { const se = f.iframe.contentWindow.document.scrollingElement; mirror({ scroll: { path: null, top: se.scrollTop, left: se.scrollLeft } }); } catch {}
+  });
+  // While comparing: catch in-app navigation and newly loaded pages in the screen you're editing.
+  setInterval(() => {
+    if (!versusOn()) return;
+    const f = frames.get(focusedId());
+    if (!f) return;
+    follow(f);
+    if (versus.status === "ready") { const a = current(); if (a) placeVersus(a); }
+  }, 400);
+
+  async function pollVersus() {
+    clearTimeout(pollVersus.t);
+    if (!view.versus) return;
+    try {
+      const data = await fetch("/__ui-tweaks/versions", { cache: "no-store" }).then((r) => r.json());
+      const run = (data.running || []).find((r) => r.ref === view.versus);
+      if (!run) {
+        // The dev server restarted (the versions stop with it): open it again.
+        if (!versus || versus.status !== "failed") return openVersion(view.versus);
+      } else versus = run;
+    } catch {}
+    layoutFocus();
+    if (versus && versus.status !== "ready" && versus.status !== "failed") pollVersus.t = setTimeout(pollVersus, 700);
+    else if (versus && versus.status === "ready") pollVersus.t = setTimeout(pollVersus, 5000);
+    if (!$(".vs-pop").hidden) drawVersions();
+  }
+  async function openVersion(ref) {
+    const was = versusOn();
+    view.versus = ref;
+    saveView();
+    vs.src = null;
+    vs.iframe.src = "about:blank";
+    try {
+      const res = await fetch("/__ui-tweaks/versions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ref }) });
+      const data = await res.json();
+      versus = res.ok ? data : { ref, status: "failed", error: data.error };
+    } catch (err) { versus = { ref, status: "failed", error: String(err) }; }
+    if (!refsInfo) loadRefs();
+    if (!was) { focusPan.id = null; }
+    layoutFocus();
+    pollVersus();
+  }
+  async function closeVersion() {
+    const ref = view.versus;
+    view.versus = null;
+    versus = null;
+    saveView();
+    vs.src = null;
+    vs.iframe.src = "about:blank";
+    focusPan.id = null;
+    layoutFocus();
+    $(".vs-pop").hidden = true;
+    if (ref) fetch("/__ui-tweaks/versions?ref=" + encodeURIComponent(ref), { method: "DELETE" }).catch(() => {});
+  }
+  async function loadRefs() {
+    try { refsInfo = await fetch("/__ui-tweaks/versions?refs", { cache: "no-store" }).then((r) => r.json()); } catch { refsInfo = { error: "Couldn't list the branches." }; }
+    if (!$(".vs-pop").hidden) drawVersions();
+    if (versusOn()) layoutFocus();
+  }
+  function drawVersions() {
+    const pop = $(".vs-pop");
+    const q = (pop.querySelector("input") || {}).value || "";
+    let html = '<div class="vs-now">';
+    if (versusOn()) {
+      html += "Showing <b>" + esc(versus.ref) + "</b> next to " + esc(labelParts("here")[0]) + (versus.status === "ready" ? "" : " · " + esc(versus.status)) + '<button class="vs-close">Close the comparison</button>';
+    } else {
+      html += "Pick a branch to show it beside this screen. It opens from its own checkout, so yours isn't touched.";
+    }
+    html += "</div>";
+    if (versus && versus.status === "failed") html += '<div class="vs-err">' + esc(versus.error || "") + (versus.log ? "\\n\\n" + esc(versus.log) : "") + "</div>";
+    if (!refsInfo) html += '<div class="vs-now">Loading branches…</div>';
+    else if (refsInfo.error) html += '<div class="vs-err">' + esc(refsInfo.error) + "</div>";
+    else {
+      const match = (r) => !q || r.name.toLowerCase().includes(q.toLowerCase());
+      const item = (r) => '<button class="vs-ref' + (versus && versus.ref === r.name ? " on" : "") + '" data-ref="' + esc(r.name) + '">' + esc(r.name) + (r.name === refsInfo.current.name ? " (this checkout)" : "") + "<span>" + esc([r.sha, r.when, r.subject].join(" · ")) + "</span></button>";
+      const local = refsInfo.refs.filter((r) => !r.remote && match(r)), remote = refsInfo.refs.filter((r) => r.remote && match(r));
+      html += '<input placeholder="Find a branch, or type a commit / tag" value="' + esc(q) + '" /><div class="vs-list">';
+      if (local.length) html += "<h4>Branches</h4>" + local.map(item).join("");
+      if (remote.length) html += "<h4>Remote</h4>" + remote.map(item).join("");
+      if (!local.length && !remote.length) html += '<div class="vs-now">No branch matches; press Enter to open “' + esc(q) + "” as a commit or tag.</div>";
+      html += "</div>";
+    }
+    const focused = document.activeElement && document.activeElement.closest && document.activeElement.closest(".vs-pop");
+    pop.innerHTML = html;
+    const input = pop.querySelector("input");
+    if (input) {
+      if (focused) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+      input.addEventListener("input", drawVersions);
+      input.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Escape") pop.hidden = true;
+        if (e.key === "Enter" && input.value.trim()) { const first = pop.querySelector(".vs-ref"); openVersion(first ? first.dataset.ref : input.value.trim()); pop.hidden = true; }
+      });
+    }
+    for (const b of pop.querySelectorAll(".vs-ref")) b.addEventListener("click", () => { openVersion(b.dataset.ref); pop.hidden = true; });
+    const close = pop.querySelector(".vs-close");
+    if (close) close.addEventListener("click", closeVersion);
+  }
+  $(".vs-toggle").addEventListener("click", () => {
+    const pop = $(".vs-pop");
+    pop.hidden = !pop.hidden;
+    if (!pop.hidden) { drawVersions(); loadRefs(); const i = pop.querySelector("input"); if (i) i.focus(); }
+  });
+  addEventListener("keydown", (e) => { if (e.key === "Escape") $(".vs-pop").hidden = true; });
+  addEventListener("pointerdown", (e) => { const pop = $(".vs-pop"); if (!pop.hidden && !e.target.closest(".vs-pop, .vs-toggle")) pop.hidden = true; });
+  if (view.versus) { loadRefs(); pollVersus(); }
 
   new ResizeObserver(() => {
     // Screens still at their automatic fit refit to the new space.
@@ -1093,6 +1356,17 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
         const summary = await scanBreakpoints(root);
         const width = Number(url.searchParams.get("width"));
         return send(res, 200, { ...summary, scope: width > 0 ? scopeFor(summary, width) : null });
+      }
+      // Other versions of the app (a branch or commit) for the studio's side-by-side view.
+      if (url.pathname === `${PREFIX}/versions`) {
+        if (req.method === "GET") return send(res, 200, url.searchParams.has("refs") ? await listRefs(root) : { running: versionStatus(root) });
+        const ref = req.method === "DELETE" ? url.searchParams.get("ref") : JSON.parse(await readBody(req)).ref;
+        try {
+          if (req.method === "DELETE") return send(res, 200, { ok: true, stopped: await stopVersion(root, ref) });
+          if (req.method === "POST") return send(res, 200, await startVersion(root, ref));
+        } catch (error) {
+          return send(res, error.status || 500, { error: error.message });
+        }
       }
       if (req.method === "GET" && url.pathname === `${PREFIX}/routes`) {
         return send(res, 200, await findRoutes(root));

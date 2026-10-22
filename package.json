@@ -26,6 +26,7 @@
     "direct-apply.mjs",
     "git.mjs",
     "update.mjs",
+    "versions.mjs",
     "overlay.js",
     "serve.mjs",
     "routes.mjs",

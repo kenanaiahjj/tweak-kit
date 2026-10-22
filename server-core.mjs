@@ -278,6 +278,77 @@ export function studioPage(appPath) {
   .vs-toggle.on { color: var(--accent); }
   .waiting { padding: 24px 18px; color: var(--dim); line-height: 1.5; text-align: center; }
   @media (max-width: 720px) { #ui-tweaks-root { width: 300px; } .minimap { display: none; } }
+  /* ---------- DialKit skin ----------
+     The studio's chrome in the panel's language (after DialKit): #212121 surfaces, quiet 5% white fills,
+     8px corners, 13px medium labels at 70% white, monospace values, semibold sentence-case titles,
+     a soft pill for what's on, and one white primary action. Later rules override the ones above. */
+  :root {
+    --bg: #171717; --bar: #212121; --line: rgba(255,255,255,.08); --text: rgba(255,255,255,.95); --dim: rgba(255,255,255,.5);
+    --label: rgba(255,255,255,.7); --fill: rgba(255,255,255,.05); --hover: rgba(255,255,255,.1); --active: rgba(255,255,255,.12);
+    --radius: 8px; --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  html, body { font: 500 12.5px/1.4 system-ui, -apple-system, "SF Pro Display", "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  .toolbar { height: 48px; gap: 4px; padding: 0 10px; background: var(--bar); border-bottom: 1px solid var(--line); }
+  .toolbar button, .toolbar a.tb { height: 30px; padding: 0 9px; border: 0; border-radius: var(--radius); color: var(--label); font-weight: 500; transition: background .15s, color .15s; }
+  .toolbar button:hover, .toolbar a.tb:hover { background: var(--hover); color: var(--text); }
+  .toolbar button.on, .vs-toggle.on { background: var(--active); color: #fff; }
+  .toolbar select { height: 30px; border: 0; border-radius: var(--radius); background: var(--fill); color: var(--label); padding: 0 8px; transition: background .15s; }
+  .toolbar select:hover { background: var(--hover); color: var(--text); }
+  .sep { height: 18px; background: var(--line); margin: 0 4px; }
+  .zoom, .focus-zoom { font-family: var(--mono); font-size: 11.5px; color: var(--dim); padding: 0 4px; }
+  .width-slider { accent-color: #fff; }
+  .ab-frame { border-radius: 12px; box-shadow: 0 0 0 1px var(--line), 0 16px 48px rgba(0,0,0,.5); }
+  .ab.selected .ab-frame { box-shadow: 0 0 0 1px var(--line), 0 16px 48px rgba(0,0,0,.5); }
+  .vs-label { color: var(--dim); font-family: var(--mono); font-size: calc(12px * var(--iz)); }
+  .vs-label b { font-family: system-ui, -apple-system, sans-serif; font-size: calc(14px * var(--iz)); color: #fff; margin-right: .4em; }
+  .note { background: #2a2a2a; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.4); font-size: 13px; padding: 9px 14px; }
+
+  /* Routes sidebar */
+  .pages { width: 240px; padding: 12px; background: var(--bar); border-right: 1px solid var(--line); scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.12) transparent; }
+  .pages-actions { display: grid; gap: 6px; padding: 0 0 12px; border-bottom: 1px solid var(--line); }
+  .pages-actions button { height: 32px; border-radius: var(--radius); background: var(--fill); color: var(--label); font-size: 12.5px; font-weight: 500; justify-content: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: background .15s, color .15s; }
+  .pages-actions button:hover { background: var(--hover); color: var(--text); }
+  .pages-actions button.primary { background: #fff; color: #212121; font-weight: 600; }
+  .pages-actions button.primary:hover { background: color-mix(in srgb, #fff 88%, #212121); color: #212121; }
+  .pages-actions button:disabled, .pages-actions button.primary:disabled { background: var(--fill); color: var(--dim); opacity: 1; }
+  .pages h4 { display: flex; align-items: baseline; gap: 6px; margin: 14px 0 8px; font-size: 13px; font-weight: 600; color: var(--label); text-transform: none; letter-spacing: -.01em; }
+  .pages h4 span { font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--dim); }
+  .pages .pg-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .pages button.pg-route { height: 32px; padding: 0 10px; border-radius: var(--radius); background: var(--fill); color: var(--label); gap: 8px; transition: background .15s, color .15s; }
+  .pages button.pg-route:hover { background: var(--hover); color: var(--text); }
+  .pages button.pg-route .path { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .pages button.pg-route[data-params] .path { color: var(--dim); }
+  .pages button.pg-route .src { margin-left: auto; flex: none; font-size: 11px; color: var(--dim); }
+  .pages button.pg-route .src + .src { margin-left: 0; }
+  .pages button.pg-route.have { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
+  .pages button.pg-route .tick { color: #8ee6a8; font-size: 11px; }
+  .pages button.pg-route i { width: 6px; height: 6px; border-radius: 3px; background: #a78bfa; flex: none; }
+  .pages .pages-empty { padding: 4px 2px; color: var(--dim); font-size: 12px; line-height: 1.5; }
+
+  /* Popovers */
+  .overview-pop, .vs-pop { background: #212121; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,.5); }
+  .ov-card { border: 0; border-radius: 10px; background: var(--fill); }
+  .ov-card:hover, .ov-card.on { border: 0; box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+  .ov-card .ov-meta { font-size: 12.5px; color: var(--text); padding: 8px 10px; }
+  .ov-card .ov-meta span { font-family: var(--mono); font-size: 11px; }
+  .vs-pop { width: min(340px, calc(100vw - 24px)); padding: 6px; }
+  .vs-pop .vs-now { padding: 10px; border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--label); line-height: 1.5; }
+  .vs-pop .vs-now b { color: #fff; font-weight: 600; }
+  .vs-pop .vs-now button { margin-top: 10px; height: 32px; border-radius: var(--radius); background: var(--fill); color: var(--label); font-weight: 500; transition: background .15s, color .15s; }
+  .vs-pop .vs-now button:hover { background: var(--hover); color: var(--text); }
+  .vs-pop input { margin: 8px 4px; height: 32px; border: 0; border-radius: var(--radius); background: var(--fill); color: var(--text); padding: 0 10px; font-size: 12.5px; outline: none; }
+  .vs-pop input:focus { background: var(--active); box-shadow: inset 0 0 0 1px rgba(255,255,255,.15); }
+  .vs-pop input::placeholder { color: rgba(255,255,255,.35); }
+  .vs-pop .vs-list { padding: 0 4px 4px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; overflow-x: hidden; }
+  .vs-pop h4 { margin: 10px 6px 6px; font-size: 13px; font-weight: 600; color: var(--label); text-transform: none; letter-spacing: -.01em; }
+  .vs-pop .vs-ref { padding: 7px 10px; border-radius: var(--radius); color: var(--text); font-size: 12.5px; font-weight: 500; transition: background .15s; }
+  .vs-pop .vs-ref:hover { background: var(--hover); }
+  .vs-pop .vs-ref.on { background: var(--active); }
+  .vs-pop .vs-ref span { margin-top: 2px; font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--dim); }
+  .vs-pop .vs-err { margin: 6px 4px; padding: 10px; border-radius: var(--radius); background: rgba(239,119,119,.1); color: #ef9a9a; font-family: var(--mono); font-size: 11px; }
+  .vs-wait { background: #1c1c1c; color: var(--dim); font-size: calc(14px * var(--iz)); }
+  #ui-tweaks-root { background: #212121; border-left: 1px solid var(--line); }
+  .waiting { color: var(--dim); font-size: 13px; }
 </style>
 </head>
 <body>
@@ -815,9 +886,9 @@ export function studioPage(appPath) {
     const have = new Set(canvas.artboards.map((a) => (a.url || "/").split(/[?#]/)[0]));
     const fresh = data.routes.filter((r) => !r.params && !have.has(r.path));
     const needValues = data.routes.filter((r) => r.params).length;
-    box.innerHTML = '<div class="pages-actions"><button class="pg-all"' + (fresh.length ? "" : " disabled") + ">Add all" + (fresh.length ? " (" + fresh.length + ")" : "") + '</button><button class="pg-find" title="For apps that switch screens without URLs: Claude adds a dev-only ?screen= / ?fixture= hook and lists the screens here (needs the ui-tweaks mod in an open Claude Code session)">✨ Find screens with Claude</button></div>' +
-      "<h4>Routes · " + data.routes.length + (needValues ? " (" + needValues + " need a value)" : "") + "</h4>" +
-      (data.routes.length ? data.routes.map((r) => '<button data-path="' + esc(r.path) + '"' + (r.params ? ' data-params="1"' : "") + ">" + (data.pending.includes(r.path) ? "<i title='Has pending tweaks'></i>" : "") + "<span>" + esc(r.path) + "</span>" + (have.has(r.path) ? '<span class="src" title="Already a screen">✓</span>' : "") + '<span class="src">' + (r.params ? "needs a value" : esc(r.source)) + "</span></button>").join("") : '<div class="pages-empty">No routes found. If the app switches screens without URLs, use Find screens.</div>');
+    box.innerHTML = '<div class="pages-actions"><button class="pg-all primary"' + (fresh.length ? "" : " disabled") + ">" + (fresh.length ? "Add all " + fresh.length + " routes" : "All routes added") + '</button><button class="pg-find" title="For apps that switch screens without URLs: Claude adds a dev-only ?screen= / ?fixture= hook and lists the screens here (needs the ui-tweaks mod in an open Claude Code session)">Find screens with Claude</button></div>' +
+      "<h4>Routes <span>" + data.routes.length + "</span></h4>" +
+      (data.routes.length ? '<div class="pg-list">' + data.routes.map((r) => '<button class="pg-route' + (have.has(r.path) ? " have" : "") + '" data-path="' + esc(r.path) + '"' + (r.params ? ' data-params="1" title="Has a parameter: click to give it a value"' : have.has(r.path) ? ' title="Already a screen: click to add another"' : "") + ">" + (data.pending.includes(r.path) ? "<i title='Has pending tweaks'></i>" : "") + '<span class="path">' + esc(r.path) + "</span>" + (have.has(r.path) ? '<span class="src tick">✓</span>' : "") + '<span class="src">' + (r.params ? "needs value" : esc(r.source)) + "</span></button>").join("") + "</div>" : '<div class="pages-empty">No routes found. If the app switches screens without URLs, use Find screens.</div>');
     for (const b of box.querySelectorAll("button[data-path]")) b.addEventListener("click", () => {
       const p = b.dataset.params ? fillParams(b.dataset.path) : b.dataset.path;
       if (!p) return;

@@ -1,7 +1,7 @@
 import type { Plugin } from "vite";
 
 export interface UiTweaksOptions {
-  /** Reinstall the kit from GitHub when a newer version is out (restart the dev server afterwards). Default false: you are told, and run the command yourself. */
+  /** Reinstall the kit from GitHub when a newer version is out (restart the dev server afterwards). Default true; false only tells you, and you run the command yourself. */
   autoUpdate?: boolean;
   /** Commit what a Send writes directly, one commit per Send, but only files that had no uncommitted changes. Default false. */
   commit?: boolean;

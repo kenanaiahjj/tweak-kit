@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Static server for plain HTML/CSS projects, with the UI Tweaks overlay injected and live reload.
-// Usage: node serve.mjs [folder] [--port 5500] [--commit] [--auto-update]
+// Usage: node serve.mjs [folder] [--port 5500] [--commit] [--no-auto-update]
 //        node serve.mjs [project] --api-only [--port 5599]   (sidecar for Next.js and other dev servers)
 import http from "node:http";
 import { promises as fs, watch } from "node:fs";
@@ -76,7 +76,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(port, () => {
   void announceServer(root, `http://localhost:${port}`);
-  void checkForUpdate(root, { autoUpdate: args.includes("--auto-update") });
+  void checkForUpdate(root, { autoUpdate: !args.includes("--no-auto-update") });
   if (apiOnly) {
     console.log(`UI Tweaks sidecar on http://localhost:${port} for ${root}`);
     console.log(`Add to your dev page: <script src="http://localhost:${port}/__ui-tweaks/overlay.js" data-api="http://localhost:${port}" data-root="${root}" defer></script>`);

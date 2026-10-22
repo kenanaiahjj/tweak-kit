@@ -665,6 +665,15 @@
   }
 
   function setStyle(el, prop, value, quiet = false) {
+    // With several elements selected, an edit of the main one goes to each of them (one undo step).
+    if (!state.fanning && el === state.selected && state.also && state.also.length) {
+      state.fanning = true;
+      try {
+        for (const o of state.also) if (o.isConnected) setStyle(o, prop, value, true);
+      } finally {
+        state.fanning = false;
+      }
+    }
     const key = changeKey(prop);
     if (value === (state.tweaks.get(keyOf(el))?.changes[key]?.to ?? computed(el, prop))) return; // nothing changes
     const tweak = tweakFor(el);
@@ -1485,6 +1494,11 @@
     .palette .p-item.on { background: rgba(13,153,255,.22); }
     .palette .p-item span { color: var(--dim); font-size: 10px; white-space: nowrap; }
     .palette .p-empty { padding: 10px; color: var(--dim); font-size: 11px; }
+    .sp-handle { position: fixed; pointer-events: auto; background: #f24e9e; border: 1px solid #fff; border-radius: 3px; z-index: 1; opacity: .85; }
+    .sp-handle:hover, .sp-handle.on { opacity: 1; transform: scale(1.15); }
+    .sp-handle.h { width: 18px; height: 5px; margin: -2.5px 0 0 -9px; cursor: ns-resize; }
+    .sp-handle.v { width: 5px; height: 18px; margin: -9px 0 0 -2.5px; cursor: ew-resize; }
+    .multi-box { position: fixed; pointer-events: none; outline: 2px solid var(--accent); outline-offset: 0; background: rgba(13,153,255,.06); }
     .handle { position: fixed; width: 8px; height: 8px; margin: -4px 0 0 -4px; background: #fff; border: 1px solid var(--accent); border-radius: 1px; pointer-events: auto; z-index: 1; }
     .handle[data-dir=n], .handle[data-dir=s] { cursor: ns-resize; }
     .handle[data-dir=e], .handle[data-dir=w] { cursor: ew-resize; }
@@ -1501,6 +1515,7 @@
   <div class="pad p-t hidden"></div><div class="pad p-r hidden"></div><div class="pad p-b hidden"></div><div class="pad p-l hidden"></div>
   <div class="sel-box hidden"></div>
   <div class="tag hidden"></div>
+  <div class="multi-layer"></div><div class="sp-layer"></div>
   <div class="drag-ghost hidden"></div><div class="drop-line hidden"></div><div class="guide gv hidden"></div><div class="guide gh hidden"></div><div class="drag-tip hidden"></div>
   ${["nw", "n", "ne", "e", "se", "s", "sw", "w"].map((d) => `<div class="handle hidden" data-dir="${d}"></div>`).join("")}
   <div class="measure hidden"></div><div class="measure hidden"></div><div class="measure hidden"></div><div class="measure hidden"></div>
@@ -1590,11 +1605,13 @@
     const sel = $(".sel-box");
     const tag = $(".tag");
     const sides = ["t", "r", "b", "l"];
+    drawMulti(el);
     if (!el || !el.isConnected) {
       sel.classList.add("hidden");
       tag.classList.add("hidden");
       sides.forEach((s) => { $(".p-" + s).classList.add("hidden"); $(".m-" + s).classList.add("hidden"); });
       drawHandles(null);
+      drawSpacing(null);
       return;
     }
     const r = el.getBoundingClientRect();
@@ -1612,6 +1629,7 @@
     place($(".m-b"), { left: r.left, top: r.bottom, width: r.width, height: mb });
     place($(".m-l"), { left: r.left - ml, top: r.top, width: ml, height: r.height });
     place($(".m-r"), { left: r.right, top: r.top, width: mr, height: r.height });
+    drawSpacing(state.isPicking && !state.comparing && !drag && !(state.also && state.also.length) && r.width >= 48 && r.height >= 32 ? { el, r, cs, pad: [pt, pr, pb, pl] } : null);
     tag.classList.remove("hidden");
     tag.textContent = `${shortNumber(r.width)} × ${shortNumber(r.height)}`;
     const tagTop = r.bottom + 6 + 18 < innerHeight ? r.bottom + 6 : r.top - 24;
@@ -3005,7 +3023,9 @@
       add("Select previous sibling", "⇧Tab", () => { const f = flowSiblings(el); select(f[(f.indexOf(el) - 1 + f.length) % f.length]); });
       add("Move earlier", "⌘↑", () => moveBy(el, -1));
       add("Move later", "⌘↓", () => moveBy(el, 1));
-      add("Duplicate", "⌘D", () => duplicateElement(el));
+      add("Duplicate", "⌘D", () => selection().forEach(duplicateElement));
+      add("Select matching elements", "", () => selectMatching(el));
+      if (state.also && state.also.length) add("Clear multi-selection", "", () => select(el));
       add("Remove element", "Delete", () => removeElement(el));
       add(/flex|grid/.test(computed(el, "display")) ? "Remove auto layout" : "Add auto layout", "⇧A", () => toggleAutoLayout(el));
       add("Copy CSS", "", () => copyCode(el, "css"));
@@ -3192,6 +3212,8 @@
       name.className = "el-name";
       const comp = info.react && info.react.components[0];
       name.textContent = comp ? `<${comp.name}> ${info.tag}` : info.tag;
+      const extra = (state.also || []).filter((n) => n.isConnected).length;
+      if (extra) name.textContent += ` + ${extra} more selected`;
       const meta = document.createElement("div");
       meta.className = "el-meta";
       const cls = info.classes.length ? `<code>.${info.classes.slice(0, 4).join(" .")}</code>` : "";
@@ -3213,6 +3235,7 @@
       for (const [label, title, run] of [
         ["Copy style", "Copy this element's type, fill, border, radius, shadow and padding (⌘⌥C)", copyStyle],
         ["Paste style", "Paste the copied style onto this element (⌘⌥V)", pasteStyle],
+        ["Matching", "Select every instance of this component (or every element with the same tag and classes): edits apply to all", (n) => selectMatching(n)],
         ["CSS", "Copy its styles as CSS", (n) => copyCode(n, "css")],
         ["Tailwind", "Copy its styles as Tailwind classes", (n) => copyCode(n, "tailwind")],
         ["JSX", "Copy its JSX as written in the source", (n) => copyCode(n, "jsx")],
@@ -3912,7 +3935,8 @@
     if (state.isOpen) renderPanel();
   }
 
-  function select(el) {
+  function select(el, { keepAlso = false } = {}) {
+    if (!keepAlso) state.also = [];
     if (state.selected && state.selected !== el) state.selected.removeAttribute("data-ui-tweak-force");
     state.selected = el;
     if (el && state.editState) el.setAttribute("data-ui-tweak-force", state.editState);
@@ -4013,6 +4037,105 @@
     if (state.popup && state.popup !== STUDIO && state.popup.closed) dock(false);
   }, 500);
 
+  // ---------- spacing handles (Figma's pink ones) ----------
+  // Drag a handle in a padding band to change that padding (Alt: all four sides, Shift: steps of 8),
+  // or one between the children of a flex/grid element to change the gap.
+  const reuse = (layer, n, cls) => {
+    const box = $(layer);
+    while (box.children.length < n) box.append(Object.assign(document.createElement("div"), { className: cls }));
+    [...box.children].forEach((c, i) => c.classList.toggle("hidden", i >= n));
+    return [...box.children].slice(0, n);
+  };
+  let spacingDrag = null;
+  function drawSpacing(at) {
+    if (!at) return void reuse(".sp-layer", 0, "sp-handle");
+    if (spacingDrag) return; // the handle under the pointer stays put while it's dragged
+    const { el, r, cs, pad: [pt, pr, pb, pl] } = at;
+    const spots = [
+      { prop: "padding-top", axis: "y", sign: 1, x: r.left + r.width / 2, y: r.top + Math.max(4, pt / 2) },
+      { prop: "padding-bottom", axis: "y", sign: -1, x: r.left + r.width / 2, y: r.bottom - Math.max(4, pb / 2) },
+      { prop: "padding-left", axis: "x", sign: 1, x: r.left + Math.max(4, pl / 2), y: r.top + r.height / 2 },
+      { prop: "padding-right", axis: "x", sign: -1, x: r.right - Math.max(4, pr / 2), y: r.top + r.height / 2 },
+    ];
+    if (/flex|grid/.test(cs.display)) {
+      const shown = kids(el).filter((c) => c.getClientRects().length > 0 && !/^(absolute|fixed)$/.test(getComputedStyle(c).position)).slice(0, 9);
+      for (let i = 0; i + 1 < shown.length; i++) {
+        const a = shown[i].getBoundingClientRect(), b = shown[i + 1].getBoundingClientRect();
+        if (b.left >= a.right - 1 && Math.abs(a.top - b.top) < Math.max(a.height, b.height)) spots.push({ prop: "column-gap", axis: "x", sign: 1, x: (a.right + b.left) / 2, y: (Math.max(a.top, b.top) + Math.min(a.bottom, b.bottom)) / 2 });
+        else if (b.top >= a.bottom - 1) spots.push({ prop: "row-gap", axis: "y", sign: 1, x: (Math.max(a.left, b.left) + Math.min(a.right, b.right)) / 2, y: (a.bottom + b.top) / 2 });
+      }
+    }
+    reuse(".sp-layer", spots.length, "sp-handle").forEach((h, i) => {
+      const sp = spots[i];
+      const cls = "sp-handle " + (sp.axis === "y" ? "h" : "v");
+      if (h.className !== cls) h.className = cls;
+      h.style.left = sp.x + "px";
+      h.style.top = sp.y + "px";
+      h.title = `${sp.prop}: drag to change${sp.prop.startsWith("padding") ? " (Alt: all sides)" : ""}, Shift for steps of 8`;
+      h.onpointerdown = (e) => startSpacingDrag(e, h, el, sp);
+    });
+  }
+  function startSpacingDrag(e, h, el, sp) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    h.setPointerCapture(e.pointerId);
+    h.classList.add("on");
+    const v0 = parseFloat(computed(el, sp.prop)) || 0;
+    const x0 = e.clientX, y0 = e.clientY;
+    spacingDrag = sp;
+    state.dragStamp = ++stampCounter;
+    const move = (ev) => {
+      const d = (sp.axis === "y" ? ev.clientY - y0 : ev.clientX - x0) * sp.sign;
+      let v = Math.max(0, Math.round(v0 + d));
+      if (ev.shiftKey) v = Math.round(v / 8) * 8;
+      const props = ev.altKey && sp.prop.startsWith("padding") ? GROUPS.padding : [sp.prop];
+      for (const p of props) setStyle(el, p, v + "px", true);
+      h.style[sp.axis === "y" ? "top" : "left"] = (sp.axis === "y" ? sp.y + (ev.clientY - y0) : sp.x + (ev.clientX - x0)) + "px";
+      tip(`${ev.altKey && sp.prop.startsWith("padding") ? "padding" : sp.prop} ${v}`, ev.clientX, ev.clientY);
+    };
+    const up = () => {
+      h.removeEventListener("pointermove", move);
+      h.removeEventListener("pointerup", up);
+      h.removeEventListener("pointercancel", up);
+      h.classList.remove("on");
+      spacingDrag = null;
+      state.dragStamp = 0;
+      tip("", 0, 0);
+      render();
+    };
+    h.addEventListener("pointermove", move);
+    h.addEventListener("pointerup", up);
+    h.addEventListener("pointercancel", up);
+  }
+
+  // ---------- multi-select ----------
+  // Shift-click adds elements; edits in the panel go to every selected element.
+  function drawMulti(primary) {
+    const also = (state.also || []).filter((n) => n.isConnected && n !== primary);
+    reuse(".multi-layer", state.isOpen && primary ? also.length : 0, "multi-box").forEach((b, i) => place(b, also[i].getBoundingClientRect()));
+  }
+  function toggleAlso(t) {
+    const also = state.also || [];
+    state.also = also.includes(t) ? also.filter((n) => n !== t) : [...also, t];
+    render();
+  }
+  // Every instance of the same component, or else every element with the same tag and classes.
+  function selectMatching(el) {
+    const inst = componentInstance(el);
+    const sig = (n) => n.tagName + "|" + [...n.classList].sort().join(" ");
+    const same = [];
+    for (const n of document.body.querySelectorAll(el.tagName)) {
+      if (n === el || n === host || host.contains(n) || n.getClientRects().length === 0) continue;
+      if (inst ? (componentInstance(n) || {}).name === inst.name : sig(n) === sig(el)) same.push(n);
+      if (same.length >= 200) break;
+    }
+    state.also = same;
+    toast(same.length ? `Selected ${same.length + 1} matching ${inst ? `<${inst.name}>` : el.tagName.toLowerCase() + (el.classList[0] ? "." + el.classList[0] : "")}: edits apply to all` : "Nothing else matches");
+    render();
+  }
+  const selection = () => [state.selected, ...(state.also || [])].filter((n) => n && n.isConnected);
+
   // ---------- mouse: resize, move, reorder ----------
   const handles = [...shadow.querySelectorAll(".handle")];
   function drawHandles(r) {
@@ -4080,6 +4203,12 @@
       drag.kind = "offset";
       drag.axes = offsetAxes(el);
       drag.cb = pos === "absolute" || pos === "fixed" ? containingBlock(el).rect : null;
+      // Snap targets: the containing block and the element's visible siblings (their edges and centres).
+      const box = (r) => ({ left: r.left, top: r.top, width: r.width, height: r.height });
+      drag.targets = [
+        ...(drag.cb ? [box(drag.cb)] : el.parentElement ? [box(el.parentElement.getBoundingClientRect())] : []),
+        ...kids(el.parentElement || document.body).filter((c) => c !== el && c.getClientRects().length > 0).slice(0, 40).map((c) => box(c.getBoundingClientRect())),
+      ];
       return;
     }
     const flow = flowSiblings(el);
@@ -4123,16 +4252,27 @@
     const { el, axes, rect, cb } = drag;
     if (e.shiftKey) Math.abs(dx) > Math.abs(dy) ? (dy = 0) : (dx = 0);
     let snapX = null, snapY = null;
-    if (cb && !(e.metaKey || e.ctrlKey)) {
-      // Snap the element's edges and centre to the containing block's (hold ⌘/Ctrl to place freely).
-      const best = (pairs) => pairs.map(([at, to]) => ({ d: to - at, to })).filter((p) => Math.abs(p.d) < 5).sort((a, b) => Math.abs(a.d) - Math.abs(b.d))[0];
-      const bx = best([[rect.left + dx, cb.left], [rect.left + dx + rect.width / 2, cb.left + cb.width / 2], [rect.right + dx, cb.left + cb.width]]);
-      const by = best([[rect.top + dy, cb.top], [rect.top + dy + rect.height / 2, cb.top + cb.height / 2], [rect.bottom + dy, cb.top + cb.height]]);
-      if (bx) { dx += bx.d; snapX = bx.to; }
-      if (by) { dy += by.d; snapY = by.to; }
+    if (drag.targets && drag.targets.length && !drag.free && !(e.metaKey || e.ctrlKey)) {
+      // Snap the element's edges and centre to the parent's and the siblings' (hold ⌘/Ctrl to place freely).
+      const best = (mine, theirs) => {
+        let found = null;
+        for (const t of drag.targets) for (const to of theirs(t)) for (const at of mine) {
+          const d = to - at;
+          if (Math.abs(d) < 5 && (!found || Math.abs(d) < Math.abs(found.d))) found = { d, to, t };
+        }
+        return found;
+      };
+      const bx = best([rect.left + dx, rect.left + dx + rect.width / 2, rect.right + dx], (t) => [t.left, t.left + t.width / 2, t.left + t.width]);
+      const by = best([rect.top + dy, rect.top + dy + rect.height / 2, rect.bottom + dy], (t) => [t.top, t.top + t.height / 2, t.top + t.height]);
+      if (bx) { dx += bx.d; snapX = bx; }
+      if (by) { dy += by.d; snapY = by; }
     }
-    guide(".gv", snapX !== null ? { left: snapX, top: cb.top, width: 1, height: cb.height } : null);
-    guide(".gh", snapY !== null ? { left: cb.left, top: snapY, width: cb.width, height: 1 } : null);
+    // Guides run from the element to what it lines up with.
+    const span = (a0, a1, t0, t1) => ({ from: Math.min(a0, t0), to: Math.max(a1, t1) });
+    if (snapX) { const v = span(rect.top + dy, rect.bottom + dy, snapX.t.top, snapX.t.top + snapX.t.height); guide(".gv", { left: snapX.to, top: v.from, width: 1, height: v.to - v.from }); }
+    else guide(".gv", null);
+    if (snapY) { const v = span(rect.left + dx, rect.right + dx, snapY.t.left, snapY.t.left + snapY.t.width); guide(".gh", { left: v.from, top: snapY.to, width: v.to - v.from, height: 1 }); }
+    else guide(".gh", null);
     const hv = Math.round(axes.h.start + axes.h.sign * dx), vv = Math.round(axes.v.start + axes.v.sign * dy);
     setStyle(el, axes.h.prop, hv + "px", true);
     setStyle(el, axes.v.prop, vv + "px", true);
@@ -4296,7 +4436,10 @@
       }
       // Press on the selection (or inside it) and drag to move it; a plain click still selects.
       if (type === "pointerdown" && e.button === 0 && state.selected && state.selected.contains(t) && ownsPanel()) beginDrag(e, state.selected);
-      if (type === "click" && performance.now() > suppressClickUntil) select(t);
+      if (type === "click" && performance.now() > suppressClickUntil) {
+        if (e.shiftKey && state.selected && state.selected.isConnected && t !== state.selected) toggleAlso(t);
+        else select(t);
+      }
     }, true);
   }
 
@@ -4381,8 +4524,8 @@
     const onSelect = path.some((n) => n.tagName === "SELECT");
     if (sel && ownsPanel() && !onSelect) {
       if ((e.metaKey || e.ctrlKey) && /^Arrow(Up|Down|Left|Right)$/.test(e.key)) return own(() => moveBy(sel, /Up|Left/.test(e.key) ? -1 : 1));
-      if ((e.key === "Delete" || e.key === "Backspace") && !e.metaKey && !e.ctrlKey && !inPanel) return own(() => removeElement(sel));
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d" && !e.shiftKey) return own(() => duplicateElement(sel));
+      if ((e.key === "Delete" || e.key === "Backspace") && !e.metaKey && !e.ctrlKey && !inPanel) return own(() => selection().slice().reverse().forEach(removeElement));
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d" && !e.shiftKey) return own(() => selection().forEach(duplicateElement));
       if (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !inPanel) {
         const next = e.shiftKey ? sel.parentElement : kids(sel).find((c) => c.getClientRects().length > 0);
         return own(() => next && next !== document.body && next !== document.documentElement ? select(next) : toast(e.shiftKey ? "No parent to select" : "No children"));

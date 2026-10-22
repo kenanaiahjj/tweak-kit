@@ -203,6 +203,9 @@ Everything below works the same in the studio or on the page.
 - **Drag the selected element** on the page to reorder it among its siblings: a blue line shows where it lands. Absolute and fixed elements move instead, snapping their edges and centre to the parent (hold ⌘/Ctrl to place freely, Shift to lock an axis). **⌘-drag** an element in the flow to offset it (`position: relative`) without moving anything else.
 - **Drag the handles** on the selection to resize; Shift on a corner keeps the proportions. On an absolute element, the handle on the side it's pinned to moves that side.
 - **Drag a row in the layers list** onto a sibling's row to reorder.
+- **Spacing handles:** with an element selected, pink handles sit in its padding and between the children of an auto-layout element. Drag one to change that padding or the gap; **Alt** changes all four paddings, **Shift** steps by 8.
+- **Snapping:** dragging a positioned element snaps its edges and centre to its parent and its siblings, with a red guide to what it lines up with (hold ⌘/Ctrl to place freely).
+- **Multi-select:** **Shift-click** adds or removes elements; panel edits then apply to all of them as one undo step, and Delete or ⌘D act on all. **Matching** (element header, or ⌘K) selects every instance of the same component, or every element with the same tag and classes.
 - **⌘K** opens the command palette: type to find any action (select parent, duplicate, add auto layout, copy as code, insert, send…), any section or property ("padding-left" jumps to that field), or another screen in the studio. ↑/↓ and Enter run it.
 - **⌘⇧Z** (or Ctrl+Y, or ↷ in the bar) redoes what ⌘Z undid: styles, text, moves, removals, inserts and props alike.
 - **Colour fields** show the token a colour comes from (e.g. `var(--brand)`), the project's colour tokens as swatches to click (◇ lists them with names), and **⊙** picks a colour from anywhere on screen (Chrome, Edge).

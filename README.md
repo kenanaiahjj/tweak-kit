@@ -32,6 +32,14 @@ Then run your dev server, open the app (Claude Code's browser pane works well), 
 
 **React 18 and 19** both work: in development the kit records where each element is written, which React 19 no longer does itself. Anything that compiles JSX through Vite gets the same.
 
+**Or don't install anything.** Run the studio on its own and point it at any dev server:
+
+```bash
+npx github:kenanaiahjj/tweak-kit studio
+```
+
+Open the printed address, paste your app's address (`http://localhost:5173`, `3000`…) and its project folder, or press **Start its dev server** to run the project's `dev` script. The studio sits in front of the dev server, adds the panel to its pages and passes hot reload through, so it works with any framework and leaves the project untouched. Recent projects are one click away. `npx github:kenanaiahjj/tweak-kit studio http://localhost:5173 --root ~/code/app` skips that page.
+
 <details><summary>Setting it up by hand</summary>
 
 ```bash
@@ -69,6 +77,8 @@ The panel's visual language follows [DialKit](https://github.com/joshpuckett/dia
 | `tokens.mjs`, `system-page.mjs` | The design system page: reads, edits and adopts tokens in your stylesheets |
 | `update.mjs` | Checks GitHub for a newer kit on dev-server start and reinstalls it |
 | `cli.mjs` | `npx github:kenanaiahjj/tweak-kit init`: sets a project up |
+| `studio-server.mjs` | `npx github:kenanaiahjj/tweak-kit studio`: the studio on its own, in front of any dev server |
+| `versions.mjs` | Another branch side by side: its worktree and dev server |
 | `asks.mjs` | The Ask Claude queue between the panel and the Claude Code mod |
 | `vite-plugin.mjs` | Vite plugin (dev server only) |
 | `serve.mjs` | `ui-tweaks-serve`: static server for plain HTML, or `--api-only` sidecar for other dev servers |

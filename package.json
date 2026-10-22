@@ -31,6 +31,7 @@
     "serve.mjs",
     "routes.mjs",
     "server-core.mjs",
+    "studio-server.mjs",
     "system-page.mjs",
     "tailwind.mjs",
     "tokens.mjs",

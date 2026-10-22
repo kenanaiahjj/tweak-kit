@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { FileStat, LastApply, PendingTweaks, SkippedTweak } from '../types'
+import type { FileStat, LastApply, PendingTweaks, SkippedTweak, TweakRun } from '../types'
 import { lineStats, unifiedDiff } from './diff'
 
 // Written by the ui-tweak-kit overlay (POST /__ui-tweaks) in the project being served.
@@ -43,6 +43,15 @@ const inProject = (rel: string) => (projectRoot !== null && !rel.startsWith('/')
 
 // Several sessions can have this mod loaded in one project: a lock file lets one apply at a time.
 const LOCK = '.ui-tweaks/lock.json'
+// Mirrors the run below to disk, so the browser panel can show that Haiku (or Claude) is applying right now.
+const RUNNING = '.ui-tweaks/running.json'
+
+async function setRun($: EngineInterface, fn: (r: TweakRun | null) => TweakRun | null) {
+  let next: TweakRun | null = null
+  await update($, run, r => (next = fn(r)))
+  const r = next as TweakRun | null
+  await $.fs.write(inProject(RUNNING), JSON.stringify(r ? { by: r.by, count: r.tweakIds.length, startedAt: r.startedAt } : null)).catch(() => {})
+}
 const me = `s${Math.random().toString(36).slice(2, 10)}`
 
 type Change = { prop?: string; to?: string; authoredIn?: { file?: string }[] }
@@ -460,7 +469,7 @@ async function refresh($: EngineInterface) {
   const next = await readPending($)
   const current = await read($, run)
   if (current !== null && (await $.clock.now()) - current.startedAt > STUCK_MS) {
-    await update($, run, () => null)
+    await setRun($, () => null)
     await releaseLock($)
   }
   // Send to Claude in the browser applies right away: start Haiku on tweaks it has not tried yet.
@@ -481,7 +490,7 @@ async function refresh($: EngineInterface) {
   // A main-model run is done once its tweaks have left the file.
   const latest = await read($, run)
   if (latest?.by === 'claude' && !latest.tweakIds.some(id => next?.tweakIds.includes(id))) {
-    await update($, run, () => null)
+    await setRun($, () => null)
   }
   if (isNew && latest === null) $.ui.toast(`UI tweaks arrived from the browser: ${next.changes} change(s)`)
 }
@@ -533,7 +542,7 @@ async function applyWithHaiku($: EngineInterface, ids?: string[]): Promise<strin
   if (!(await takeLock($))) return 'Another Claude Code session is applying tweaks in this project.'
   await snapshotTargets($, todo)
   const startedAt = await $.clock.now()
-  await update($, run, () => ({ by: 'haiku' as const, tweakIds: todo, startedAt }))
+  await setRun($, () => ({ by: 'haiku' as const, tweakIds: todo, startedAt }))
   await update($, attempted, list => [...new Set([...list, ...todo])].slice(-500))
   const started = await $.agent.spawn({
     subagentType: APPLIER,
@@ -542,11 +551,11 @@ async function applyWithHaiku($: EngineInterface, ids?: string[]): Promise<strin
     prompt: `Apply these tweak ids from ${inProject(FILE)}: ${todo.join(', ')}. Ignore any other tweaks in the file.${STRUCTURE_NOTE}${projectRoot ? ` The project is ${projectRoot}: file paths in the tweaks (src/..., file:line) are relative to it.` : ''}`,
   })
   if ('deny' in started) {
-    await update($, run, () => null)
+    await setRun($, () => null)
     await releaseLock($)
     return `Could not start Haiku: ${String(started.deny)}`
   }
-  await update($, run, r => (r ? { ...r, agentId: started.agentId } : r))
+  await setRun($, r => (r ? { ...r, agentId: started.agentId } : r))
 
   return `Haiku is applying ${todo.length} UI tweak(s).`
 }
@@ -557,7 +566,7 @@ async function applyWithClaude($: EngineInterface): Promise<string> {
   if ((await read($, run)) !== null) return 'An apply is already running; wait for it to finish.'
   if ((await read($, askRun))?.kind === 'edit') return 'Claude is making a design change; wait for it to finish.'
   const startedAt = await $.clock.now()
-  await update($, run, () => ({ by: 'claude' as const, tweakIds: summary.tweakIds, startedAt }))
+  await setRun($, () => ({ by: 'claude' as const, tweakIds: summary.tweakIds, startedAt }))
   // Submitted once the caller returns: a command.run hook may not submit while it holds the turn.
   $.clock.after(50, () => void $.prompt.submit({ text: claudePrompt(summary) }))
 
@@ -571,7 +580,7 @@ async function finishHaiku($: EngineInterface, answer: string) {
   await releaseLock($)
   if (report === null) {
     await recordApply($, 0, files)
-    await update($, run, () => null)
+    await setRun($, () => null)
     $.ui.toast('Haiku finished without a report; the tweaks are still waiting.')
     return
   }
@@ -595,7 +604,7 @@ async function finishHaiku($: EngineInterface, answer: string) {
     else applied.push(id)
   }
   await recordApply($, applied.length, files)
-  await update($, run, () => null)
+  await setRun($, () => null)
   if (text) await $.fs.write(inProject(FILE), settle(text, applied, skipped))
 
   const at = await $.clock.now()
@@ -788,8 +797,18 @@ export const register: Register = on => {
       return (
         <Box>
           <Text color="magenta">◆ </Text>
+          {/* Who wrote it: the kit directly (no model), a Haiku agent, Claude, or a token edit. */}
+          {last.by === 'direct' ? (
+            <Text color="green">[direct · no AI] </Text>
+          ) : last.by === 'claude' ? (
+            <Text color="cyan">[Claude] </Text>
+          ) : last.by === 'tokens' ? (
+            <Text color="green">[tokens · no AI] </Text>
+          ) : (
+            <Text color="yellow">[Haiku agent] </Text>
+          )}
           <Text>
-            {last.by === 'direct' ? 'Applied' : 'Haiku applied'} {last.count} UI tweak{last.count === 1 ? '' : 's'}:{' '}
+            Applied {last.count} UI tweak{last.count === 1 ? '' : 's'}:{' '}
           </Text>
           {last.files.map(f => (
             <Text>
@@ -808,6 +827,7 @@ export const register: Register = on => {
       return (
         <Box>
           <Text color="magenta">◆ </Text>
+          {current?.by === 'claude' ? <Text color="cyan">[Claude] </Text> : <Text color="yellow">[Haiku agent] </Text>}
           <Text dimColor>
             {current?.by === 'claude' ? 'Claude' : 'Haiku'} is applying {count} UI tweak
             {count === 1 ? '' : 's'}…

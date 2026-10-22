@@ -50,6 +50,7 @@
     sentBatches: new Map(), // batch id -> tweak keys
     undo: [], // preview edits, newest last: { stamp, at, el, key, prop | text, before }
     lastApply: null, // Haiku's newest undoable apply, from the server
+    running: null, // what Claude Code is applying right now: { by, count, startedAt }
     codePreview: null, // dry run of the next Send: { files: [{ path, diff }], direct, queued }
     verifyIssues: [], // applied tweaks whose source didn't reproduce the preview: { selector, label, prop, expected, got }
     update: null, // a newer kit on GitHub, from the server
@@ -1655,6 +1656,13 @@
     .foot { flex-wrap: wrap; }
     .foot button.btn { flex: 1 1 0; min-width: 0; }
     .foot button.btn.primary { flex: 1 1 100%; order: 9; height: var(--row); font-size: 13px; }
+    .change.running b { display: flex; align-items: center; gap: 0; }
+    .spin { width: 11px; height: 11px; margin-right: 8px; border-radius: 50%; border: 1.5px solid rgba(255,196,107,.25); border-top-color: #ffc46b; animation: uit-spin .8s linear infinite; flex: none; }
+    @keyframes uit-spin { to { transform: rotate(360deg); } }
+    .by-tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font: 500 10.5px/16px var(--mono); vertical-align: 1px; background: var(--bg2); color: var(--dim); }
+    .by-tag.by-direct, .by-tag.by-tokens { background: rgba(142,230,168,.12); color: #8ee6a8; }
+    .by-tag.by-haiku { background: rgba(255,196,107,.14); color: #ffc46b; }
+    .by-tag.by-claude { background: rgba(103,232,249,.12); color: #67e8f9; }
     .hidden { display: none !important; }
   </style>
   <div class="hover-box hidden"></div>
@@ -3187,13 +3195,14 @@
     fetch(API + "/history", { cache: "no-store" }).then((r) => r.json()).then(({ entries = [], log = [] }) => {
       applied.innerHTML = "";
       if (!entries.length) applied.append(lbl("Nothing applied yet."));
-      const by = { direct: "Applied instantly", haiku: "Haiku applied", claude: "Claude applied", tokens: "Token change" };
       entries.slice().reverse().forEach((e, i) => {
         const row = document.createElement("div");
         row.className = "hist-item";
         const w = document.createElement("div");
         w.className = "h-what";
-        w.append(Object.assign(document.createElement("b"), { textContent: `${by[e.by] || e.by} · ${e.count} change${e.count === 1 ? "" : "s"}` }), Object.assign(document.createElement("span"), { textContent: `${e.files.map((f) => f.split("/").pop()).join(", ")} · ${ago(e.at)}` }));
+        const head = Object.assign(document.createElement("b"), { textContent: `${e.count} change${e.count === 1 ? "" : "s"}` });
+        head.append(byTag(e.by));
+        w.append(head, Object.assign(document.createElement("span"), { textContent: `${e.files.map((f) => f.split("/").pop()).join(", ")} · ${ago(e.at)}` }));
         row.append(w);
         if (i === 0) {
           const u = Object.assign(document.createElement("button"), { className: "btn ghost", textContent: "Undo", title: "Put those files back (only while nothing else changed them)" });
@@ -3861,13 +3870,29 @@
       }
       box.append(row);
     }
+    // Applying right now, in Claude Code: say who, so it's clear when an AI agent is doing the work.
+    if (state.running) {
+      const row = document.createElement("div");
+      row.className = "change running";
+      const what = document.createElement("div");
+      what.className = "what";
+      const b = document.createElement("b");
+      const n = state.running.count;
+      b.append(Object.assign(document.createElement("i"), { className: "spin" }), `Applying ${n} tweak${n === 1 ? "" : "s"}`, byTag(state.running.by));
+      const s = document.createElement("span");
+      s.textContent = state.running.by === "claude" ? "Claude is editing the source in your Claude Code session" : "A Haiku agent is editing the source in Claude Code; previews stay until it's done";
+      what.append(b, s);
+      row.append(what);
+      box.append(row);
+    }
     if (state.lastApply) {
       const row = document.createElement("div");
       row.className = "change";
       const what = document.createElement("div");
       what.className = "what";
       const b = document.createElement("b");
-      b.textContent = `${state.lastApply.by === "direct" ? "Applied" : "Haiku applied"} ${state.lastApply.count} tweak${state.lastApply.count === 1 ? "" : "s"}`;
+      b.textContent = `Applied ${state.lastApply.count} tweak${state.lastApply.count === 1 ? "" : "s"}`;
+      b.append(byTag(state.lastApply.by));
       const s = document.createElement("span");
       s.textContent = state.lastApply.files.join(", ");
       what.append(b, s);
@@ -4075,7 +4100,11 @@
   async function poll() {
     try {
       const res = await fetch(API + "/status", { cache: "no-store" });
-      const { pendingIds, pendingTweaks = [], version, lastApply = null, update = null, asks = [] } = await res.json();
+      const { pendingIds, pendingTweaks = [], version, lastApply = null, update = null, asks = [], running = null } = await res.json();
+      if (JSON.stringify(running) !== JSON.stringify(state.running)) {
+        state.running = running;
+        if (state.isOpen) renderChanges();
+      }
       const asksNow = JSON.stringify(asks);
       if (asksNow !== state.asksJson) {
         state.asksJson = asksNow;
@@ -4286,6 +4315,20 @@
     state.popup = win;
     state.isOpen = true;
     render();
+  }
+
+  // Who wrote an apply to the source: the kit itself (no model involved), a Haiku agent, Claude, or a token edit.
+  function byTag(by) {
+    const tag = document.createElement("span");
+    const [text, title] = {
+      direct: ["direct · no AI", "Written straight to your CSS/JSX by the kit; no model involved"],
+      tokens: ["tokens · no AI", "A design token edit, written straight to your stylesheet"],
+      claude: ["Claude", "Applied by Claude in your Claude Code session"],
+    }[by] || ["Haiku agent", "Applied by a small Haiku agent in Claude Code (checked, logged and undoable)"];
+    tag.className = "by-tag by-" + (by || "haiku");
+    tag.textContent = text;
+    tag.title = title;
+    return tag;
   }
 
   function openStudio() {

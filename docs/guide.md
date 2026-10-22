@@ -41,7 +41,17 @@ It does nothing in a project until tweaks arrive there, so it's safe to leave on
 
 ## 2. Hook up a project
 
-The quickest way, in the project folder:
+**Without installing anything: the standalone studio.** If you'd rather not add the kit to a project (or it's someone else's project, or a framework the kit doesn't set up), run the studio on its own:
+
+```bash
+npx github:kenanaiahjj/tweak-kit studio [app address] [--root <project folder>] [--port 5600]
+```
+
+Open `http://localhost:5600`, give it your dev server's address and the project folder, and press **Open studio**; **Start its dev server** runs the project's `dev` script instead and picks up the address it prints. Recent projects are listed for next time (`~/.ui-tweaks/studio.json`), and `/__ui-tweaks/connect` switches to another app.
+
+The studio is a proxy in front of your dev server: pages come through it with the panel added (unless the project already loads it), hot reload's websocket is passed through, and the kit's own routes (`/__ui-tweaks/…`) are answered by the studio, writing to the project folder you gave it. So it works with Vite, Next.js, Remix, Astro, a Rails or Django app, anything that serves HTML. For React apps on Vite it also keeps React 19's element sources, as the Vite plugin does, so exact source lines work. Two things to know: the app runs at the studio's address, so anything tied to its own origin (an OAuth redirect URL, a cookie set for a specific port) may need the app's direct address; and the panel's Content-Security-Policy header is dropped in the proxied pages so the panel can load.
+
+**Installing it in the project.** The quickest way, in the project folder:
 
 ```bash
 npx github:kenanaiahjj/tweak-kit init
@@ -293,6 +303,8 @@ Each tweak is split per property, and every property goes the cheapest route tha
    - shared rules in plain HTML projects
    - anything the direct path couldn't place
 3. **The main model** only if you ask, with **Send to Claude** in the band or `/apply-tweaks claude`. That's for tweaks Haiku skipped.
+
+**You can always see who wrote what.** The band in Claude Code and the panel tag every apply: **direct · no AI** (written by the kit, no model involved), **Haiku agent**, **Claude**, or **tokens · no AI** for a design system edit. While an agent is working, the band says so and the panel shows a spinning **Applying N tweaks · Haiku agent** row until it's done; the same tags are on every entry in History.
 
 Haiku's report isn't taken on trust. After it finishes, each tweak it reported as applied is checked against the files it edited: the new value (or text) has to appear there. Tweaks it skipped, or that fail the check, stay queued with the reason, and you get a notification.
 

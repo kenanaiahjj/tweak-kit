@@ -1360,6 +1360,17 @@ export async function findRoutes(root) {
  * entry in ~/.ui-tweaks/servers/ for sessions started in another folder. The entry goes when we exit
  * cleanly; the mod checks a server answers before using it, so a stale entry is harmless.
  */
+// What the Claude Code mod is applying right now ({ by: "haiku" | "claude", count, startedAt }), or null.
+// A run that's been going for over ten minutes is taken as left over from a session that went away.
+async function readRunning(root) {
+  try {
+    const r = JSON.parse(await fs.readFile(path.join(tweaksDir(root), "running.json"), "utf8"));
+    return r && r.by && Date.now() - (r.startedAt || 0) < 10 * 60 * 1000 ? r : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function announceServer(root, url) {
   const dir = tweaksDir(root);
   await fs.mkdir(dir, { recursive: true });
@@ -1459,6 +1470,7 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
           version: getVersion ? getVersion() : null,
           update: updateStatus(),
           asks: await askStatus(root),
+          running: await readRunning(root),
         });
       }
       if (req.method === "POST" && url.pathname === `${PREFIX}/undo`) {

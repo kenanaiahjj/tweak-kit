@@ -135,10 +135,13 @@ if (process.argv[1] && real(path.resolve(process.argv[1])) === real(fileURLToPat
   const [cmd = "init", ...rest] = process.argv.slice(2);
   if (cmd === "init") {
     init(process.cwd(), { skipInstall: rest.includes("--no-install"), skipMod: rest.includes("--no-mod") }).then((r) => process.exit(r.ok ? 0 : 1));
+  } else if (cmd === "studio") {
+    const { runStudio } = await import("./studio-server.mjs");
+    await runStudio(rest);
   } else if (cmd === "serve") {
     process.argv.splice(2, 1);
     await import("./serve.mjs");
   } else {
-    console.log("Usage: npx github:" + REPO + " [init] [--no-install] [--no-mod]\n       npx github:" + REPO + " serve [dir]");
+    console.log("Usage: npx github:" + REPO + " [init] [--no-install] [--no-mod]\n       npx github:" + REPO + " studio [app url] [--root project] [--port 5600]\n       npx github:" + REPO + " serve [dir]");
   }
 }

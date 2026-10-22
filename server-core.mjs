@@ -196,6 +196,15 @@ export function studioPage(appPath) {
   .note { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); background: #2c2c2c; border: 1px solid var(--line); padding: 7px 12px; border-radius: 7px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10; }
   .note.show { opacity: 1; }
   .body { flex: 1; min-height: 0; display: flex; }
+  .width-slider { width: 120px; accent-color: var(--accent); flex: none; }
+  .overview-pop { position: fixed; top: 44px; left: 12px; right: 300px; max-height: 72vh; overflow: auto; z-index: 20; background: var(--bar); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 16px 48px rgba(0,0,0,.5); padding: 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .overview-pop[hidden] { display: none; }
+  .ov-card { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; cursor: pointer; background: #1b1b1b; text-align: left; padding: 0; color: var(--text); }
+  .ov-card:hover, .ov-card.on { border-color: var(--accent); }
+  .ov-card .ov-shot { height: 190px; background: #111; display: grid; place-items: center; overflow: hidden; color: #555; font-size: 11px; }
+  .ov-card .ov-shot img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
+  .ov-card .ov-meta { padding: 6px 8px; font-size: 11px; }
+  .ov-card .ov-meta span { display: block; color: var(--dim); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pages { width: 200px; flex: none; border-right: 1px solid var(--line); background: var(--bar); overflow-y: auto; padding: 8px 0; }
   .pages h4 { margin: 10px 12px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); font-weight: 600; }
   .pages button { display: flex; align-items: center; gap: 6px; width: 100%; padding: 5px 12px; border: 0; background: transparent; text-align: left; cursor: pointer; }
@@ -261,7 +270,10 @@ export function studioPage(appPath) {
         <span class="sep"></span>
         <select class="focus-device" title="Device"></select>
         <button class="focus-turn" title="Rotate">⟲</button>
+        <input type="range" class="width-slider" min="280" max="1920" step="1" list="bp-ticks" title="Width: drag to watch the layout respond (ticks are your breakpoints); pick a device to reset" />
+        <datalist id="bp-ticks"></datalist>
         <span class="zoom focus-zoom"></span>
+        <button class="overview" title="All screens at a glance">▦</button>
       </span>
       <span class="sep"></span>
       <button class="grid" title="Column grid">Grid</button>
@@ -283,6 +295,7 @@ export function studioPage(appPath) {
   <div id="ui-tweaks-root"><div class="waiting">Loading your app…<br />The panel docks here once it's up.</div></div>
 </div>
 <div class="note"></div>
+<div class="overview-pop" hidden></div>
 <script>
   // Screen sizes in CSS px (portrait), and what each device draws over the page.
   const DEVICES = [
@@ -537,7 +550,8 @@ export function studioPage(appPath) {
   let selected = null;
   function size(a) {
     const d = BY_ID[a.device] || BY_ID.i16;
-    return a.turned ? [d[3], d[2]] : [d[2], d[3]];
+    const [w, h] = a.turned ? [d[3], d[2]] : [d[2], d[3]];
+    return a.w ? [a.w, h] : [w, h]; // the width slider overrides the device's width
   }
   const isFocus = () => view.mode === "focus";
   const focusedId = () => (canvas.artboards.some((a) => a.id === view.focus) ? view.focus : (canvas.artboards.find((a) => a.id === selected) || canvas.artboards[0] || {}).id);
@@ -645,6 +659,7 @@ export function studioPage(appPath) {
     $(".focus-pick").innerHTML = canvas.artboards.map((x) => '<option value="' + esc(x.id) + '"' + (x.id === fid ? " selected" : "") + ">" + esc(x.name || x.url) + "</option>").join("");
     $(".focus-pick").title = a ? a.url : "";
     $(".focus-device").innerHTML = options(a && a.device);
+    if (a) $(".width-slider").value = String(size(a)[0]);
     for (const [cls, key] of [[".grid", "grid"], [".base", "base"], [".pages-toggle", "pages"]]) $(cls).classList.toggle("on", !!view[key]);
     $(".pages").hidden = !view.pages;
     saveView();
@@ -716,6 +731,80 @@ export function studioPage(appPath) {
 
   // ---------- toolbar ----------
   const current = () => canvas.artboards.find((x) => x.id === focusedId());
+
+  // Width slider: resize the screen live; ticks mark the project's breakpoints.
+  const slider = $(".width-slider");
+  let saveTimer = 0;
+  slider.addEventListener("input", () => {
+    const a = current();
+    if (!a) return;
+    a.w = Number(slider.value);
+    render();
+    applyCam();
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(save, 400);
+  });
+  fetch("/__ui-tweaks/breakpoints").then((r) => r.json()).then((b) => {
+    const px = [...new Set([...(b.max || []), ...(b.min || [])].map((x) => x.px))].sort((x, y) => x - y);
+    $("#bp-ticks").innerHTML = px.map((v) => '<option value="' + v + '"></option>').join("");
+    if (px.length) slider.title += " · breakpoints: " + px.join(", ") + "px";
+  }).catch(() => {});
+
+  // Screens at a glance: a sketch of each screen that has been opened, drawn from its page.
+  const sketches = new Map(); // artboard id -> { at, url }
+  function sketch(f, w, h) {
+    try {
+      const d = f.iframe.contentDocument;
+      if (!d || !d.body) return null;
+      const xml = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+      const css = [...d.querySelectorAll("style")].map((s) => s.textContent).join("\\n");
+      const body = d.body.cloneNode(true);
+      body.querySelectorAll("script, ui-tweaks-overlay, iframe, video, canvas").forEach((n) => n.remove());
+      const html = d.documentElement;
+      const attrs = ["class", "style", "data-theme"].map((k) => html.getAttribute(k) ? " " + k + '="' + xml(html.getAttribute(k)).replace(/"/g, "&quot;") + '"' : "").join("");
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '"><foreignObject width="100%" height="100%"><html xmlns="http://www.w3.org/1999/xhtml"' + attrs + "><head><style>" + xml(css) + "</style></head>" + new XMLSerializer().serializeToString(body) + "</html></foreignObject></svg>";
+      return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    } catch {
+      return null;
+    }
+  }
+  function drawOverview() {
+    const pop = $(".overview-pop");
+    pop.innerHTML = "";
+    for (const a of canvas.artboards) {
+      const f = frames.get(a.id);
+      const [w, h] = size(a);
+      const card = document.createElement("button");
+      card.className = "ov-card" + (a.id === focusedId() ? " on" : "");
+      const shot = document.createElement("div");
+      shot.className = "ov-shot";
+      let s = sketches.get(a.id);
+      if (f && f.seen && (!s || Date.now() - s.at > 8000)) {
+        const url = sketch(f, w, h);
+        if (url) sketches.set(a.id, (s = { at: Date.now(), url }));
+      }
+      if (s) shot.innerHTML = '<img alt="" src="' + s.url + '">';
+      else shot.textContent = "Open it once to see it here";
+      card.innerHTML = "";
+      card.append(shot);
+      const meta = document.createElement("div");
+      meta.className = "ov-meta";
+      meta.innerHTML = esc(a.name || a.url) + "<span>" + w + "×" + h + " · " + esc(a.url) + "</span>";
+      card.append(meta);
+      card.addEventListener("click", () => {
+        pop.hidden = true;
+        select(a.id);
+        setMode("focus", a.id);
+      });
+      pop.append(card);
+    }
+  }
+  $(".overview").addEventListener("click", () => {
+    const pop = $(".overview-pop");
+    pop.hidden = !pop.hidden;
+    if (!pop.hidden) drawOverview();
+  });
+  addEventListener("keydown", (e) => { if (e.key === "Escape") $(".overview-pop").hidden = true; });
   $(".focus-pick").addEventListener("change", (e) => { select(e.target.value); setMode("focus", e.target.value); });
   $(".scr-add").addEventListener("click", () => {
     const a = current();
@@ -747,6 +836,7 @@ export function studioPage(appPath) {
     if (!a) return;
     a.device = e.target.value;
     a.turned = false;
+    delete a.w;
     save();
     render();
     applyCam();
@@ -922,6 +1012,14 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
         } catch (error) {
           return send(res, error.status || 500, { error: error.message });
         }
+      }
+      // The panel's History view: undoable applies (newest last) and recent outcomes from the log.
+      if (req.method === "GET" && url.pathname === `${PREFIX}/history`) {
+        let log = [];
+        try {
+          log = (JSON.parse(await fs.readFile(path.join(tweaksDir(root), "log.json"), "utf8")).entries || []).slice(-40);
+        } catch {}
+        return send(res, 200, { entries: (await readHistory(root)).map((e) => ({ id: e.id, at: e.at, by: e.by, count: e.count, files: e.files.map((f) => path.relative(root, f)) })), log });
       }
       if (req.method === "GET" && url.pathname === `${PREFIX}/breakpoints`) {
         const summary = await scanBreakpoints(root);

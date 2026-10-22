@@ -1248,6 +1248,7 @@
       const elsewhere = ((saved && saved.drafts) || []).filter((d) => d.at && !heldScreens.has(d.at) && !mine.has(d.at + "|" + d.selector));
       const pending = (state.restoring || []).filter((d) => !mine.has((d.at || here()) + "|" + d.selector));
       localStorage.setItem(STORE_KEY, JSON.stringify({ drafts: [...drafts, ...pending, ...elsewhere], note: state.note, sent: [...state.sentBatches] }));
+      if (state.instant) scheduleInstant();
     } catch {}
   }
 
@@ -1499,6 +1500,13 @@
     .sp-handle.h { width: 18px; height: 5px; margin: -2.5px 0 0 -9px; cursor: ns-resize; }
     .sp-handle.v { width: 5px; height: 18px; margin: -9px 0 0 -2.5px; cursor: ew-resize; }
     .multi-box { position: fixed; pointer-events: none; outline: 2px solid var(--accent); outline-offset: 0; background: rgba(13,153,255,.06); }
+    button.btn.ghost.on { background: #3d2f66; border-color: #7b61ff; color: #fff; }
+    .hist-item { display: flex; gap: 8px; align-items: center; padding: 6px 4px; border-bottom: 1px dashed #333; }
+    .hist-item:last-child { border-bottom: 0; }
+    .hist-item .h-what { flex: 1; min-width: 0; }
+    .hist-item .h-what b { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hist-item .h-what span { color: var(--dim); font-size: 10.5px; }
+    .hist-item.now b::after { content: " · now"; color: var(--accent); font-weight: 500; }
     .handle { position: fixed; width: 8px; height: 8px; margin: -4px 0 0 -4px; background: #fff; border: 1px solid var(--accent); border-radius: 1px; pointer-events: auto; z-index: 1; }
     .handle[data-dir=n], .handle[data-dir=s] { cursor: ns-resize; }
     .handle[data-dir=e], .handle[data-dir=w] { cursor: ew-resize; }
@@ -2987,6 +2995,88 @@
     }
   }
 
+  // ---------- history ----------
+  const ago = (t) => {
+    const s = Math.round((Date.now() - t) / 1000);
+    return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`;
+  };
+  // One line per undo step: the elements and what changed in it.
+  function stepLabel(entries) {
+    const parts = new Set(), els = new Set();
+    for (const e of entries) {
+      const t = state.tweaks.get(e.key);
+      const d = (t && t.element) || (e.el && e.el.isConnected ? describe(e.el) : null);
+      if (d) els.add(d.classes[0] ? "." + d.classes[0] : d.tag);
+      parts.add(e.move ? "moved" : e.removal ? "removed" : e.inserted ? "inserted" : e.propsKey ? `prop ${e.propsKey}` : e.prop ? changeProp(e.prop, null).replace(/:.*$/, "") : "text");
+    }
+    return { what: [...parts].slice(0, 4).join(", ") + (parts.size > 4 ? "…" : ""), where: [...els].slice(0, 3).join(", ") + (els.size > 3 ? ` +${els.size - 3}` : "") };
+  }
+  function historyView() {
+    const out = [];
+    // This session: undo steps newest first; rewinding undoes everything after the chosen step.
+    const groups = [];
+    for (const u of state.undo) {
+      const g = groups[groups.length - 1];
+      if (g && g.stamp === u.stamp) g.entries.push(u);
+      else groups.push({ stamp: u.stamp, at: u.at, entries: [u] });
+    }
+    const box = document.createElement("div");
+    if (!groups.length) box.append(lbl("No edits yet in this session."));
+    groups.slice().reverse().slice(0, 60).forEach((g, i) => {
+      const row = document.createElement("div");
+      row.className = "hist-item" + (i === 0 ? " now" : "");
+      const { what, where } = stepLabel(g.entries);
+      const w = document.createElement("div");
+      w.className = "h-what";
+      w.append(Object.assign(document.createElement("b"), { textContent: what || "edit" }), Object.assign(document.createElement("span"), { textContent: `${where}${where ? " · " : ""}${ago(g.at)}` }));
+      row.append(w);
+      if (i > 0) {
+        const back = Object.assign(document.createElement("button"), { className: "btn ghost", textContent: "Rewind", title: "Undo every edit after this one (Redo brings them back)" });
+        back.addEventListener("click", () => {
+          for (let n = 0; n < i; n++) undoPreview();
+          toast(`Rewound ${i} step${i === 1 ? "" : "s"}`);
+        });
+        row.append(back);
+      }
+      box.append(row);
+    });
+    if (state.redo && state.redo.length) box.append(lbl(`${state.redo.length} step${state.redo.length === 1 ? "" : "s"} to redo (⌘⇧Z)`));
+    out.push(section("This session", box));
+    // Applied to the source: filled in from the dev server.
+    const applied = document.createElement("div");
+    applied.append(lbl("Loading…"));
+    fetch(API + "/history", { cache: "no-store" }).then((r) => r.json()).then(({ entries = [], log = [] }) => {
+      applied.innerHTML = "";
+      if (!entries.length) applied.append(lbl("Nothing applied yet."));
+      const by = { direct: "Applied instantly", haiku: "Haiku applied", claude: "Claude applied", tokens: "Token change" };
+      entries.slice().reverse().forEach((e, i) => {
+        const row = document.createElement("div");
+        row.className = "hist-item";
+        const w = document.createElement("div");
+        w.className = "h-what";
+        w.append(Object.assign(document.createElement("b"), { textContent: `${by[e.by] || e.by} · ${e.count} change${e.count === 1 ? "" : "s"}` }), Object.assign(document.createElement("span"), { textContent: `${e.files.map((f) => f.split("/").pop()).join(", ")} · ${ago(e.at)}` }));
+        row.append(w);
+        if (i === 0) {
+          const u = Object.assign(document.createElement("button"), { className: "btn ghost", textContent: "Undo", title: "Put those files back (only while nothing else changed them)" });
+          u.addEventListener("click", async () => {
+            await undoLastApply();
+            state.showHistory = true;
+            render();
+          });
+          row.append(u);
+        }
+        applied.append(row);
+      });
+      const recent = log.slice().reverse().filter((l) => l.outcome !== "applied").slice(0, 8);
+      if (recent.length) {
+        applied.append(lbl("Recent outcomes"));
+        for (const l of recent) applied.append(Object.assign(document.createElement("div"), { className: "el-meta", textContent: `${l.element || "?"}: ${l.outcome}${l.reason ? ` (${l.reason})` : ""}` }));
+      }
+    }).catch(() => (applied.innerHTML = "", applied.append(lbl("Couldn't reach the dev server."))));
+    out.push(section("Applied to source", applied));
+    return out;
+  }
+
   // ---------- command palette (⌘K) ----------
   function paletteCommands() {
     const el = state.selected && state.selected.isConnected ? state.selected : null;
@@ -3042,6 +3132,7 @@
       if (ta) { ta.scrollIntoView({ block: "center" }); ta.focus(); }
     });
     for (const [key, b] of Object.entries(BASICS)) add(`Insert ${b.label.toLowerCase()}`, "click to place", () => armInsert({ label: b.label.toLowerCase(), basic: key }));
+    add("History", "🕘", () => { state.showHistory = true; render(); });
     add("Undo", "⌘Z", undoPreview);
     add("Redo", "⌘⇧Z", redoPreview);
     add("Send to Claude", "", () => { const b = [...panel.querySelectorAll(".foot button")].find((x) => /Send/.test(x.textContent)); b && b.click(); });
@@ -3187,7 +3278,15 @@
       state.showInsert = !state.showInsert;
       render();
     });
-    bar.append(title, undo, redo, ins, system, pick, pop, close);
+    const hist = document.createElement("button");
+    hist.className = "icon" + (state.showHistory ? " on" : "");
+    hist.textContent = "🕘";
+    hist.title = "History: this session's edits (rewind to any step) and what was applied to the source";
+    hist.addEventListener("click", () => {
+      state.showHistory = !state.showHistory;
+      render();
+    });
+    bar.append(title, undo, redo, hist, ins, system, pick, pop, close);
     panel.append(bar);
 
     const scroll = document.createElement("div");
@@ -3195,7 +3294,9 @@
     panel.append(scroll);
     const el = state.selected;
 
-    if (!el || !el.isConnected) {
+    if (state.showHistory) {
+      scroll.append(...historyView());
+    } else if (!el || !el.isConnected) {
       const empty = document.createElement("div");
       empty.className = "empty";
       empty.innerHTML = `<b>Click any element</b> to tweak it.<br/>Drag it to reorder or move it, drag its handles to resize. ⌘-drag places it freely.<br/>Drag a field's label to scrub its value; Shift for ×10.<br/>Double-click text to edit it.<br/><br/>When you're happy, press <b>Send to Claude</b>. Claude edits the real source to match.`;
@@ -3680,7 +3781,38 @@
     codeBtn.title = "Show the code a Send would write directly, as a diff (nothing is written)";
     codeBtn.disabled = !drafts.length;
     codeBtn.addEventListener("click", previewCode);
-    foot.append(reset, copy, codeBtn, sendBtn);
+    const instant = document.createElement("button");
+    instant.className = "btn ghost" + (state.instant ? " on" : "");
+    instant.textContent = "⚡";
+    instant.title = state.instant ? "Instant mode is on: each change is applied to the source about a second after you make it. Click to turn off" : "Instant mode: apply each change to the source about a second after you make it, without pressing Send";
+    instant.addEventListener("click", () => {
+      state.instant = !state.instant;
+      try { localStorage.setItem(INSTANT_KEY, state.instant ? "1" : ""); } catch {}
+      toast(state.instant ? "Instant mode on: changes apply as you make them" : "Instant mode off: press Send to apply");
+      if (state.instant) scheduleInstant();
+      renderChanges();
+    });
+    if (state.instant) {
+      sendBtn.textContent = drafts.length ? `Applying ${drafts.length}…` : "Instant mode on";
+      sendBtn.title = "Instant mode sends each change by itself; click to send now";
+    }
+    foot.append(reset, copy, codeBtn, instant, sendBtn);
+  }
+
+  // ---------- instant mode ----------
+  // Sends what you changed once you've paused (no drag, no field being typed in) for a moment.
+  const INSTANT_KEY = "ui-tweaks:instant";
+  try { state.instant = localStorage.getItem(INSTANT_KEY) === "1"; } catch {}
+  let instantTimer = 0;
+  function scheduleInstant() {
+    if (!state.instant || !ownsPanel()) return;
+    clearTimeout(instantTimer);
+    instantTimer = setTimeout(() => {
+      const typing = panel.ownerDocument.activeElement && /^(INPUT|TEXTAREA)$/.test(panel.ownerDocument.activeElement.tagName) && panel.contains(panel.ownerDocument.activeElement) && panel.ownerDocument.activeElement.closest(".ask-box, .changes");
+      if (state.dragStamp || drag || spacingDrag || state.placing || typing) return scheduleInstant();
+      const drafts = [...state.tweaks.values()].filter((t) => !t.batchId && t.el.isConnected && (!t.at || t.at === here()));
+      if (drafts.length) send(drafts);
+    }, 1100);
   }
 
   function buildBatch(list) {

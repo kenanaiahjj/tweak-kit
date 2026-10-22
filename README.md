@@ -51,6 +51,10 @@ Other setups are in the [guide](docs/guide.md#2-hook-up-a-project).
 
 The repo is public, so nothing else is needed to install either part.
 
+## Credits
+
+The panel's visual language follows [DialKit](https://github.com/joshpuckett/dialkit) by Josh Puckett (MIT).
+
 ## Documentation
 
 - **[Guide](docs/guide.md)** covers requirements, installing, hooking up Vite / plain HTML / Next.js / other projects, using the panel, how tweaks get applied, undo, team setup, updating, uninstalling and troubleshooting.

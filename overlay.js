@@ -1516,6 +1516,145 @@
     .drop-line { position: fixed; pointer-events: none; background: var(--accent); border-radius: 2px; box-shadow: 0 0 0 1px #fff; }
     .guide { position: fixed; pointer-events: none; background: #f24822; }
     .drag-tip { position: fixed; pointer-events: none; background: #111; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px; white-space: nowrap; }
+    /* ---------- DialKit skin ----------
+       After DialKit (github.com/joshpuckett/dialkit, MIT): a dark panel of quiet 36px rows on a 5% white
+       surface, 8px corners, 6px gaps, 13px medium labels at 70% white, values in a monospace face,
+       semibold section titles over hairline dividers, a single pill for the active segment, and one
+       white primary action. Later rules here override the base styles above. */
+    :host {
+      --bg: #212121; --bg2: rgba(255,255,255,.05); --hover: rgba(255,255,255,.1); --active: rgba(255,255,255,.11);
+      --subtle: rgba(255,255,255,.06); --line: rgba(255,255,255,.1); --line-hover: rgba(255,255,255,.15);
+      --text: rgba(255,255,255,.95); --label: rgba(255,255,255,.7); --dim: rgba(255,255,255,.5);
+      --row: 36px; --radius: 8px; --gap: 6px;
+      --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    * { font-family: system-ui, -apple-system, "SF Pro Display", "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+    .panel { width: 320px; border-radius: 14px; border: 1px solid var(--line); box-shadow: 0 8px 32px rgba(0,0,0,.5); font-size: 13px; background: var(--bg); }
+    .scroll { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.12) transparent; }
+
+    .bar { padding: 10px 10px 8px 12px; gap: 2px; border-bottom: 1px solid var(--subtle); }
+    .bar .title { font-size: 15px; font-weight: 600; color: #fff; letter-spacing: -.01em; padding-left: 0; }
+    button.icon { height: 28px; min-width: 28px; padding: 0 7px; border: 0; border-radius: var(--radius); color: var(--label); font-size: 12.5px; font-weight: 500; transition: background .15s, color .15s; }
+    button.icon:hover { background: var(--hover); color: var(--text); }
+    button.icon.on { background: var(--active); color: #fff; }
+
+    .sec { padding: 10px 12px 12px; border-bottom: 1px solid var(--subtle); }
+    .sec h4 { font-size: 13px; font-weight: 600; color: var(--label); letter-spacing: -.01em; margin: 0 0 8px; min-height: 22px; transition: color .15s; }
+    .sec h4:hover { color: var(--text); }
+    .sec h4 .caret { order: 9; margin-left: 6px; font-size: 9px; opacity: .6; width: auto; }
+    .sec.collapsed h4 { margin-bottom: 0; }
+    .lbl { font-size: 12px; font-weight: 500; color: var(--dim); margin: 12px 0 6px; }
+    .row { margin-top: var(--gap); }
+    .grid2, .grid4, .size-row { gap: var(--gap); }
+
+    .el-name { font-size: 14px; font-weight: 600; color: #fff; letter-spacing: -.01em; }
+    .el-meta { font-size: 12px; color: var(--dim); }
+    .el-meta code { font-family: var(--mono); font-size: 11.5px; color: #c7b8ff; }
+    .crumbs { gap: 4px; margin-top: 8px; }
+    .crumbs button { height: 24px; padding: 0 8px; border-radius: 6px; background: var(--bg2); color: var(--label); font-size: 11.5px; font-weight: 500; transition: background .15s, color .15s; }
+    .crumbs button:hover { background: var(--hover); color: var(--text); }
+
+    .layers { border: 0; background: var(--bg2); border-radius: var(--radius); padding: 4px; margin-top: 10px; }
+    .layer-row { height: 28px; border-radius: 6px; font-size: 12.5px; color: var(--label); }
+    .layer-row:hover { background: var(--hover); color: var(--text); }
+    .layer-row.on { background: var(--active); color: #fff; }
+    .layer-text { color: var(--dim); }
+
+    /* Rows: label left, value right, like DialKit's labeled controls. */
+    .field { height: var(--row); border: 0; border-radius: var(--radius); background: var(--bg2); transition: background .15s, box-shadow .15s; }
+    .field:hover { background: var(--hover); border: 0; }
+    .field:focus-within { background: var(--active); border: 0; box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .field.changed { box-shadow: inset 2px 0 0 var(--accent2); }
+    .field label { width: 30px; font-size: 12px; font-weight: 500; color: var(--label); }
+    .field input, .field select { font-family: var(--mono); font-size: 12.5px; font-weight: 500; color: var(--label); text-align: right; padding: 0 12px 0 0; text-align-last: right; }
+    .field input:focus, .field select:focus { color: #fff; }
+    .grid4 .field label { width: 18px; }
+    .grid4 .field input { text-align: center; padding: 0 4px 0 0; }
+    .swatch { width: 18px; height: 18px; margin: 0 8px 0 10px; border-radius: 5px; border-color: rgba(255,255,255,.15); }
+
+    /* Segmented: one pill on a quiet surface. */
+    .seg { background: var(--bg2); border-radius: var(--radius); padding: 2px; gap: 0; }
+    .seg button { height: 32px; border-radius: 6px; color: var(--label); font-size: 12.5px; font-weight: 500; transition: color .15s, background .15s; }
+    .seg button:hover { color: var(--text); }
+    .seg button.on { background: var(--active); color: var(--text); }
+
+    /* Buttons: quiet surfaces; the one primary action is white. */
+    button.btn, .quick button, .arrange button, .ask-actions button, .ins-grid button, .ins-list button { border: 0; border-radius: var(--radius); background: var(--bg2); color: rgba(255,255,255,.6); font-size: 12.5px; font-weight: 500; transition: background .15s, color .15s; }
+    button.btn { height: 32px; padding: 0 12px; }
+    button.btn:hover, .quick button:hover, .arrange button:hover, .ask-actions button:hover, .ins-grid button:hover, .ins-list button:hover { background: var(--hover); color: var(--text); border: 0; }
+    button.btn.ghost { border: 0; }
+    button.btn.ghost.on { background: var(--active); color: #fff; }
+    button.btn.primary, .ask-actions button.go { background: #fff; color: #212121; font-weight: 600; }
+    button.btn.primary:hover, .ask-actions button.go:hover { background: color-mix(in srgb, #fff 88%, #212121); color: #212121; }
+    button.btn.primary:disabled { background: var(--bg2); color: var(--dim); }
+    .quick button, .arrange button { height: 32px; }
+    .arrange { gap: var(--gap); margin-top: 10px; }
+    .arrange button.danger:hover { background: rgba(239,119,119,.15); color: #ef7777; }
+    .ask-actions { gap: var(--gap); margin-top: var(--gap); }
+    .ask-actions button { height: 32px; }
+    .ins-grid { gap: var(--gap); }
+    .ins-grid button { height: var(--row); }
+    .ins-list { gap: 4px; }
+    .ins-list button { height: 32px; padding: 0 12px; }
+    .ins-list button.on, .ins-grid button.on { background: var(--active); color: #fff; }
+
+    textarea { background: var(--bg2); border: 0; border-radius: var(--radius); color: var(--label); font-size: 13px; line-height: 1.45; padding: 9px 12px; transition: background .15s; }
+    textarea:focus { border: 0; background: var(--active); color: #fff; box-shadow: inset 0 0 0 1px var(--line-hover); }
+    textarea::placeholder { color: rgba(255,255,255,.35); }
+
+    .bm { border-color: rgba(255,255,255,.14); border-radius: 10px; background: rgba(246,178,107,.05); }
+    .bm.pad { border-color: rgba(255,255,255,.1); border-radius: 8px; background: rgba(147,196,125,.06); }
+    .bm input { font-family: var(--mono); font-size: 12px; color: var(--label); height: 20px; }
+    .bm input:focus { color: #fff; background: var(--bg); }
+    .bm-c { background: var(--bg2); border-radius: 6px; font-family: var(--mono); font-size: 11px; color: var(--dim); }
+    .bm-tag { font-size: 9.5px; color: var(--dim); }
+
+    .prop-row { margin-top: var(--gap); }
+    .prop-row > span { font-size: 12.5px; font-weight: 500; color: var(--label); }
+    .prop-row input { height: 32px; border-radius: var(--radius); background: var(--bg2); border: 0; font-family: var(--mono); font-size: 12px; color: var(--label); text-align: right; padding: 0 10px; }
+    .prop-row input:focus { background: var(--active); color: #fff; box-shadow: inset 0 0 0 1px var(--line-hover); }
+
+    .token-list { gap: 4px; }
+    .token { border-radius: 6px; background: var(--bg2); font-size: 11px; color: var(--label); }
+    .token:hover { background: var(--hover); color: var(--text); }
+    .swatch-row { gap: 4px; margin-top: var(--gap); }
+    .swatch-row button { width: 18px; height: 18px; border-radius: 5px; }
+
+    .ask-item { background: var(--bg2); border-radius: var(--radius); padding: 9px 10px; }
+    .ask-what { font-size: 12.5px; color: var(--text); }
+    .ask-sub { font-size: 12px; }
+    .variant { border: 0; background: rgba(255,255,255,.04); border-radius: var(--radius); padding: 8px 10px; }
+    .variant:hover, .variant.on { background: var(--active); }
+    .variant .v-text b { font-size: 12.5px; color: var(--text); }
+    .variant .v-text span { font-size: 11.5px; }
+    .variant button { height: 26px; border-radius: 6px; background: #fff; color: #212121; font-weight: 600; font-size: 12px; }
+
+    .changes { border-top: 1px solid var(--subtle); padding: 12px; }
+    .change { border-bottom: 1px solid var(--subtle); padding: 8px 0; }
+    .change .what b { font-size: 12.5px; color: var(--text); }
+    .change .what span { font-size: 12px; }
+    .foot { padding: 10px 12px 12px; gap: var(--gap); border-top: 1px solid var(--subtle); }
+
+    .hist-item { border-bottom: 1px solid var(--subtle); padding: 8px 2px; }
+    .hist-item .h-what b { font-size: 12.5px; color: var(--text); }
+    .hist-item .h-what span { font-size: 11.5px; }
+
+    .warn { background: rgba(255,196,107,.08); color: #ffc46b; border-bottom: 1px solid var(--subtle); font-size: 12px; }
+    .contrast { font-size: 12px; }
+    .empty { font-size: 13px; color: var(--label); line-height: 1.6; padding: 28px 22px; }
+    .toast { background: #2a2a2a; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.4); font-size: 13px; font-weight: 500; padding: 9px 14px; }
+    .palette { background: #2a2a2a; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+    .palette input { height: 40px; font-size: 13.5px; border-bottom: 1px solid var(--subtle); }
+    .palette .p-item { padding: 8px 10px; border-radius: var(--radius); font-size: 13px; color: var(--label); }
+    .palette .p-item.on { background: var(--hover); color: #fff; }
+    .palette .p-item span { font-family: var(--mono); font-size: 11px; }
+    .launch { border-radius: 999px; background: #212121; border-color: var(--line); font-weight: 600; }
+    .bar .title { flex: 1; }
+    .bar button.icon { min-width: 28px; padding: 0 6px; }
+    /* The primary action gets the full width under the smaller ones, as in DialKit's panels. */
+    .foot { flex-wrap: wrap; }
+    .foot button.btn { flex: 1 1 0; min-width: 0; }
+    .foot button.btn.primary { flex: 1 1 100%; order: 9; height: var(--row); font-size: 13px; }
     .hidden { display: none !important; }
   </style>
   <div class="hover-box hidden"></div>
@@ -3219,10 +3358,10 @@
     bar.className = "bar";
     const title = document.createElement("div");
     title.className = "title";
-    title.textContent = "UI Tweaks";
+    title.textContent = "Tweaks";
     const pick = document.createElement("button");
     pick.className = "icon" + (state.isPicking ? " on" : "");
-    pick.textContent = "⌖ Pick";
+    pick.textContent = "⌖";
     pick.title = "Pick elements (V). Turn off to use the page normally.";
     pick.addEventListener("click", () => {
       state.isPicking = !state.isPicking;
@@ -4115,7 +4254,7 @@
   function attachPopup(win) {
     const doc = win.document;
     if (!doc.getElementById("ui-tweaks-root")) {
-      const css = shadow.querySelector("style").textContent.replace(":host", ":root");
+      const css = shadow.querySelector("style").textContent.replace(/:host(?=\s*\{)/g, ":root");
       doc.open();
       doc.write(`<!doctype html><html><head><meta charset="utf-8"><title>UI Tweaks</title><style>${css}
         html, body { margin: 0; height: 100%; background: #1e1e1e; overflow: hidden; }
@@ -4123,13 +4262,18 @@
       </style></head><body><div id="ui-tweaks-root"></div><script>${POPUP_SCRIPT}<\/script></body></html>`);
       doc.close();
     }
-    if (!doc.getElementById("ui-tweaks-style")) {
-      // A page that brought its own root (the studio) still needs the panel's styles.
-      const style = doc.createElement("style");
-      style.id = "ui-tweaks-style";
-      style.textContent = shadow.querySelector("style").textContent.replace(":host", ":root") +
+    {
+      // A page that brought its own root (the studio) still needs the panel's styles; refreshed on every
+      // attach, so a frame with a newer kit (after an update or a reload) brings its styles along.
+      let style = doc.getElementById("ui-tweaks-style");
+      if (!style) {
+        style = doc.createElement("style");
+        style.id = "ui-tweaks-style";
+        doc.head.appendChild(style);
+      }
+      const css = shadow.querySelector("style").textContent.replace(/:host(?=\s*\{)/g, ":root") +
         "\n.panel { position: static; inset: auto; width: 100%; height: 100vh; border: 0; border-radius: 0; box-shadow: none; }";
-      doc.head.appendChild(style);
+      if (style.textContent !== css) style.textContent = css;
     }
     const root = doc.getElementById("ui-tweaks-root");
     if (panel.ownerDocument !== doc || panel.parentNode !== root) root.replaceChildren(doc.adoptNode(panel));

@@ -247,9 +247,9 @@ export function studioPage(appPath) {
   .minimap .mini-ab { background: #3a3a3a; border-radius: 1px; }
   .minimap .mini-ab.selected { background: var(--accent); }
   .minimap .mini-view { border: 1px solid var(--accent); background: rgba(13,153,255,.08); }
-  #ui-tweaks-root { width: 280px; flex: none; background: #1e1e1e; border-left: 1px solid var(--line); overflow: hidden; }
+  #ui-tweaks-root { width: 336px; flex: none; background: #212121; border-left: 1px solid var(--line); overflow: hidden; }
   .waiting { padding: 24px 18px; color: var(--dim); line-height: 1.5; text-align: center; }
-  @media (max-width: 720px) { #ui-tweaks-root { width: 264px; } .minimap { display: none; } }
+  @media (max-width: 720px) { #ui-tweaks-root { width: 300px; } .minimap { display: none; } }
 </style>
 </head>
 <body>

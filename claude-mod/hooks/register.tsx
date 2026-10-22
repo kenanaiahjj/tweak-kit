@@ -687,6 +687,111 @@ async function snapshotFor($: EngineInterface, agentId: string | undefined, file
   else if (isNew) snapshots.set(file, '')
 }
 
+// ---------- /studio ----------
+// Opens the studio for this session's project: the project's own dev server's studio when the kit is
+// installed there, otherwise the standalone studio (started here, in front of any dev server). In the
+// desktop app Claude opens it in its browser pane; elsewhere it opens in the system browser.
+const STUDIO_PORT = 5600
+const STUDIO_URL = `http://localhost:${STUDIO_PORT}`
+const KIT_SPEC = 'github:kenanaiahjj/tweak-kit'
+
+type StudioConnection = { target: string | null; root: string | null; up: boolean }
+
+async function studioConnection($: EngineInterface): Promise<StudioConnection | null> {
+  const res = await $.http.fetch(`${STUDIO_URL}/__ui-tweaks/connection`).catch(() => null)
+  if (!res?.ok) return null
+  try {
+    return JSON.parse(res.text) as StudioConnection
+  } catch {
+    return null
+  }
+}
+
+let studioStarting = false
+async function startStudio($: EngineInterface, root: string): Promise<string | null> {
+  if (studioStarting) return null
+  studioStarting = true
+  // The kit the project has installed, if any; else the latest from GitHub.
+  const local = `${root}/node_modules/ui-tweak-kit/cli.mjs`
+  const hasLocal = await $.fs.read(local).then(() => true, () => false)
+  const argv = hasLocal
+    ? ['node', local, 'studio', '--root', root, '--port', String(STUDIO_PORT)]
+    : ['npx', '-y', KIT_SPEC, 'studio', '--root', root, '--port', String(STUDIO_PORT)]
+  let ended: string | null = null
+  const out: string[] = []
+  // The studio lives as long as this session (or until this mod reloads).
+  void (async () => {
+    try {
+      const child = $.process.spawn({ argv, cwd: root })
+      for await (const { text } of child) {
+        out.push(text)
+        if (out.length > 40) out.shift()
+      }
+      ended = out.join('').trim().split('\n').slice(-6).join('\n') || 'the studio stopped'
+    } catch (error) {
+      ended = String(error instanceof Error ? error.message : error)
+    } finally {
+      studioStarting = false
+    }
+  })()
+  // npx fetches the kit the first time, so give it a while.
+  const started = await $.clock.now()
+  while ((await $.clock.now()) - started < 120000) {
+    if (ended !== null) return `Couldn't start the studio:\n${ended}`
+    if ((await studioConnection($)) !== null) return null
+    await $.clock.sleep(500)
+  }
+  return 'The studio took over two minutes to start.'
+}
+
+async function showInBrowser($: EngineInterface, url: string): Promise<string> {
+  const surfaces = await $.session.surfaces().catch(() => [] as const)
+  if (surfaces.includes('desktop')) {
+    // After the command returns: a command can't submit a turn while it holds this one.
+    $.clock.after(50, () => void $.prompt.submit({ text: `Open ${url} in your browser pane (preview_start with that url). That's all: it's the UI tweaks studio, don't do anything else with it.` }))
+    return 'opening it in the browser pane'
+  }
+  for (const cmd of [['open', url], ['xdg-open', url], ['cmd', '/c', 'start', '', url]]) {
+    const r = await $.process.run(cmd, { timeoutMs: 5000 }).catch(() => null)
+    if (r && r.exitCode === 0) return 'opened it in your browser'
+  }
+  return `open ${url} in your browser`
+}
+
+async function openStudio($: EngineInterface, arg: string): Promise<string> {
+  const root = await $.session.cwd()
+  const target = arg.trim() || null
+  // The kit installed in the project: its dev server has the studio already.
+  const own = await $.fs.read(`${root}/${SERVER}`).then(t => JSON.parse(t) as ServerEntry).catch(() => null)
+  if (!target && own?.url && own.url !== STUDIO_URL && (await answers($, own.url))) {
+    const how = await showInBrowser($, `${own.url}/__ui-tweaks/studio`)
+    return `The studio is on your dev server (${own.url}): ${how}.`
+  }
+  if ((await studioConnection($)) === null) {
+    const failed = await startStudio($, root)
+    if (failed !== null) return failed
+  }
+  const res = await $.http.fetch(`${STUDIO_URL}/__ui-tweaks/connection`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(target ? { target, root } : { root }),
+  }).catch(() => null)
+  if (!res) return "Couldn't reach the studio."
+  const answer = (() => {
+    try {
+      return JSON.parse(res.text) as { up?: boolean; target?: string | null; error?: string }
+    } catch {
+      return {}
+    }
+  })()
+  if (!res.ok) return `The studio didn't take that: ${answer.error ?? res.status}`
+  const ready = !!answer.up
+  const how = await showInBrowser($, `${STUDIO_URL}/__ui-tweaks/${ready ? 'studio' : 'connect'}`)
+  if (ready) return `Studio for ${root} on ${target ?? answer.target}: ${how}.`
+  if (target) return `Nothing answers at ${target} yet. The studio's start page is up (${how}): start your dev server there or here, then open it.`
+  return `Studio for ${root}: ${how}. Give it your dev server's address, or press "Start its dev server". (Next time: /studio http://localhost:5173)`
+}
+
 // Registered at start, and again the first time a reloaded copy of this module runs, so prompt changes take effect.
 let applierRegistered = false
 async function registerApplier($: EngineInterface) {
@@ -727,6 +832,11 @@ export const register: Register = on => {
       description: 'Apply the waiting browser tweaks with Haiku ("claude": main model; "undo": revert the last apply; "asks": run waiting Ask Claude requests)',
       argumentHint: '[claude|undo|asks]',
     })
+    await $.command.register({
+      name: 'studio',
+      description: "Open the UI tweaks studio for this project (give your dev server's address, or pick it in the studio)",
+      argumentHint: '[http://localhost:5173]',
+    })
     $.clock.every(1500, () => void refresh($))
     await refresh($)
 
@@ -737,6 +847,8 @@ export const register: Register = on => {
   on('agent.offer', { agent: APPLIER }, () => ({ isOffered: false }))
   on('agent.offer', { agent: DESIGNER }, () => ({ isOffered: false }))
   on('agent.offer', { agent: VARIATOR }, () => ({ isOffered: false }))
+
+  on('command.run', { command: 'studio' }, async ($, e) => ({ text: await openStudio($, e.args ?? '') }))
 
   on('command.run', { command: 'apply-tweaks' }, async ($, e) => {
     const arg = (e.args ?? '').trim()

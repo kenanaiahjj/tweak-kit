@@ -38,7 +38,7 @@ Then run your dev server, open the app (Claude Code's browser pane works well), 
 npx github:kenanaiahjj/tweak-kit studio
 ```
 
-Open the printed address, paste your app's address (`http://localhost:5173`, `3000`…) and its project folder, or press **Start its dev server** to run the project's `dev` script. The studio sits in front of the dev server, adds the panel to its pages and passes hot reload through, so it works with any framework and leaves the project untouched. Recent projects are one click away. `npx github:kenanaiahjj/tweak-kit studio http://localhost:5173 --root ~/code/app` skips that page.
+In Claude Code, `/studio` does it for you: it starts the studio for the session's project (or uses your dev server's own when the kit is installed there) and opens it in Claude's browser pane, or your browser in a terminal; `/studio http://localhost:5173` connects it straight away. From a terminal: open the printed address, paste your app's address (`http://localhost:5173`, `3000`…) and its project folder, or press **Start its dev server** to run the project's `dev` script. The studio sits in front of the dev server, adds the panel to its pages and passes hot reload through, so it works with any framework and leaves the project untouched. Recent projects are one click away. `npx github:kenanaiahjj/tweak-kit studio http://localhost:5173 --root ~/code/app` skips that page.
 
 <details><summary>Setting it up by hand</summary>
 

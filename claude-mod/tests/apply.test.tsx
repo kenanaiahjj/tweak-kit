@@ -224,3 +224,48 @@ test('answer parsing and prompts', () => {
 })
 
 const fileAt = (files: Record<string, string>, rel: string) => Object.entries(files).find(([k]) => k === rel || k.endsWith('/' + rel))?.[1] ?? '{}'
+
+test('/studio connects the running standalone studio to this project and opens it in the browser pane', async ($, on) => {
+  const clock = mock.clock(on)
+  const posts: { url: string; body?: string }[] = []
+  const prompts: string[] = []
+  fakeFs(on, {})
+  on('session.cwd', () => ({ value: '/p' }) as never)
+  on('session.surfaces', () => ({ value: ['desktop'] }) as never)
+  on('http.fetch', ($, e) => {
+    if (e.init?.method === 'POST') {
+      posts.push({ url: e.url, body: e.init.body as string })
+      return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ ok: true, up: true }) } } as never
+    }
+    return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ target: null, root: null, up: false }) } } as never
+  })
+  on('prompt.submit', ($, e) => {
+    prompts.push(e.text)
+    return { text: e.text }
+  })
+
+  const result = await $.command.run({ command: 'studio', args: 'http://localhost:5173' } as never)
+  await clock.advance(100)
+  expect(JSON.stringify(result)).toContain('Studio for /p on http://localhost:5173')
+  expect(posts[0]?.url).toBe('http://localhost:5600/__ui-tweaks/connection')
+  expect(JSON.parse(posts[0]?.body ?? '{}')).toEqual({ target: 'http://localhost:5173', root: '/p' })
+  expect(prompts[0]).toContain('http://localhost:5600/__ui-tweaks/studio')
+})
+
+test("/studio uses the project's own dev server when the kit is installed there", async ($, on) => {
+  const clock = mock.clock(on)
+  const prompts: string[] = []
+  fakeFs(on, { '.ui-tweaks/server.json': JSON.stringify({ url: 'http://localhost:5188', root: '/p' }) })
+  on('session.cwd', () => ({ value: '/p' }) as never)
+  on('session.surfaces', () => ({ value: ['desktop'] }) as never)
+  on('http.fetch', () => ({ value: { status: 200, ok: true, headers: {}, text: '{}' } }) as never)
+  on('prompt.submit', ($, e) => {
+    prompts.push(e.text)
+    return { text: e.text }
+  })
+
+  const result = await $.command.run({ command: 'studio', args: '' } as never)
+  await clock.advance(100)
+  expect(JSON.stringify(result)).toContain('on your dev server (http://localhost:5188)')
+  expect(prompts[0]).toContain('http://localhost:5188/__ui-tweaks/studio')
+})

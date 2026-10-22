@@ -47,7 +47,9 @@ It does nothing in a project until tweaks arrive there, so it's safe to leave on
 npx github:kenanaiahjj/tweak-kit studio [app address] [--root <project folder>] [--port 5600]
 ```
 
-Open `http://localhost:5600`, give it your dev server's address and the project folder, and press **Open studio**; **Start its dev server** runs the project's `dev` script instead and picks up the address it prints. Recent projects are listed for next time (`~/.ui-tweaks/studio.json`), and `/__ui-tweaks/connect` switches to another app.
+**From Claude Code: `/studio`.** The ui-tweaks mod's `/studio` command opens the studio for the session's project without a terminal. If the project has the kit installed and its dev server is running, that server's studio opens. Otherwise the mod starts the standalone studio for the session's folder (the project's installed kit, or the latest from GitHub via npx) and opens its start page; `/studio http://localhost:5173` connects it to that dev server and opens the studio straight away. In the desktop app Claude opens it in its browser pane; in a terminal it opens in your browser. The studio started this way runs as long as the Claude Code session.
+
+From a terminal: open `http://localhost:5600`, give it your dev server's address and the project folder, and press **Open studio**; **Start its dev server** runs the project's `dev` script instead and picks up the address it prints. Recent projects are listed for next time (`~/.ui-tweaks/studio.json`), and `/__ui-tweaks/connect` switches to another app.
 
 The studio is a proxy in front of your dev server: pages come through it with the panel added (unless the project already loads it), hot reload's websocket is passed through, and the kit's own routes (`/__ui-tweaks/…`) are answered by the studio, writing to the project folder you gave it. So it works with Vite, Next.js, Remix, Astro, a Rails or Django app, anything that serves HTML. For React apps on Vite it also keeps React 19's element sources, as the Vite plugin does, so exact source lines work. Two things to know: the app runs at the studio's address, so anything tied to its own origin (an OAuth redirect URL, a cookie set for a specific port) may need the app's direct address; and the panel's Content-Security-Policy header is dropped in the proxied pages so the panel can load.
 
@@ -284,6 +286,8 @@ Press **Send to Claude**. The toast tells you what happened, e.g. "Applied 3 dir
 | `/apply-tweaks` | Applies waiting tweaks with Haiku (normally automatic) |
 | `/apply-tweaks claude` | Sends waiting tweaks, e.g. ones Haiku skipped, to the main model |
 | `/apply-tweaks undo` | Undoes the last apply |
+| `/apply-tweaks asks` | Runs waiting Ask Claude requests |
+| `/studio [app address]` | Opens the studio for this project, in Claude's browser pane (desktop) or your browser |
 
 ## How tweaks get applied
 

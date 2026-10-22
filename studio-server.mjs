@@ -164,6 +164,11 @@ export function createStudioServer({ target = null, root = null, port = 5600, lo
       startDev(rootDir);
       return json(res, 200, { ok: true, starting: true });
     }
+    // Only the folder (Claude Code's /studio without an address): the connect page asks for the rest.
+    if (!body.target) {
+      await setProject(state.root === rootDir ? state.target : null, rootDir);
+      return json(res, 200, { ok: true, up: state.target ? await reachable(state.target) : false, target: state.target });
+    }
     const t = normalizeTarget(body.target);
     if (!t) return json(res, 400, { error: "Give the address your dev server prints, e.g. http://localhost:5173" });
     const self = normalizeTarget(`localhost:${port}`);

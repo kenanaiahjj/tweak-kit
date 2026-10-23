@@ -292,12 +292,12 @@ export function studioPage(appPath) {
     --radius: 8px; --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   html, body { font: 500 12.5px/1.4 system-ui, -apple-system, "SF Pro Display", "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
-  .toolbar { height: auto; min-height: 48px; flex-wrap: wrap; align-content: center; gap: 6px 4px; padding: 8px 10px; overflow: visible; background: var(--bar); border-bottom: 1px solid var(--line); }
+  .toolbar { height: auto; min-height: 48px; flex-wrap: wrap; align-content: center; gap: 6px 0; padding: 8px 10px; overflow: visible; background: var(--bar); border-bottom: 1px solid var(--line); }
   .tb-group { display: flex; align-items: center; gap: 2px; flex: none; max-width: 100%; }
   .tb-group:first-child { flex: 0 1 auto; min-width: 0; }
   .tb-group .focus-pick { min-width: 72px; flex: 0 1 auto; }
   .tb-group .focus-tools { min-width: 0; }
-  .tb-group + .tb-group { padding-left: 8px; margin-left: 4px; border-left: 1px solid var(--line); }
+  .tb-group + .tb-group { margin-left: 10px; } /* spacing, not divider lines: a wrapped row would start with one */
   .tb-group.tb-end { margin-left: auto; }
   .tb-group[hidden] { display: none; }
   .focus-tools { min-width: auto; }

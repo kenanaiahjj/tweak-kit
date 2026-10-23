@@ -1657,6 +1657,23 @@
     .foot button.btn { flex: 1 1 0; min-width: 0; }
     .foot button.btn.primary { flex: 1 1 100%; order: 9; height: var(--row); font-size: 13px; }
     .change.running b { display: flex; align-items: center; gap: 0; }
+    /* An apply's row: title and who did it on one line, files under it, Undo centred beside them. */
+    .change.applied { align-items: center; }
+    .change .what b.with-tag { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .change .what b.with-tag > .by-tag { margin-left: 0; }
+    .change .what .by-tag { display: inline-block; flex: none; width: auto; line-height: 18px; padding: 0 8px; }
+    .change .what b.with-tag .title { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); font-size: 12.5px; }
+    /* The row's span rules would otherwise win over the tag's own colours. */
+    .what .by-tag.by-haiku, .h-what .by-tag.by-haiku { background: rgba(255,196,107,.14); color: #ffc46b; }
+    .what .by-tag.by-direct, .what .by-tag.by-tokens, .h-what .by-tag.by-direct, .h-what .by-tag.by-tokens { background: rgba(142,230,168,.12); color: #8ee6a8; }
+    .what .by-tag.by-claude, .h-what .by-tag.by-claude { background: rgba(103,232,249,.12); color: #67e8f9; }
+    .what .by-tag, .h-what .by-tag { display: inline-block; font: 500 10.5px/18px var(--mono); }
+    .change .what span.files.with-tag { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+    .change .what span.files em { font-style: normal; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .change .what span.files { margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .foot button.btn.instant-idle { background: transparent; color: var(--dim); font-size: 12px; font-weight: 500; height: 28px; cursor: default; }
+    .foot button.btn.instant-idle:hover { background: transparent; color: var(--dim); }
+    .foot button.btn.instant-toggle.on { background: rgba(255,196,107,.14); color: #ffc46b; }
     .spin { width: 11px; height: 11px; margin-right: 8px; border-radius: 50%; border: 1.5px solid rgba(255,196,107,.25); border-top-color: #ffc46b; animation: uit-spin .8s linear infinite; flex: none; }
     @keyframes uit-spin { to { transform: rotate(360deg); } }
     .by-tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font: 500 10.5px/16px var(--mono); vertical-align: 1px; background: var(--bg2); color: var(--dim); }
@@ -3887,14 +3904,19 @@
     }
     if (state.lastApply) {
       const row = document.createElement("div");
-      row.className = "change";
+      row.className = "change applied";
       const what = document.createElement("div");
       what.className = "what";
       const b = document.createElement("b");
-      b.textContent = `Applied ${state.lastApply.count} tweak${state.lastApply.count === 1 ? "" : "s"}`;
-      b.append(byTag(state.lastApply.by));
+      const n = state.lastApply.count;
+      // An agent can edit files without any tweak checking out (e.g. a class added but no rule): say so.
+      b.textContent = n ? `Applied ${n} tweak${n === 1 ? "" : "s"}` : "Edited, nothing verified";
+      if (!n) b.title = "The agent changed these files but none of its tweaks checked out; Undo apply reverts them";
+      // Who did it, then the files it touched.
       const s = document.createElement("span");
-      s.textContent = state.lastApply.files.join(", ");
+      s.className = "files with-tag";
+      s.append(byTag(state.lastApply.by), Object.assign(document.createElement("em"), { textContent: state.lastApply.files.join(", ") }));
+      s.title = state.lastApply.files.join(", ");
       what.append(b, s);
       const undoApply = document.createElement("button");
       undoApply.className = "btn ghost";
@@ -3946,8 +3968,8 @@
     codeBtn.disabled = !drafts.length;
     codeBtn.addEventListener("click", previewCode);
     const instant = document.createElement("button");
-    instant.className = "btn ghost" + (state.instant ? " on" : "");
-    instant.textContent = "⚡";
+    instant.className = "btn ghost instant-toggle" + (state.instant ? " on" : "");
+    instant.textContent = state.instant ? "⚡ On" : "⚡";
     instant.title = state.instant ? "Instant mode is on: each change is applied to the source about a second after you make it. Click to turn off" : "Instant mode: apply each change to the source about a second after you make it, without pressing Send";
     instant.addEventListener("click", () => {
       state.instant = !state.instant;
@@ -3957,7 +3979,8 @@
       renderChanges();
     });
     if (state.instant) {
-      sendBtn.textContent = drafts.length ? `Applying ${drafts.length}…` : "Instant mode on";
+      sendBtn.textContent = drafts.length ? `Applying ${drafts.length}…` : "Changes apply as you make them";
+      if (!drafts.length) sendBtn.classList.add("instant-idle");
       sendBtn.title = "Instant mode sends each change by itself; click to send now";
     }
     foot.append(reset, copy, codeBtn, instant, sendBtn);

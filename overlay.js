@@ -4962,6 +4962,9 @@
     verifyApplied,
     send: () => send([...state.tweaks.values()].filter((t) => !t.batchId)),
     compare,
+    // Picking on or off (off: clicks reach the app, as when the studio's comparison is set to Interact).
+    get isPicking() { return state.isPicking; },
+    setPicking: (on) => { state.isPicking = !!on; if (!on) { state.hovered = null; } render(); },
     // Hides outlines and the launcher (for snapshots).
     hideOverlay: (on) => (host.style.visibility = on ? "hidden" : ""),
     // Average and worst times (ms) of the overlay's background work, for checking it stays light.

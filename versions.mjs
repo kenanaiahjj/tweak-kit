@@ -33,6 +33,25 @@ export const MIRROR_SCRIPT = `(() => {
       const el = m.scroll.path ? find(m.scroll.path) : document.scrollingElement;
       if (el) { el.scrollTop = m.scroll.top; el.scrollLeft = m.scroll.left; }
     }
+    // A click or an entry in the studio's screen, repeated here: the element in the same place, if it's the
+    // same kind of thing with the same text; else a control with that text (the versions may differ in layout).
+    if (m.click || m.input) {
+      const want = m.click || m.input;
+      const text = (el) => (el.innerText || el.value || el.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ").slice(0, 80);
+      let el = find(want.path);
+      if (!el || el.tagName !== want.tag || (want.text && text(el) !== want.text)) {
+        el = want.text ? [...document.querySelectorAll(want.tag.toLowerCase())].find((x) => text(x) === want.text) || [...document.querySelectorAll("button, a, [role=button], [role=tab], label, summary, input, select, textarea")].find((x) => text(x) === want.text) : null;
+      }
+      if (!el) return parent.postMessage({ uit: "mirror-miss", what: want.text || want.tag.toLowerCase() }, "*");
+      if (m.click) el.click();
+      else {
+        const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : el.tagName === "SELECT" ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+        const set = Object.getOwnPropertyDescriptor(proto, el.type === "checkbox" || el.type === "radio" ? "checked" : "value");
+        if (set && set.set) set.set.call(el, el.type === "checkbox" || el.type === "radio" ? want.checked : want.value);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    }
   });
   if (parent !== window) parent.postMessage({ uit: "mirror-ready" }, "*");
 })();`;

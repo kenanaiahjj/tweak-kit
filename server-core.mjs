@@ -276,6 +276,10 @@ export function studioPage(appPath) {
   .vs-pop .vs-ref span { display: block; color: var(--dim); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .vs-pop .vs-err { padding: 10px 12px; color: #ff8a80; white-space: pre-wrap; font-size: 11px; }
   .vs-toggle.on { color: var(--accent); }
+  .vs-modes { display: inline-flex; gap: 0; padding: 2px; border-radius: 8px; background: rgba(255,255,255,.05); flex: none; }
+  .vs-modes[hidden], .vs-mirror[hidden] { display: none; }
+  .toolbar .vs-modes button { height: 26px; padding: 0 10px; border-radius: 6px; }
+  .toolbar .vs-modes button.on { background: rgba(255,255,255,.12); color: #fff; }
   .waiting { padding: 24px 18px; color: var(--dim); line-height: 1.5; text-align: center; }
   @media (max-width: 720px) { #ui-tweaks-root { width: 300px; } .minimap { display: none; } }
   /* ---------- DialKit skin ----------
@@ -295,7 +299,7 @@ export function studioPage(appPath) {
   .toolbar select { height: 30px; border: 0; border-radius: var(--radius); background: var(--fill); color: var(--label); padding: 0 8px; transition: background .15s; }
   .toolbar select:hover { background: var(--hover); color: var(--text); }
   .sep { height: 18px; background: var(--line); margin: 0 4px; }
-  .zoom, .focus-zoom { font-family: var(--mono); font-size: 11.5px; color: var(--dim); padding: 0 4px; }
+  .zoom, .focus-zoom { font-family: var(--mono); font-size: 11.5px; color: var(--dim); padding: 0 4px; white-space: nowrap; flex: none; }
   .width-slider { accent-color: #fff; }
   .ab-frame { border-radius: 12px; box-shadow: 0 0 0 1px var(--line), 0 16px 48px rgba(0,0,0,.5); }
   .ab.selected .ab-frame { box-shadow: 0 0 0 1px var(--line), 0 16px 48px rgba(0,0,0,.5); }
@@ -394,6 +398,8 @@ export function studioPage(appPath) {
       <button class="compare" title="Hold to see every artboard without your previews (or hold \\ in the app)">Compare</button>
       <button class="shot" title="Copy a picture of the screen to the clipboard (both versions when comparing). Shift-click also saves a PNG">📷</button>
       <button class="vs-toggle" title="Compare with another branch or commit, side by side">⑂ Versions</button>
+      <span class="vs-modes" hidden><button data-mode="inspect" title="Click elements to tweak them">Inspect</button><button data-mode="interact" title="Use both apps: clicks go to the app, not the panel">Interact</button></span>
+      <button class="vs-mirror" hidden title="Repeat your clicks and typing on the other version, so both walk through the same flow">⇆ Mirror clicks</button>
       <span class="sep"></span>
       <a class="tb" href="/__ui-tweaks/system" title="Design system: every token in your CSS, editable">Tokens</a>
     </div>
@@ -1185,6 +1191,12 @@ export function studioPage(appPath) {
     vs.el.classList.toggle("hidden", !on);
     $(".vs-toggle").classList.toggle("on", on);
     $(".vs-toggle").textContent = on ? "⑂ " + versus.ref : "⑂ Versions";
+    if (drawModes.on !== on) {
+      drawModes.on = on;
+      drawModes();
+      const ff = frames.get(a.id);
+      if (ff) applyMode(ff); // leaving the comparison turns picking back on
+    }
     const f = frames.get(a.id);
     if (!on) return;
     const [w, h] = size(a);
@@ -1238,8 +1250,49 @@ export function studioPage(appPath) {
       queued = e.target;
       requestAnimationFrame(() => { if (queued) { const m = scrollMsg(win.document, queued); queued = null; if (m) mirror({ scroll: m }); } });
     }, { capture: true, passive: true });
+    // Interact mode: clicks and entries in your screen are repeated on the other version.
+    const mirroring = () => versusOn() && view.vsMode === "interact" && view.vsMirror !== false && frames.get(focusedId()) === f;
+    const describe = (el) => {
+      const m = scrollMsg(win.document, el);
+      const text = (el.innerText || el.value || el.getAttribute("aria-label") || "").trim().replace(/\\s+/g, " ").slice(0, 80);
+      return m && m.path ? { path: m.path, tag: el.tagName, text } : null;
+    };
+    win.addEventListener("click", (e) => {
+      if (!mirroring() || !e.isTrusted || !(e.target instanceof win.Element)) return;
+      const el = e.target.closest("button, a, [role=button], [role=tab], [role=link], label, summary, input, select, textarea, [onclick], [tabindex]") || e.target;
+      const d = describe(el);
+      if (d) mirror({ click: d });
+    }, true);
+    win.addEventListener("input", (e) => {
+      const el = e.target;
+      if (!mirroring() || !e.isTrusted || !el || !/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.type === "checkbox" || el.type === "radio" || el.type === "file") return;
+      const d = describe(el);
+      if (d) mirror({ input: { ...d, text: "", value: el.value } });
+    }, true);
+    applyMode(f);
   }
+  // Inspect: clicking picks elements to tweak. Interact: picking is off, so you can use the app.
+  function applyMode(f) {
+    try { f.iframe.contentWindow.__uiTweaks.setPicking(!(versusOn() && view.vsMode === "interact")); } catch {}
+  }
+  function setVsMode(mode) {
+    view.vsMode = mode;
+    saveView();
+    const f = frames.get(focusedId());
+    if (f) applyMode(f);
+    drawModes();
+  }
+  function drawModes() {
+    const on = versusOn();
+    $(".vs-modes").hidden = !on;
+    $(".vs-mirror").hidden = !on || view.vsMode !== "interact";
+    for (const b of document.querySelectorAll(".vs-modes button")) b.classList.toggle("on", b.dataset.mode === (view.vsMode || "inspect"));
+    $(".vs-mirror").classList.toggle("on", view.vsMirror !== false);
+  }
+  for (const b of document.querySelectorAll(".vs-modes button")) b.addEventListener("click", () => setVsMode(b.dataset.mode));
+  $(".vs-mirror").addEventListener("click", () => { view.vsMirror = view.vsMirror === false; saveView(); drawModes(); note(view.vsMirror ? "Clicks and typing repeat on the other version" : "Each side on its own: click through them separately"); });
   addEventListener("message", (e) => {
+    if (versus && e.origin === versus.url && e.data && e.data.uit === "mirror-miss") note("Not on " + versus.ref + ": “" + e.data.what + "”. Click it there yourself.");
     if (!versus || !versus.url || e.origin !== versus.url || !e.data || e.data.uit !== "mirror-ready") return;
     const f = frames.get(focusedId());
     try { const se = f.iframe.contentWindow.document.scrollingElement; mirror({ scroll: { path: null, top: se.scrollTop, left: se.scrollLeft } }); } catch {}

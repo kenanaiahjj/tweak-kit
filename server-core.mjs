@@ -276,6 +276,16 @@ export function studioPage(appPath) {
   .vs-pop .vs-ref span { display: block; color: var(--dim); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .vs-pop .vs-err { padding: 10px 12px; color: #ff8a80; white-space: pre-wrap; font-size: 11px; }
   .vs-toggle.on { color: var(--accent); }
+  .guides-pop { position: fixed; z-index: 20; width: 260px; padding: 10px; background: #212121; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,.5); }
+  .guides-pop[hidden] { display: none; }
+  .guides-pop h4 { margin: 2px 2px 6px; font-size: 13px; font-weight: 600; color: var(--label); }
+  .guides-pop h4 + .gd-row { margin-bottom: 10px; }
+  .gd-row { display: flex; gap: 0; padding: 2px; border-radius: 8px; background: rgba(255,255,255,.05); }
+  .gd-opt { flex: 1; height: 28px; border: 0; border-radius: 6px; background: transparent; color: var(--label); font: 500 12px system-ui, -apple-system, sans-serif; cursor: pointer; transition: background .15s, color .15s; }
+  .gd-opt:hover { color: var(--text); }
+  .gd-opt.on { background: rgba(255,255,255,.14); color: #fff; }
+  .gd-hint { margin: 2px 2px 0; color: var(--dim); font-size: 11.5px; line-height: 1.45; }
+  .toolbar .guides-toggle.on { background: rgba(13,153,255,.16); color: #6cb8ff; }
   .vs-modes { display: inline-flex; gap: 0; padding: 2px; border-radius: 8px; background: rgba(255,255,255,.05); flex: none; }
   .vs-modes[hidden], .vs-mirror[hidden] { display: none; }
   .toolbar .vs-modes button { height: 26px; padding: 0 10px; border-radius: 6px; }
@@ -417,9 +427,7 @@ export function studioPage(appPath) {
         <button class="fz-100" title="Actual size (⇧0)">1:1</button>
       </span>
       <span class="tb-group">
-        <button class="grid" title="Column grid">Grid</button>
-        <button class="base" title="8pt baseline">8pt</button>
-        <button class="compare" title="Hold to see every artboard without your previews (or hold \\ in the app)">Compare</button>
+        <button class="guides-toggle" title="Layout guides over the screen: columns and a baseline grid">Guides</button>
         <button class="shot" title="Copy a picture of the screen to the clipboard (both versions when comparing). Shift-click also saves a PNG">📷</button>
       </span>
       <span class="tb-group">
@@ -444,6 +452,7 @@ export function studioPage(appPath) {
 </div>
 <div class="note"></div>
 <div class="overview-pop" hidden></div>
+<div class="guides-pop" hidden></div>
 <div class="vs-pop" hidden></div>
 <script>
   // Screen sizes in CSS px (portrait), and what each device draws over the page.
@@ -757,11 +766,14 @@ export function studioPage(appPath) {
   }
   function overlays(w) {
     let html = "";
-    if (view.grid) {
-      const [n, margin, gutter] = w < 600 ? [4, 16, 16] : w < 1024 ? [8, 24, 24] : [12, 32, 24];
+    const g = guides();
+    if (g.cols) {
+      // Auto: 4 columns on phones, 8 on tablets, 12 on desktops, with margins and gutters to match.
+      const [auto, margin, gutter] = w < 600 ? [4, 16, 16] : w < 1024 ? [8, 24, 24] : [12, 32, 24];
+      const n = g.cols === "auto" ? auto : g.cols;
       html += '<div class="grid-cols" style="padding:0 ' + margin + "px;gap:" + gutter + 'px">' + "<div></div>".repeat(n) + "</div>";
     }
-    if (view.base) html += '<div class="baseline"></div>';
+    if (g.base) html += '<div class="baseline" style="background-size:100% ' + g.base + 'px;background-image:repeating-linear-gradient(to bottom, rgba(13,153,255,.22) 0 1px, transparent 1px ' + g.base + 'px)"></div>';
     return html;
   }
 
@@ -852,7 +864,8 @@ export function studioPage(appPath) {
     $(".focus-pick").title = a ? a.url : "";
     $(".focus-device").innerHTML = options(a && a.device);
     if (a) { $(".width-slider").value = String(size(a)[0]); fillSlider(); }
-    for (const [cls, key] of [[".grid", "grid"], [".base", "base"], [".pages-toggle", "pages"]]) $(cls).classList.toggle("on", !!view[key]);
+    $(".pages-toggle").classList.toggle("on", !!view.pages);
+    drawGuidesButton();
     $(".pages").hidden = !view.pages;
     saveView();
     drawMinimap();
@@ -1087,17 +1100,54 @@ export function studioPage(appPath) {
     render();
     applyCam();
   });
-  for (const [cls, key] of [[".grid", "grid"], [".base", "base"]]) $(cls).addEventListener("click", () => { view[key] = !view[key]; render(); });
+  // Guides: columns (auto by width, or 4/8/12) and a baseline grid (4 or 8px), picked from a small menu.
+  function guides() {
+    // Older saved views had on/off flags: grid meant auto columns, base meant an 8px baseline.
+    const cols = view.gridCols !== undefined ? view.gridCols : view.grid ? "auto" : 0;
+    const base = view.baseStep !== undefined ? view.baseStep : view.base ? 8 : 0;
+    return { cols, base };
+  }
+  function drawGuidesButton() {
+    const g = guides();
+    const parts = [g.cols ? (g.cols === "auto" ? "cols" : g.cols + " col") : "", g.base ? g.base + "px" : ""].filter(Boolean);
+    const b = $(".guides-toggle");
+    b.textContent = parts.length ? "Guides · " + parts.join(" · ") : "Guides";
+    b.classList.toggle("on", parts.length > 0);
+  }
+  function drawGuides() {
+    const g = guides();
+    const opt = (key, value, label, hint) => '<button class="gd-opt' + (g[key] === value ? " on" : "") + '" data-key="' + key + '" data-value="' + value + '" title="' + hint + '">' + label + "</button>";
+    $(".guides-pop").innerHTML =
+      '<h4>Columns</h4><div class="gd-row">' + opt("cols", 0, "Off", "No column guides") + opt("cols", "auto", "Auto", "4 on phones, 8 on tablets, 12 on desktops") + opt("cols", 4, "4", "4 columns") + opt("cols", 8, "8", "8 columns") + opt("cols", 12, "12", "12 columns") + "</div>" +
+      '<h4>Baseline</h4><div class="gd-row">' + opt("base", 0, "Off", "No baseline grid") + opt("base", 4, "4px", "A line every 4px") + opt("base", 8, "8px", "A line every 8px: check spacing and type sit on an 8-point rhythm") + "</div>" +
+      '<p class="gd-hint">Columns show the layout grid; the baseline draws a line every 4 or 8px to check vertical rhythm.</p>';
+    for (const b of document.querySelectorAll(".gd-opt")) b.addEventListener("click", () => {
+      const v = b.dataset.value === "auto" ? "auto" : Number(b.dataset.value);
+      if (b.dataset.key === "cols") view.gridCols = v;
+      else view.baseStep = v;
+      render();
+      drawGuides();
+    });
+  }
+  $(".guides-toggle").addEventListener("click", (e) => {
+    const pop = $(".guides-pop");
+    pop.hidden = !pop.hidden;
+    if (!pop.hidden) {
+      const r = e.currentTarget.getBoundingClientRect();
+      pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 268)) + "px";
+      pop.style.top = r.bottom + 6 + "px";
+      drawGuides();
+    }
+  });
+  addEventListener("pointerdown", (e) => { const pop = $(".guides-pop"); if (!pop.hidden && !e.target.closest(".guides-pop, .guides-toggle")) pop.hidden = true; });
+  addEventListener("keydown", (e) => { if (e.key === "Escape") $(".guides-pop").hidden = true; });
   $(".pages-toggle").addEventListener("click", () => { view.pages = !view.pages; render(); loadPages(); });
   $(".reload").addEventListener("click", () => frames.forEach((f) => f.iframe.contentWindow.location.reload()));
   $(".exit").addEventListener("click", () => {
     const a = canvas.artboards.find((x) => x.id === focusedId()) || canvas.artboards[0];
     location.href = a ? a.url : ${src};
   });
-  const compare = (on) => frames.forEach((f) => { try { f.iframe.contentWindow.__uiTweaks.compare(on); } catch {} });
-  const cmp = $(".compare");
-  cmp.addEventListener("pointerdown", () => { cmp.classList.add("on"); compare(true); });
-  for (const ev of ["pointerup", "pointerleave"]) cmp.addEventListener(ev, () => { if (cmp.classList.contains("on")) { cmp.classList.remove("on"); compare(false); } });
+
 
   // Snapshot: the browser captures this tab (Chrome asks which tab each time), cropped to the screen, or to
   // both screens when another version is open, laid side by side with their labels. It goes to the clipboard,

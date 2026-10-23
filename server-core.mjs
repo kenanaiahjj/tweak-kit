@@ -308,7 +308,18 @@ export function studioPage(appPath) {
   .toolbar select:hover { background: var(--hover); color: var(--text); }
   .sep { height: 18px; background: var(--line); margin: 0 4px; }
   .zoom, .focus-zoom { font-family: var(--mono); font-size: 11.5px; color: var(--dim); padding: 0 4px; white-space: nowrap; flex: none; }
-  .width-slider { accent-color: #fff; }
+  /* Width slider, DialKit style: a slim track filled up to the thumb, breakpoints as ticks on the track. */
+  .ws { position: relative; display: flex; align-items: center; width: 140px; height: 30px; margin: 0 6px; flex: none; }
+  .ws .width-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 20px; margin: 0; background: transparent; cursor: pointer; accent-color: #fff; }
+  .ws .width-slider:focus { outline: none; }
+  .ws .width-slider::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(rgba(255,255,255,.7), rgba(255,255,255,.7)) 0 / var(--p, 50%) 100% no-repeat, rgba(255,255,255,.12); }
+  .ws .width-slider::-moz-range-track { height: 4px; border-radius: 2px; background: rgba(255,255,255,.12); }
+  .ws .width-slider::-moz-range-progress { height: 4px; border-radius: 2px; background: rgba(255,255,255,.7); }
+  .ws .width-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -4px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 1px 4px rgba(0,0,0,.5); transition: transform .12s; }
+  .ws .width-slider::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  .ws .width-slider:hover::-webkit-slider-thumb, .ws .width-slider:active::-webkit-slider-thumb { transform: scale(1.15); }
+  .ws-ticks { position: absolute; left: 6px; right: 6px; top: 50%; height: 0; pointer-events: none; }
+  .ws-ticks i { position: absolute; top: -4px; width: 2px; height: 8px; margin-left: -1px; border-radius: 1px; background: rgba(255,255,255,.35); }
   .ab-frame { border-radius: 12px; box-shadow: 0 0 0 1px var(--line), 0 16px 48px rgba(0,0,0,.5); }
   .ab.selected .ab-frame { box-shadow: 0 0 0 1px var(--line), 0 16px 48px rgba(0,0,0,.5); }
   /* Comparing: a badge per screen saying which version it is, in that side's colour (yours blue,
@@ -396,8 +407,7 @@ export function studioPage(appPath) {
       <span class="tb-group focus-tools">
         <select class="focus-device" title="Device"></select>
         <button class="focus-turn" title="Rotate">⟲</button>
-        <input type="range" class="width-slider" min="280" max="1920" step="1" list="bp-ticks" title="Width: drag to watch the layout respond (ticks are your breakpoints); pick a device to reset" />
-        <datalist id="bp-ticks"></datalist>
+        <span class="ws"><input type="range" class="width-slider" min="280" max="1920" step="1" title="Width: drag to watch the layout respond (ticks are your breakpoints); pick a device to reset" /><span class="ws-ticks"></span></span>
       </span>
       <span class="tb-group focus-tools">
         <button class="fz-out" title="Zoom out (⌘−)">−</button>
@@ -841,7 +851,7 @@ export function studioPage(appPath) {
     $(".focus-pick").innerHTML = canvas.artboards.map((x) => '<option value="' + esc(x.id) + '"' + (x.id === fid ? " selected" : "") + ">" + esc(x.name || x.url) + "</option>").join("");
     $(".focus-pick").title = a ? a.url : "";
     $(".focus-device").innerHTML = options(a && a.device);
-    if (a) $(".width-slider").value = String(size(a)[0]);
+    if (a) { $(".width-slider").value = String(size(a)[0]); fillSlider(); }
     for (const [cls, key] of [[".grid", "grid"], [".base", "base"], [".pages-toggle", "pages"]]) $(cls).classList.toggle("on", !!view[key]);
     $(".pages").hidden = !view.pages;
     saveView();
@@ -951,8 +961,14 @@ export function studioPage(appPath) {
 
   // Width slider: resize the screen live; ticks mark the project's breakpoints.
   const slider = $(".width-slider");
+  // The track's fill up to the thumb (WebKit has no progress part of its own).
+  function fillSlider() {
+    const el = $(".width-slider");
+    el.style.setProperty("--p", ((el.value - el.min) / (el.max - el.min)) * 100 + "%");
+  }
   let saveTimer = 0;
   slider.addEventListener("input", () => {
+    fillSlider();
     const a = current();
     if (!a) return;
     a.w = Number(slider.value);
@@ -963,7 +979,8 @@ export function studioPage(appPath) {
   });
   fetch("/__ui-tweaks/breakpoints").then((r) => r.json()).then((b) => {
     const px = [...new Set([...(b.max || []), ...(b.min || [])].map((x) => x.px))].sort((x, y) => x - y);
-    $("#bp-ticks").innerHTML = px.map((v) => '<option value="' + v + '"></option>').join("");
+    const [lo, hi] = [Number(slider.min), Number(slider.max)];
+    $(".ws-ticks").innerHTML = px.filter((v) => v > lo && v < hi).map((v) => '<i style="left:' + ((v - lo) / (hi - lo)) * 100 + '%" title="' + v + 'px"></i>').join("");
     if (px.length) slider.title += " · breakpoints: " + px.join(", ") + "px";
   }).catch(() => {});
 

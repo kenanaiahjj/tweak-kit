@@ -21,7 +21,9 @@ export async function readAsks(root) {
 
 export async function addAsk(root, body) {
   const kind = body && body.kind;
-  if (kind !== "edit" && kind !== "variations") throw Object.assign(new Error("kind is edit or variations"), { status: 400 });
+  if (kind !== "edit" && kind !== "variations" && kind !== "publish") throw Object.assign(new Error("kind is edit, variations or publish"), { status: 400 });
+  // publish: Claude publishes a saved review page (a file in .ui-tweaks/reviews) as a shareable page.
+  if (kind === "publish" && !/^\.ui-tweaks\/reviews\/[a-z0-9-]+\.html$/.test(String(body.file || ""))) throw Object.assign(new Error("publish needs a review file"), { status: 400 });
   const instruction = String((body && body.instruction) || "").trim();
   if (!instruction && kind === "edit") throw Object.assign(new Error("Say what to change"), { status: 400 });
   const ask = {
@@ -32,6 +34,7 @@ export async function addAsk(root, body) {
     page: body.page || null,
     context: body.context || null, // for variations: the element's subtree and current styles
     count: Math.min(4, Math.max(2, Number(body.count) || 3)),
+    ...(kind === "publish" ? { file: body.file, title: String(body.title || "Design review").slice(0, 120) } : {}),
     at: Date.now(),
   };
   await fs.mkdir(path.join(dir(root), "asks"), { recursive: true });

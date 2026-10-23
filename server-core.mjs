@@ -8,6 +8,7 @@ import { addAsk, askStatus, cancelAsk } from "./asks.mjs";
 import { jsxAt, toTailwind } from "./code.mjs";
 import { findRoutes as findAppRoutes } from "./routes.mjs";
 import { listRefs, startVersion, stopVersion, versionStatus } from "./versions.mjs";
+import { listReviews, readReview, saveReview } from "./review.mjs";
 import { promises as fs, unlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -135,12 +136,12 @@ async function undoLastApply(root) {
   return { status: 200, body: { ok: true, files: saved.files.map((f) => path.basename(f.path)) } };
 }
 
-function readBody(req) {
+function readBody(req, limit = 5_000_000) {
   return new Promise((resolve, reject) => {
     let data = "";
     req.on("data", (chunk) => {
       data += chunk;
-      if (data.length > 5_000_000) reject(new Error("body too large"));
+      if (data.length > limit) reject(Object.assign(new Error("body too large"), { status: 413 }));
     });
     req.on("end", () => resolve(data));
     req.on("error", reject);
@@ -276,6 +277,27 @@ export function studioPage(appPath) {
   .vs-pop .vs-ref span { display: block; color: var(--dim); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .vs-pop .vs-err { padding: 10px 12px; color: #ff8a80; white-space: pre-wrap; font-size: 11px; }
   .vs-toggle.on { color: var(--accent); }
+  .rv-pop { position: fixed; z-index: 20; width: 320px; padding: 12px; background: #212121; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,.5); display: grid; gap: 8px; }
+  .rv-pop[hidden], .rv-progress[hidden] { display: none; }
+  .rv-pop h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--label); }
+  .rv-pop p { margin: 0; color: var(--dim); font-size: 12px; line-height: 1.45; }
+  .rv-pop input, .rv-pop textarea { width: 100%; border: 0; border-radius: 8px; background: rgba(255,255,255,.05); color: var(--text); font: 500 12.5px system-ui, -apple-system, sans-serif; padding: 9px 10px; outline: none; resize: vertical; }
+  .rv-pop input:focus, .rv-pop textarea:focus { background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 1px rgba(255,255,255,.15); }
+  .rv-pop .rv-seg { display: flex; padding: 2px; border-radius: 8px; background: rgba(255,255,255,.05); }
+  .rv-pop .rv-seg button { flex: 1; height: 28px; border: 0; border-radius: 6px; background: transparent; color: var(--label); font: 500 12px system-ui, -apple-system, sans-serif; cursor: pointer; }
+  .rv-pop .rv-seg button.on { background: rgba(255,255,255,.14); color: #fff; }
+  .rv-pop .rv-go { height: 34px; border: 0; border-radius: 8px; background: #fff; color: #212121; font: 600 13px system-ui, -apple-system, sans-serif; cursor: pointer; }
+  .rv-pop .rv-go:hover { background: #e4e4e4; }
+  .rv-pop .rv-done { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); }
+  .rv-pop .rv-done b { font-size: 12.5px; color: #fff; }
+  .rv-pop .rv-row { display: flex; gap: 6px; }
+  .rv-pop .rv-row a, .rv-pop .rv-row button { flex: 1; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: rgba(255,255,255,.06); color: var(--label); font: 500 12px system-ui, -apple-system, sans-serif; text-decoration: none; cursor: pointer; }
+  .rv-pop .rv-row a:hover, .rv-pop .rv-row button:hover { background: rgba(255,255,255,.1); color: var(--text); }
+  .rv-pop .rv-recent { display: grid; gap: 2px; max-height: 120px; overflow: auto; }
+  .rv-pop .rv-recent a { color: var(--label); font-size: 12px; text-decoration: none; padding: 4px 6px; border-radius: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rv-pop .rv-recent a:hover { background: rgba(255,255,255,.06); color: var(--text); }
+  .rv-progress { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 14px; background: #2a2a2a; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.4); font-size: 13px; }
+  .rv-progress button { height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: rgba(255,255,255,.08); color: var(--label); cursor: pointer; }
   .guides-pop { position: fixed; z-index: 20; width: 260px; padding: 10px; background: #212121; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,.5); }
   .guides-pop[hidden] { display: none; }
   .guides-pop h4 { margin: 2px 2px 6px; font-size: 13px; font-weight: 600; color: var(--label); }
@@ -309,7 +331,7 @@ export function studioPage(appPath) {
   .tb-group .focus-tools { min-width: 0; }
   .tb-group + .tb-group { margin-left: 10px; } /* spacing, not divider lines: a wrapped row would start with one */
   .tb-group.tb-end { margin-left: auto; }
-  .tb-group[hidden] { display: none; }
+  .tb-group[hidden], .toolbar button[hidden] { display: none; }
   .focus-tools { min-width: auto; }
   .toolbar button, .toolbar a.tb { height: 30px; padding: 0 9px; border: 0; border-radius: var(--radius); color: var(--label); font-weight: 500; transition: background .15s, color .15s; }
   .toolbar button:hover, .toolbar a.tb:hover { background: var(--hover); color: var(--text); }
@@ -433,7 +455,9 @@ export function studioPage(appPath) {
       </span>
       <span class="tb-group">
         <button class="guides-toggle" title="Layout guides over the screen: columns and a baseline grid">Guides</button>
-        <button class="shot" title="Copy a picture of the screen to the clipboard (both versions when comparing). Shift-click also saves a PNG">📷</button>
+        <!-- Capture (📷 and Review) is on hold: hidden until CAPTURE is turned on below. -->
+        <button class="shot" hidden title="Copy a picture of the screen to the clipboard (both versions when comparing). Shift-click also saves a PNG">📷</button>
+        <button class="review-toggle" hidden title="Make a review page: every screen captured (side by side with the other version when comparing), which ones changed, and a note; open it or publish it with Claude">Review</button>
       </span>
       <span class="tb-group">
         <button class="vs-toggle" title="Compare with another branch or commit, side by side">⑂ Versions</button>
@@ -459,6 +483,8 @@ export function studioPage(appPath) {
 <div class="note"></div>
 <div class="overview-pop" hidden></div>
 <div class="guides-pop" hidden></div>
+<div class="rv-pop" hidden></div>
+<div class="rv-progress" hidden></div>
 <div class="vs-pop" hidden></div>
 <script>
   // Screen sizes in CSS px (portrait), and what each device draws over the page.
@@ -1266,6 +1292,166 @@ export function studioPage(appPath) {
     }
   });
 
+  // On hold: the 📷 snapshot and the Review page. Set to true to bring both back.
+  const CAPTURE = false;
+  for (const b of document.querySelectorAll(".shot, .review-toggle")) b.hidden = !CAPTURE;
+
+  // ---------- review pages ----------
+  // Every screen (or this one) captured in one pass, side by side with the other version when comparing,
+  // with the screens that changed flagged; the server writes one shareable page from it.
+  const rv = { all: true, cancel: false, last: null };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  function rvDefaultTitle() {
+    return versusOn() ? labelParts("here")[0] + " vs " + labelParts("there")[0] : "Screens · " + new Date().toLocaleDateString("en", { month: "short", day: "numeric" });
+  }
+  async function drawReview() {
+    const pop = $(".rv-pop");
+    let recent = [];
+    try { recent = (await fetch("/__ui-tweaks/reviews", { cache: "no-store" }).then((r) => r.json())).reviews || []; } catch {}
+    const n = canvas.artboards.length;
+    pop.innerHTML =
+      "<h4>Review page</h4><p>Captures " + (versusOn() ? "each screen in both versions, side by side, and flags the ones that changed" : "each screen") + ". Chrome asks once which tab to capture: pick this one.</p>" +
+      '<input class="rv-title" placeholder="Title" value="' + esc(rvDefaultTitle()) + '" />' +
+      '<textarea class="rv-note" rows="2" placeholder="Note for whoever reads it (optional)"></textarea>' +
+      '<div class="rv-seg"><button data-all="1" class="' + (rv.all ? "on" : "") + '">All ' + n + ' screens</button><button data-all="0" class="' + (rv.all ? "" : "on") + '">This screen</button></div>' +
+      '<button class="rv-go">Capture and make the page</button>' +
+      (rv.last ? '<div class="rv-done"><b>Ready: ' + esc(rv.last.title) + '</b><div class="rv-row"><a href="/__ui-tweaks/reviews/' + esc(rv.last.slug) + '" target="_blank" rel="noopener">Open</a><button class="rv-publish" title="Your Claude Code session publishes it as a private claude.ai page you can share">Publish with Claude</button></div></div>' : "") +
+      (recent.length ? '<h4>Earlier</h4><div class="rv-recent">' + recent.slice(0, 8).map((r) => '<a href="/__ui-tweaks/reviews/' + esc(r.slug) + '" target="_blank" rel="noopener">' + esc(r.slug) + "</a>").join("") + "</div>" : "");
+    for (const b of pop.querySelectorAll(".rv-seg button")) b.addEventListener("click", () => { rv.all = b.dataset.all === "1"; for (const x of pop.querySelectorAll(".rv-seg button")) x.classList.toggle("on", x === b); });
+    pop.querySelector(".rv-go").addEventListener("click", () => makeReview(pop.querySelector(".rv-title").value.trim() || rvDefaultTitle(), pop.querySelector(".rv-note").value.trim()));
+    const pub = pop.querySelector(".rv-publish");
+    if (pub) pub.addEventListener("click", async () => {
+      try {
+        const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "publish", file: rv.last.file, title: rv.last.title, instruction: "Publish the review “" + rv.last.title + "”" }) });
+        if (!res.ok) throw new Error((await res.json()).error);
+        note("Sent to Claude Code: it publishes the page and posts the link there (keep a session with the ui-tweaks mod open).");
+        pop.hidden = true;
+      } catch (e) { note("Couldn't ask Claude: " + e.message); }
+    });
+  }
+  $(".review-toggle").addEventListener("click", (e) => {
+    const pop = $(".rv-pop");
+    pop.hidden = !pop.hidden;
+    if (!pop.hidden) {
+      const r = e.currentTarget.getBoundingClientRect();
+      pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 328)) + "px";
+      pop.style.top = r.bottom + 6 + "px";
+      drawReview();
+    }
+  });
+  addEventListener("pointerdown", (e) => { const pop = $(".rv-pop"); if (!pop.hidden && !e.target.closest(".rv-pop, .review-toggle")) pop.hidden = true; });
+
+  // A frame's pixels from the tab capture, as a compressed image, plus a small copy for comparing.
+  function grab(video, el) {
+    const sx = video.videoWidth / innerWidth, sy = video.videoHeight / innerHeight;
+    const box = el.getBoundingClientRect();
+    const w = Math.max(1, Math.round(box.width * sx)), h = Math.max(1, Math.round(box.height * sy));
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    c.getContext("2d").drawImage(video, box.left * sx, box.top * sy, w, h, 0, 0, w, h);
+    const t = document.createElement("canvas");
+    t.width = 64; t.height = Math.max(1, Math.round((64 * h) / w));
+    t.getContext("2d").drawImage(c, 0, 0, t.width, t.height);
+    return { url: c.toDataURL("image/webp", 0.82), thumb: t.getContext("2d").getImageData(0, 0, t.width, t.height).data };
+  }
+  // Changed when more than half a percent of the small copies' pixels differ clearly.
+  function differs(a, b) {
+    if (!a || !b || a.length !== b.length) return true;
+    let n = 0;
+    for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]) > 60) n++;
+    return n / (a.length / 4) > 0.005;
+  }
+  // Waits for the screen (and the other version) to finish loading, then a moment for fonts and animations.
+  async function settle(a, since) {
+    const f = frames.get(a.id);
+    for (let i = 0; i < 60; i++) {
+      try { if (f && f.iframe.contentDocument && f.iframe.contentDocument.readyState === "complete" && f.iframe.contentWindow.location.href !== "about:blank") break; } catch { break; }
+      await sleep(150);
+    }
+    if (versusOn() && versus.status === "ready") {
+      for (let i = 0; i < 40 && (vs.readyAt || 0) < since && vs.src && vs.src !== vs.lastSrc; i++) await sleep(150);
+      vs.lastSrc = vs.src;
+    }
+    await sleep(900);
+  }
+  async function makeReview(title, noteText) {
+    $(".rv-pop").hidden = true;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return note("This browser can't capture the page; use Chrome.");
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: { displaySurface: "browser" }, audio: false, preferCurrentTab: true, selfBrowserSurface: "include" });
+    } catch { return note("Review cancelled."); }
+    if (versusOn() && !refsInfo) await loadRefs();
+    const list = rv.all ? canvas.artboards.slice() : [current()].filter(Boolean);
+    const startId = focusedId();
+    const bar = $(".rv-progress");
+    rv.cancel = false;
+    bar.innerHTML = '<span class="rv-step"></span><button>Stop</button>';
+    bar.querySelector("button").addEventListener("click", () => { rv.cancel = true; });
+    bar.hidden = false;
+    const hide = (on) => frames.forEach((x) => { try { x.iframe.contentWindow.__uiTweaks.hideOverlay(on); } catch {} });
+    const screens = [];
+    try {
+      const video = document.createElement("video");
+      video.srcObject = stream;
+      video.muted = true;
+      await video.play();
+      for (const [i, a] of list.entries()) {
+        if (rv.cancel) break;
+        bar.querySelector(".rv-step").textContent = "Capturing " + (i + 1) + " of " + list.length + ": " + (a.name || a.url);
+        const since = Date.now();
+        view.focus = a.id;
+        select(a.id);
+        render();
+        fitFocus();
+        await settle(a, since);
+        // Keep the capture clean: the progress bar, outlines and the panel's markings out of the picture.
+        bar.style.visibility = "hidden";
+        hide(true);
+        await sleep(250);
+        const f = frames.get(a.id);
+        const here = f && grab(video, f.frame);
+        const there = versusOn() && versus.status === "ready" ? grab(video, vs.frame) : null;
+        hide(false);
+        bar.style.visibility = "";
+        if (!here) continue;
+        const [w, h] = size(a);
+        screens.push({ name: a.name || a.url, url: a.url, size: w + "×" + h, here: here.url, there: there && there.url, changed: there ? differs(here.thumb, there.thumb) : undefined });
+      }
+    } finally {
+      stream.getTracks().forEach((t) => t.stop());
+      hide(false);
+      bar.hidden = true;
+      bar.style.visibility = "";
+      view.focus = startId;
+      select(startId);
+      render();
+      applyCam();
+      dockShown();
+    }
+    if (!screens.length) return note("Nothing was captured.");
+    note("Making the page…");
+    const here = labelParts("here"), there = versusOn() ? labelParts("there") : null;
+    try {
+      const res = await fetch("/__ui-tweaks/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, note: noteText, at: Date.now(), versions: { here: { name: versusOn() ? here[0] : "", detail: versusOn() ? here[1] : "" }, ...(there ? { there: { name: there[0], detail: there[1] } } : {}) }, screens }),
+      });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error);
+      rv.last = { ...out, title };
+      const changed = screens.filter((s) => s.changed).length;
+      note("Review ready: " + screens.length + " screens" + (there ? ", " + changed + " changed" : "") + ". Open it from Review.");
+      const pop = $(".rv-pop");
+      const r = $(".review-toggle").getBoundingClientRect();
+      pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 328)) + "px";
+      pop.style.top = r.bottom + 6 + "px";
+      pop.hidden = false;
+      drawReview();
+    } catch (e) { note("Couldn't make the review: " + e.message); }
+  }
+
   // ---------- another version, side by side ----------
   // A branch or commit runs from its own checkout on its own dev server (see versions.mjs); its frame sits
   // to the right of the screen you're editing, the same size, and follows its scrolling and navigation.
@@ -1420,6 +1606,7 @@ export function studioPage(appPath) {
   addEventListener("message", (e) => {
     if (versus && e.origin === versus.url && e.data && e.data.uit === "mirror-miss") note("Not on " + versus.ref + ": “" + e.data.what + "”. Click it there yourself.");
     if (!versus || !versus.url || e.origin !== versus.url || !e.data || e.data.uit !== "mirror-ready") return;
+    vs.readyAt = Date.now();
     const f = frames.get(focusedId());
     try { const se = f.iframe.contentWindow.document.scrollingElement; mirror({ scroll: { path: null, top: se.scrollTop, left: se.scrollLeft } }); } catch {}
   });
@@ -1657,6 +1844,19 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
         const summary = await scanBreakpoints(root);
         const width = Number(url.searchParams.get("width"));
         return send(res, 200, { ...summary, scope: width > 0 ? scopeFor(summary, width) : null });
+      }
+      // Review pages: the studio sends every screen's capture, the server writes one shareable HTML file.
+      if (url.pathname === `${PREFIX}/review` && req.method === "POST") {
+        try {
+          return send(res, 200, await saveReview(root, JSON.parse(await readBody(req, 80_000_000))));
+        } catch (error) {
+          return send(res, error.status || 500, { error: error.message });
+        }
+      }
+      if (url.pathname === `${PREFIX}/reviews` && req.method === "GET") return send(res, 200, { reviews: await listReviews(root) });
+      if (url.pathname.startsWith(`${PREFIX}/reviews/`) && req.method === "GET") {
+        const html = await readReview(root, decodeURIComponent(url.pathname.slice(`${PREFIX}/reviews/`.length)));
+        return html === null ? send(res, 404, { error: "No such review" }) : send(res, 200, html, "text/html; charset=utf-8");
       }
       // Other versions of the app (a branch or commit) for the studio's side-by-side view.
       if (url.pathname === `${PREFIX}/versions`) {

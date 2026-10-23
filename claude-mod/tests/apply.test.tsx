@@ -270,3 +270,25 @@ test("/studio uses the project's own dev server when the kit is installed there"
   expect(JSON.stringify(result)).toContain('on your dev server (http://localhost:5188)')
   expect(prompts[0]).toContain('http://localhost:5188/__ui-tweaks/studio')
 })
+
+test('a publish ask has the main model publish the review page, and is marked done', async ($, on) => {
+  const clock = mock.clock(on, { now: 1000 })
+  const prompts: string[] = []
+  const files: Record<string, string> = {
+    '.ui-tweaks/asks.json': JSON.stringify({ asks: [{ id: 'askpub1', kind: 'publish', instruction: 'Publish', file: '.ui-tweaks/reviews/first-look-2026-10-23-1405.html', title: 'First look', at: 900 }] }),
+  }
+  fakeFs(on, files)
+  on('session.cwd', () => ({ value: '/p' }) as never)
+  on('ui.toast', () => ({ value: undefined }) as never)
+  on('prompt.submit', ($, e) => {
+    prompts.push(e.text)
+    return { text: e.text }
+  })
+
+  await $.command.run({ command: 'apply-tweaks', args: 'asks' } as never)
+  await clock.advance(100)
+  expect(prompts[0]).toContain('first-look-2026-10-23-1405.html')
+  expect(prompts[0]).toContain('"First look"')
+  const outcome = Object.entries(files).find(([p]) => p.endsWith('askpub1.json'))?.[1]
+  expect(JSON.parse(outcome ?? '{}').status).toBe('done')
+})

@@ -29,6 +29,7 @@
     "versions.mjs",
     "overlay.js",
     "serve.mjs",
+    "review.mjs",
     "routes.mjs",
     "server-core.mjs",
     "studio-server.mjs",

@@ -195,7 +195,7 @@ const VARIATIONS_PROMPT = `You are a visual designer exploring alternatives for 
 Answer with exactly one line of JSON and nothing after it:
 {"variants":[{"name":"<2-4 words>","why":"<one sentence>","changes":[{"target":":scope","prop":"padding","value":"16px 20px"}]}]}`
 
-type Ask = { id: string; kind: 'edit' | 'variations'; instruction: string; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
+type Ask = { id: string; kind: 'edit' | 'variations' | 'publish'; instruction: string; file?: string; title?: string; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
 type AskOutcome = { status: 'running' | 'done' | 'failed'; startedAt?: number; summary?: string; needs?: string; files?: string[]; variants?: unknown[]; error?: string }
 
 /** The last line of an answer that parses as a JSON object. */
@@ -289,6 +289,20 @@ async function startNextAsk($: EngineInterface) {
     }
   }
   if (!next) return
+  // A review page to publish: the main model does it (it has the Artifact tool), in a turn of its own.
+  if (next.kind === 'publish') {
+    const file = next.file ? inProject(next.file) : null
+    if (!file) return void (await writeOutcome($, next.id, { status: 'failed', error: 'No review file.' }))
+    const title = next.title ?? 'Design review'
+    await writeOutcome($, next.id, { status: 'done', summary: `Asked Claude to publish "${title}"; the link appears in Claude Code.` })
+    $.clock.after(50, () =>
+      void $.prompt.submit({
+        text: `Publish the design review page at ${file} as a private Artifact titled "${title}", and give me its link. It's a self-contained HTML page the UI tweaks studio wrote (screens of the app, side by side with another version): publish it as it is, without rewriting or redesigning it.`,
+      }),
+    )
+    $.ui.toast(`Publishing the review "${title}"…`)
+    return
+  }
   if (next.kind === 'edit') {
     if (!(await takeLock($))) return
     snapshots.clear()

@@ -299,8 +299,18 @@ export function studioPage(appPath) {
   .width-slider { accent-color: #fff; }
   .ab-frame { border-radius: 12px; box-shadow: 0 0 0 1px var(--line), 0 16px 48px rgba(0,0,0,.5); }
   .ab.selected .ab-frame { box-shadow: 0 0 0 1px var(--line), 0 16px 48px rgba(0,0,0,.5); }
-  .vs-label { color: var(--dim); font-family: var(--mono); font-size: calc(12px * var(--iz)); }
-  .vs-label b { font-family: system-ui, -apple-system, sans-serif; font-size: calc(14px * var(--iz)); color: #fff; margin-right: .4em; }
+  /* Comparing: a badge per screen saying which version it is, in that side's colour (yours blue,
+     the other amber), with its role and commit; the frame gets a matching outline. */
+  .vs-label { --vs: #6cb8ff; --vs-bg: rgba(13,153,255,.16); display: none; align-items: center; gap: calc(8px * var(--iz)); padding-bottom: calc(12px * var(--iz)); font: 500 calc(12px * var(--iz))/1.3 var(--mono); color: var(--dim); }
+  .vs-ab .vs-label { --vs: #ffc46b; --vs-bg: rgba(255,196,107,.16); }
+  .viewport.versus .vs-label { display: flex; }
+  .vs-label .vs-branch { display: inline-flex; align-items: center; gap: .5em; flex: none; max-width: 60%; padding: .35em .8em; border-radius: 999px; background: var(--vs-bg); color: var(--vs); font: 600 calc(15px * var(--iz))/1.2 system-ui, -apple-system, sans-serif; letter-spacing: -.01em; }
+  .vs-label .vs-branch span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vs-label .vs-branch::before { content: ""; width: .55em; height: .55em; border-radius: 50%; background: var(--vs); flex: none; }
+  .vs-label .vs-role { flex: none; padding: .25em .6em; border-radius: 6px; background: rgba(255,255,255,.06); color: var(--label); font: 500 calc(11.5px * var(--iz))/1.2 system-ui, -apple-system, sans-serif; }
+  .vs-label .vs-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .viewport.versus .ab .ab-frame { box-shadow: 0 0 0 calc(2px * var(--iz)) rgba(13,153,255,.55), 0 16px 48px rgba(0,0,0,.5); }
+  .viewport.versus .vs-ab .ab-frame { box-shadow: 0 0 0 calc(2px * var(--iz)) rgba(255,196,107,.55), 0 16px 48px rgba(0,0,0,.5); }
   .note { background: #2a2a2a; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.4); font-size: 13px; padding: 9px 14px; }
 
   /* Routes sidebar */
@@ -505,7 +515,7 @@ export function studioPage(appPath) {
   // Each screen keeps its zoom until you change its size.
   let focusPan = { x: 0, y: 0, id: null };
   const focusZoom = new Map(); // artboard id -> { z, size }
-  const fitZoom = (w, h) => Math.min(1, (viewport.clientWidth - 48) / w, (viewport.clientHeight - (versusOn() ? 80 : 48)) / h);
+  const fitZoom = (w, h) => Math.min(1, (viewport.clientWidth - 48) / w, (viewport.clientHeight - (versusOn() ? 110 : 48)) / h);
   // With another version open, the canvas holds both screens and the gap between them.
   const VS_GAP = 64;
   const spanW = (w) => (versusOn() ? w * 2 + VS_GAP : w);
@@ -523,7 +533,7 @@ export function studioPage(appPath) {
     const z = zoomOf(a);
     placeVersus(a);
     const sw = spanW(w) * z, sh = h * z;
-    const vw = viewport.clientWidth, vh = viewport.clientHeight, pad = versusOn() ? 40 : 24;
+    const vw = viewport.clientWidth, vh = viewport.clientHeight, pad = versusOn() ? 60 : 24;
     const clamp = (v, size, room) => (size + pad * 2 <= room ? (room - size) / 2 : Math.min(pad, Math.max(room - size - pad, v)));
     const id = a.id + ":" + w + "x" + h + (versusOn() ? ":vs" : "");
     if (focusPan.id !== id) focusPan = { x: (vw - sw) / 2, y: sh + pad * 2 <= vh ? (vh - sh) / 2 : pad, id };
@@ -1073,8 +1083,9 @@ export function studioPage(appPath) {
       await video.play();
       await new Promise((r) => setTimeout(r, 300));
       const sx = video.videoWidth / innerWidth, sy = video.videoHeight / innerHeight;
-      const shots = [{ box: f.frame.getBoundingClientRect(), label: versusOn() ? labelParts("here") : null }];
-      if (versusOn()) shots.push({ box: vs.frame.getBoundingClientRect(), label: labelParts("there") });
+      // Each side's badge colours, on the light card: yours blue, the other amber.
+      const shots = [{ box: f.frame.getBoundingClientRect(), label: versusOn() ? labelParts("here") : null, ink: "#1d4ed8", tint: "#dbeafe" }];
+      if (versusOn()) shots.push({ box: vs.frame.getBoundingClientRect(), label: labelParts("there"), ink: "#b45309", tint: "#fef3c7" });
       const crops = shots.map((s) => ({ ...s, w: Math.round(s.box.width * sx), h: Math.round(s.box.height * sy) }));
       const out = document.createElement("canvas");
       const ctx = out.getContext("2d");
@@ -1084,21 +1095,33 @@ export function studioPage(appPath) {
         ctx.drawImage(video, crops[0].box.left * sx, crops[0].box.top * sy, crops[0].w, crops[0].h, 0, 0, crops[0].w, crops[0].h);
       } else {
         // Side by side on a light card: each screen under its label (version, commit, when).
-        const u = Math.max(1, crops[0].w / 600), pad = Math.round(32 * u), gap = Math.round(32 * u), lh = Math.round(52 * u);
+        const u = Math.max(1, crops[0].w / 600), pad = Math.round(32 * u), gap = Math.round(32 * u), lh = Math.round(64 * u);
         out.width = pad * 2 + crops.reduce((n, c) => n + c.w, 0) + gap * (crops.length - 1);
         out.height = pad * 2 + lh + Math.max(...crops.map((c) => c.h));
         ctx.fillStyle = "#f4f4f5";
         ctx.fillRect(0, 0, out.width, out.height);
         let x = pad;
         for (const c of crops) {
-          ctx.fillStyle = "#18181b";
-          ctx.font = "600 " + Math.round(17 * u) + "px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-          ctx.fillText(c.label[0], x, pad + Math.round(18 * u), c.w);
+          // The branch as a pill with a dot, then its commit underneath.
+          ctx.font = "600 " + Math.round(16 * u) + "px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+          const ph = Math.round(30 * u), px = Math.round(12 * u), dot = Math.round(4 * u);
+          const pw = Math.min(c.w, Math.ceil(ctx.measureText(c.label[0]).width) + px * 2 + dot * 2 + Math.round(8 * u));
+          ctx.fillStyle = c.tint;
+          ctx.beginPath();
+          ctx.roundRect(x, pad, pw, ph, ph / 2);
+          ctx.fill();
+          ctx.fillStyle = c.ink;
+          ctx.beginPath();
+          ctx.arc(x + px + dot, pad + ph / 2, dot, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.textBaseline = "middle";
+          ctx.fillText(c.label[0], x + px + dot * 2 + Math.round(8 * u), pad + ph / 2 + 1, pw - px * 2 - dot * 2 - Math.round(8 * u));
           ctx.fillStyle = "#71717a";
           ctx.font = Math.round(13 * u) + "px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-          ctx.fillText(c.label[1], x, pad + Math.round(38 * u), c.w);
+          ctx.fillText(c.label[1], x, pad + ph + Math.round(16 * u), c.w);
+          ctx.textBaseline = "alphabetic";
           ctx.drawImage(video, c.box.left * sx, c.box.top * sy, c.w, c.h, x, pad + lh, c.w, c.h);
-          ctx.strokeStyle = "rgba(0,0,0,.12)";
+          ctx.strokeStyle = c.ink;
           ctx.lineWidth = Math.max(1, u);
           ctx.strokeRect(x - 0.5, pad + lh - 0.5, c.w + 1, c.h + 1);
           x += c.w + gap;
@@ -1148,7 +1171,14 @@ export function studioPage(appPath) {
     if (side === "here") return [(cur.name || "This version") + (cur.dirty ? " (with your changes)" : ""), [cur.sha, cur.dirty ? "uncommitted changes" : "last commit"].filter(Boolean).join(" · ")];
     return [versus.ref, [versus.sha, versus.when, versus.subject].filter(Boolean).join(" · ")];
   }
-  const labelHtml = (side) => { const [t, sub] = labelParts(side); return "<b>" + esc(t) + "</b>  " + esc(sub); };
+  // The branch badge, what that side is for, and its commit.
+  function labelHtml(side) {
+    const cur = (refsInfo && refsInfo.current) || {};
+    const name = side === "here" ? cur.name || "This version" : versus.ref;
+    const role = side === "here" ? (cur.dirty ? "Editing · with your changes" : "Editing") : "Comparing · view only";
+    const meta = side === "here" ? [cur.sha, cur.dirty ? "uncommitted changes" : "last commit"].filter(Boolean).join(" · ") : [versus.sha, versus.when, versus.subject].filter(Boolean).join(" · ");
+    return '<span class="vs-branch" title="' + esc(name) + '"><span>' + esc(name) + '</span></span><span class="vs-role">' + esc(role) + '</span><span class="vs-meta" title="' + esc(meta) + '">' + esc(meta) + "</span>";
+  }
   function placeVersus(a) {
     const on = versusOn();
     viewport.classList.toggle("versus", on);

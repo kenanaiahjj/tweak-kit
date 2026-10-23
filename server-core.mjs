@@ -292,7 +292,15 @@ export function studioPage(appPath) {
     --radius: 8px; --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   html, body { font: 500 12.5px/1.4 system-ui, -apple-system, "SF Pro Display", "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
-  .toolbar { height: 48px; gap: 4px; padding: 0 10px; background: var(--bar); border-bottom: 1px solid var(--line); }
+  .toolbar { height: auto; min-height: 48px; flex-wrap: wrap; align-content: center; gap: 6px 4px; padding: 8px 10px; overflow: visible; background: var(--bar); border-bottom: 1px solid var(--line); }
+  .tb-group { display: flex; align-items: center; gap: 2px; flex: none; max-width: 100%; }
+  .tb-group:first-child { flex: 0 1 auto; min-width: 0; }
+  .tb-group .focus-pick { min-width: 72px; flex: 0 1 auto; }
+  .tb-group .focus-tools { min-width: 0; }
+  .tb-group + .tb-group { padding-left: 8px; margin-left: 4px; border-left: 1px solid var(--line); }
+  .tb-group.tb-end { margin-left: auto; }
+  .tb-group[hidden] { display: none; }
+  .focus-tools { min-width: auto; }
   .toolbar button, .toolbar a.tb { height: 30px; padding: 0 9px; border: 0; border-radius: var(--radius); color: var(--label); font-weight: 500; transition: background .15s, color .15s; }
   .toolbar button:hover, .toolbar a.tb:hover { background: var(--hover); color: var(--text); }
   .toolbar button.on, .vs-toggle.on { background: var(--active); color: #fff; }
@@ -369,39 +377,49 @@ export function studioPage(appPath) {
 <div class="studio">
   <div class="stage">
     <div class="toolbar">
-      <button class="exit" title="Leave the studio">✕</button>
-      <button class="reload" title="Reload every artboard">↻</button>
-      <span class="sep"></span>
-      <span class="focus-tools">
-        <button class="prev" title="Previous screen (←)">‹</button>
-        <select class="focus-pick" title="Screen"></select>
-        <button class="next" title="Next screen (→)">›</button>
-        <button class="scr-add" title="New screen: a copy of this one (then edit its URL)">＋</button>
-        <button class="scr-edit" title="Rename this screen or change its URL">✎</button>
-        <button class="scr-del" title="Remove this screen">🗑</button>
-        <button class="pages-toggle" title="Routes: add a screen for a page of your app">☰</button>
+      <!-- Groups never break apart; on a narrow window the later ones wrap onto a second row. -->
+      <span class="tb-group">
+        <button class="exit" title="Leave the studio">✕</button>
+        <button class="reload" title="Reload every artboard">↻</button>
         <span class="sep"></span>
+        <span class="focus-tools">
+          <button class="prev" title="Previous screen (←)">‹</button>
+          <select class="focus-pick" title="Screen"></select>
+          <button class="next" title="Next screen (→)">›</button>
+          <button class="scr-add" title="New screen: a copy of this one (then edit its URL)">＋</button>
+          <button class="scr-edit" title="Rename this screen or change its URL">✎</button>
+          <button class="scr-del" title="Remove this screen">🗑</button>
+          <button class="pages-toggle" title="Routes: add a screen for a page of your app">☰</button>
+          <button class="overview" title="All screens at a glance">▦</button>
+        </span>
+      </span>
+      <span class="tb-group focus-tools">
         <select class="focus-device" title="Device"></select>
         <button class="focus-turn" title="Rotate">⟲</button>
         <input type="range" class="width-slider" min="280" max="1920" step="1" list="bp-ticks" title="Width: drag to watch the layout respond (ticks are your breakpoints); pick a device to reset" />
         <datalist id="bp-ticks"></datalist>
+      </span>
+      <span class="tb-group focus-tools">
         <button class="fz-out" title="Zoom out (⌘−)">−</button>
         <span class="zoom focus-zoom" title="Pinch or ⌘-scroll to zoom; scroll or drag to pan"></span>
         <button class="fz-in" title="Zoom in (⌘+)">+</button>
         <button class="fz-fit" title="Fit the screen (⇧1)">Fit</button>
         <button class="fz-100" title="Actual size (⇧0)">1:1</button>
-        <button class="overview" title="All screens at a glance">▦</button>
       </span>
-      <span class="sep"></span>
-      <button class="grid" title="Column grid">Grid</button>
-      <button class="base" title="8pt baseline">8pt</button>
-      <button class="compare" title="Hold to see every artboard without your previews (or hold \\ in the app)">Compare</button>
-      <button class="shot" title="Copy a picture of the screen to the clipboard (both versions when comparing). Shift-click also saves a PNG">📷</button>
-      <button class="vs-toggle" title="Compare with another branch or commit, side by side">⑂ Versions</button>
-      <span class="vs-modes" hidden><button data-mode="inspect" title="Click elements to tweak them">Inspect</button><button data-mode="interact" title="Use both apps: clicks go to the app, not the panel">Interact</button></span>
-      <button class="vs-mirror" hidden title="Repeat your clicks and typing on the other version, so both walk through the same flow">⇆ Mirror clicks</button>
-      <span class="sep"></span>
-      <a class="tb" href="/__ui-tweaks/system" title="Design system: every token in your CSS, editable">Tokens</a>
+      <span class="tb-group">
+        <button class="grid" title="Column grid">Grid</button>
+        <button class="base" title="8pt baseline">8pt</button>
+        <button class="compare" title="Hold to see every artboard without your previews (or hold \\ in the app)">Compare</button>
+        <button class="shot" title="Copy a picture of the screen to the clipboard (both versions when comparing). Shift-click also saves a PNG">📷</button>
+      </span>
+      <span class="tb-group">
+        <button class="vs-toggle" title="Compare with another branch or commit, side by side">⑂ Versions</button>
+        <span class="vs-modes" hidden><button data-mode="inspect" title="Click elements to tweak them">Inspect</button><button data-mode="interact" title="Use both apps: clicks go to the app, not the panel">Interact</button></span>
+        <button class="vs-mirror" hidden title="Repeat your clicks and typing on the other version, so both walk through the same flow">⇆ Mirror clicks</button>
+      </span>
+      <span class="tb-group tb-end">
+        <a class="tb" href="/__ui-tweaks/system" title="Design system: every token in your CSS, editable">Tokens</a>
+      </span>
     </div>
     <div class="body">
       <div class="pages" hidden></div>

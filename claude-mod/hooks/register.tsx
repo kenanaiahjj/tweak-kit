@@ -643,8 +643,9 @@ async function answers($: EngineInterface, url: string): Promise<boolean> {
 /** Finds the dev server (and so the project): the session's folder first, then the registry in ~/.ui-tweaks/servers. */
 async function devServer($: EngineInterface): Promise<string | null> {
   const now = await $.clock.now()
-  if (serverUrl !== null) return serverUrl
-  if (serverCheckedAt !== 0 && now - serverCheckedAt < 3000) return null
+  // Checked again every few seconds: servers come and go, and the session's own project wins once its
+  // server is up (a server found while it was down must not keep this session on another project).
+  if (serverCheckedAt !== 0 && now - serverCheckedAt < (serverUrl !== null ? 5000 : 3000)) return serverUrl
   serverCheckedAt = now
   const cwd = await $.session.cwd().catch(() => null)
   const own = await $.fs.read(cwd ? `${cwd}/${SERVER}` : SERVER).then(t => JSON.parse(t) as ServerEntry).catch(() => null)
@@ -653,6 +654,8 @@ async function devServer($: EngineInterface): Promise<string | null> {
     projectRoot = own.root ?? cwd
     return serverUrl
   }
+  if (serverUrl !== null && (await answers($, serverUrl))) return serverUrl
+  serverUrl = null
   const home = await $.env.get('HOME').catch(() => undefined)
   if (!home) return null
   const dir = `${home}/.ui-tweaks/servers`

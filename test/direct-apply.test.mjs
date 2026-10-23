@@ -74,7 +74,7 @@ test("notes, states, style props and unplaceable values go to Haiku with a reaso
       tweak("t-0", { color: { from: "#111", to: "#222", authoredIn: [rule(".card", "color")] } }, { note: "make it pop" }),
       tweak("t-1", { color: { from: "#111", to: "#222", state: "hover", authoredIn: [rule(".card", "color")] } }),
       tweak("t-2", { "margin-bottom": { from: "0px", to: "8px", inlineBefore: "18px", authoredIn: [] } }),
-      tweak("t-3", { gap: { from: "0px", to: "8px", authoredIn: [] } }),
+      tweak("t-3", { gap: { from: "0px", to: "8px", authoredIn: [] } }, { element: { classes: [], react: { jsxSource: "src/Nowhere.tsx:4" } } }),
     ],
   });
   assert.equal(out.applied.length, 0);
@@ -82,7 +82,7 @@ test("notes, states, style props and unplaceable values go to Haiku with a reaso
     "has a note",
     "changes a hover/active/focus state",
     "set by the element's style prop",
-    "not set by any rule yet",
+    "not set by any rule yet; no JSX tag at the JSX line",
   ]);
   assert.equal(out.files.length, 0);
 });
@@ -298,4 +298,21 @@ test("planClassEdit edits cn()'s first string and leaves other expressions to a 
   assert.equal(edits.reduce((t, e) => t.slice(0, e.start) + e.value + t.slice(e.end), cn), 'const A = () => <div className={cn("p-2 flex gap-4", open && "block")}>x</div>;\n');
   assert.match(planClassEdit("const A = () => <div className={`a ${b}`}>x</div>;\n", 1, (c) => c).error, /expression/);
   assert.match(planClassEdit("const A = () => <Button className=\"a\">x</Button>;\n", 1, (c) => c).error, /component/);
+});
+
+test("a value no rule sets yet, on an element without classes, goes to the stylesheet the component imports", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "uitk-fresh-"));
+  await mkdir(path.join(root, "src"));
+  await writeFile(path.join(root, "src/styles.css"), ".hero { color: red; }\n");
+  await writeFile(path.join(root, "src/main.tsx"), `import "./styles.css";\nexport function App() {\n  return (\n    <p>Create one verified QR</p>\n  );\n}\n`);
+  const out = await applyDirect(root, {
+    tweaks: [{ id: "t-0", element: { tag: "p", classes: [], react: { jsxSource: "src/main.tsx:4" } }, changes: { height: { prop: "height", from: "34px", to: "49px", authoredIn: [] }, "flex-shrink": { prop: "flex-shrink", from: "1", to: "0", authoredIn: [] } } }],
+  });
+  assert.equal(out.remaining.length, 0, out.remaining[0] && out.remaining[0].directSkip);
+  const after = (f) => out.files.find((x) => x.path.endsWith(f)).after;
+  assert.equal(out.files.length, 2); // the JSX and the stylesheet, nothing else
+  const cls = /<p className="([\w-]+)">/.exec(after("main.tsx"))[1];
+  const css = after("styles.css");
+  assert.match(css, new RegExp(`\\.${cls} \\{\\n  height: 49px;\\n  flex-shrink: 0;\\n\\}`));
+  assert.match(css, /^\.hero \{ color: red; \}/);
 });

@@ -369,6 +369,28 @@ function collapseDecls(items) {
 }
 
 /** Edits that write `items` into `${base}.${cls}`: into that rule if it exists, else as a new rule after `anchor`. */
+/**
+ * The project stylesheet a JSX file imports (`import "./styles.css"`), relative to the project root; the
+ * nearest one to it otherwise (index.css, styles.css, globals.css and the like up to the root), or null.
+ * Module CSS (.module.css) is left out: its class names are rewritten.
+ */
+export async function importedStylesheet(root, jsxAbs, read) {
+  const text = await read(jsxAbs).catch(() => "");
+  for (const m of text.matchAll(/^\s*import\s+(?:[^'"]*?from\s+)?["']([^"']+\.css)["']/gm)) {
+    if (/\.module\.css$/i.test(m[1]) || !m[1].startsWith(".")) continue;
+    const abs = path.resolve(path.dirname(jsxAbs), m[1]);
+    if (abs.startsWith(path.resolve(root) + path.sep) && (await read(abs).then(() => true, () => false))) return path.relative(root, abs);
+  }
+  for (let dir = path.dirname(jsxAbs); dir.startsWith(path.resolve(root)); dir = path.dirname(dir)) {
+    for (const name of ["index.css", "styles.css", "style.css", "globals.css", "global.css", "app.css", "App.css", "main.css"]) {
+      const abs = path.join(dir, name);
+      if (await read(abs).then(() => true, () => false)) return path.relative(root, abs);
+    }
+    if (dir === path.resolve(root)) break;
+  }
+  return null;
+}
+
 export function planOverride(text, { base, anchor, conditions, items }, cls) {
   if (base && base.includes("::")) return { error: "the rule targets a pseudo-element" };
   const selector = base ? `${base}.${cls}` : `.${cls}`;
@@ -559,7 +581,8 @@ export async function applyDirect(root, batch) {
       if (classPlan.error) {
         for (const [k] of toOverride) blocked[k] += `; ${classPlan.error}`;
       } else {
-        const fallbackFile = changes.map(([, c]) => c.authoredIn && c.authoredIn[0] && c.authoredIn[0].file).find((f) => /\.css$/i.test(f || ""));
+        // Where a value no rule sets yet goes: next to the tweak's other rules, else the stylesheet the component imports.
+        const fallbackFile = changes.map(([, c]) => c.authoredIn && c.authoredIn[0] && c.authoredIn[0].file).find((f) => /\.css$/i.test(f || "")) || (await importedStylesheet(root, jsxAbs, read));
         const groups = new Map();
         for (const [k, c] of toOverride) {
           const r = c.authoredIn && c.authoredIn[0];

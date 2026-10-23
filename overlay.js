@@ -1676,6 +1676,10 @@
     .foot button.btn.instant-toggle.on { background: rgba(255,196,107,.14); color: #ffc46b; }
     .spin { width: 11px; height: 11px; margin-right: 8px; border-radius: 50%; border: 1.5px solid rgba(255,196,107,.25); border-top-color: #ffc46b; animation: uit-spin .8s linear infinite; flex: none; }
     @keyframes uit-spin { to { transform: rotate(360deg); } }
+    .unheard { margin: 4px 0 8px; padding: 9px 10px; border-radius: var(--radius); background: rgba(255,196,107,.1); color: #ffc46b; font-size: 12px; line-height: 1.45; }
+    .unheard b { display: block; font-weight: 600; margin-bottom: 2px; }
+    .unheard span { color: rgba(255,196,107,.8); }
+    .unheard code { font-family: var(--mono); font-size: 11.5px; }
     .by-tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font: 500 10.5px/16px var(--mono); vertical-align: 1px; background: var(--bg2); color: var(--dim); }
     .by-tag.by-direct, .by-tag.by-tokens { background: rgba(142,230,168,.12); color: #8ee6a8; }
     .by-tag.by-haiku { background: rgba(255,196,107,.14); color: #ffc46b; }
@@ -3735,6 +3739,12 @@
     h.style.cssText = "margin:0 0 4px;font-size:11px;font-weight:600;display:flex;justify-content:space-between;align-items:center";
     h.textContent = list.length ? `Changes · ${list.length} element${list.length > 1 ? "s" : ""}` : "No changes yet";
     box.append(h);
+    if (state.unheard) {
+      const w = document.createElement("div");
+      w.className = "unheard";
+      w.innerHTML = "<b>No Claude Code session is picking these up.</b><span>Open Claude Code in this project with the ui-tweaks mod (or run <code>/studio</code> there), and what's waiting is applied.</span>";
+      box.append(w);
+    }
     let others = [];
     try { others = (JSON.parse(localStorage.getItem(STORE_KEY) || "null") || { drafts: [] }).drafts.filter((d) => d.at && d.at !== here() && !list.some((t) => t.at === d.at && t.element.selector === d.selector)); } catch {}
     if (others.length) {
@@ -4123,7 +4133,14 @@
   async function poll() {
     try {
       const res = await fetch(API + "/status", { cache: "no-store" });
-      const { pendingIds, pendingTweaks = [], version, lastApply = null, update = null, asks = [], running = null } = await res.json();
+      const { pendingIds, pendingTweaks = [], version, lastApply = null, update = null, asks = [], running = null, listener = null } = await res.json();
+      // Nobody to apply what's waiting: no Claude Code session with the mod has checked in for 30s.
+      const waitingOnClaude = pendingTweaks.some((p) => !p.skipped) || asks.some((a) => a.status === "waiting");
+      const unheard = waitingOnClaude && !running && (!listener || listener.ago > 30000);
+      if (unheard !== !!state.unheard) {
+        state.unheard = unheard;
+        if (state.isOpen) renderChanges();
+      }
       if (JSON.stringify(running) !== JSON.stringify(state.running)) {
         state.running = running;
         if (state.isOpen) renderChanges();

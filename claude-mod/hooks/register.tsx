@@ -464,9 +464,21 @@ async function openDiff($: EngineInterface) {
   await $.ui.open({ id: DIFF_PANE, title: 'UI tweaks: last apply' })
 }
 
+// "A session is listening": the panel warns when tweaks wait and nothing has written this lately.
+const LISTENER = '.ui-tweaks/listener.json'
+let heardAt = 0
+async function heartbeat($: EngineInterface) {
+  if (projectRoot === null) return
+  const now = await $.clock.now()
+  if (now - heardAt < 10000) return
+  heardAt = now
+  await $.fs.write(inProject(LISTENER), JSON.stringify({ at: now, session: me })).catch(() => {})
+}
+
 async function refresh($: EngineInterface) {
   if (!applierRegistered) await registerApplier($)
   await devServer($)
+  await heartbeat($)
   await syncLastApply($)
   const next = await readPending($)
   const current = await read($, run)
@@ -534,7 +546,7 @@ async function snapshotTargets($: EngineInterface, ids: string[]) {
   }
 }
 
-async function applyWithHaiku($: EngineInterface, ids?: string[]): Promise<string> {
+async function applyWithHaiku($: EngineInterface, ids?: string[], retryNote?: string): Promise<string> {
   const summary = await readPending($)
   if (summary === null) return `No UI tweaks are waiting (${FILE} is empty or missing).`
   if ((await read($, run)) !== null) return 'An apply is already running; wait for it to finish.'
@@ -550,7 +562,7 @@ async function applyWithHaiku($: EngineInterface, ids?: string[]): Promise<strin
     subagentType: APPLIER,
     model: 'haiku',
     description: 'Apply UI tweaks',
-    prompt: `Apply these tweak ids from ${inProject(FILE)}: ${todo.join(', ')}. Ignore any other tweaks in the file.${STRUCTURE_NOTE}${projectRoot ? ` The project is ${projectRoot}: file paths in the tweaks (src/..., file:line) are relative to it.` : ''}`,
+    prompt: `Apply these tweak ids from ${inProject(FILE)}: ${todo.join(', ')}. Ignore any other tweaks in the file.${retryNote ? ` ${retryNote}` : ''}${STRUCTURE_NOTE}${projectRoot ? ` The project is ${projectRoot}: file paths in the tweaks (src/..., file:line) are relative to it.` : ''}`,
   })
   if ('deny' in started) {
     await setRun($, () => null)
@@ -581,9 +593,10 @@ async function finishHaiku($: EngineInterface, answer: string) {
   const runIds = (await read($, run))?.tweakIds ?? []
   await releaseLock($)
   if (report === null) {
-    await recordApply($, 0, files)
+    // Nothing to check its edits against: undo them rather than keep changes nobody verified.
+    for (const f of files) await $.fs.write(f.path, f.before).catch(() => {})
     await setRun($, () => null)
-    $.ui.toast('Haiku finished without a report; the tweaks are still waiting.')
+    $.ui.toast(`Haiku finished without a report${files.length ? '; its edits were undone' : ''}. The tweaks are still waiting.`)
     return
   }
 
@@ -605,9 +618,24 @@ async function finishHaiku($: EngineInterface, answer: string) {
     if (why) skipped.push({ id, reason: `Not verified: ${why}` })
     else applied.push(id)
   }
-  await recordApply($, applied.length, files)
+  // Nothing checked out: put the files back, so a run never leaves half a change behind (a class with no rule).
+  const unchecked = skipped.filter(s => s.reason.startsWith('Not verified'))
+  const reverted = applied.length === 0 && files.length > 0
+  if (reverted) {
+    for (const f of files) await $.fs.write(f.path, f.before).catch(() => {})
+  } else {
+    await recordApply($, applied.length, files)
+  }
   await setRun($, () => null)
   if (text) await $.fs.write(inProject(FILE), settle(text, applied, skipped))
+  // One more try for tweaks whose edits didn't check out, told what went wrong.
+  const retry = unchecked.map(s => s.id).filter(id => !retried.has(id))
+  if (retry.length) {
+    for (const id of retry) retried.add(id)
+    const why = unchecked.filter(s => retry.includes(s.id)).map(s => `${s.id}: ${s.reason.replace(/^Not verified: /, '')}`).join('; ')
+    const note = `A first attempt didn't put the new values into the source (${why}). Write each new value itself into a CSS rule that applies to the element (adding a class to its JSX when it has none, and the rule for that class), check the file holds it, and report only what you actually wrote.`
+    $.clock.after(100, () => void applyWithHaiku($, retry, note))
+  }
 
   const at = await $.clock.now()
   const label = (id: string) => {
@@ -623,15 +651,21 @@ async function finishHaiku($: EngineInterface, answer: string) {
   ])
   await refresh($)
 
-  const summary = `Haiku applied ${applied.length} UI tweak(s)` + (skipped.length ? `, skipped ${skipped.length}` : '')
+  const summary =
+    `Haiku applied ${applied.length} UI tweak(s)` +
+    (skipped.length ? `, skipped ${skipped.length}` : '') +
+    (reverted ? ' (its edits were undone, as none checked out)' : '') +
+    (retry.length ? `; trying ${retry.length} again` : '')
   $.ui.toast(summary)
-  if (skipped.length) void $.ui.notify(`${summary}: ${skipped[0]!.reason}`, { title: 'UI tweaks' })
+  if (skipped.length && !retry.length) void $.ui.notify(`${summary}: ${skipped[0]!.reason}`, { title: 'UI tweaks' })
 }
 
 // ---------- finding the project ----------
 // The dev server announces itself in <project>/.ui-tweaks/server.json and in ~/.ui-tweaks/servers,
 // so a session started in another folder still finds the project whose tweaks it should apply.
 const SERVER = '.ui-tweaks/server.json'
+// Tweaks already given their one automatic retry this session.
+const retried = new Set<string>()
 let serverUrl: string | null = null
 let serverCheckedAt = 0
 

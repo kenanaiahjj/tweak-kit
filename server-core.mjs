@@ -439,6 +439,7 @@ export function studioPage(appPath) {
         <button class="vs-toggle" title="Compare with another branch or commit, side by side">⑂ Versions</button>
         <span class="vs-modes" hidden><button data-mode="inspect" title="Click elements to tweak them">Inspect</button><button data-mode="interact" title="Use both apps: clicks go to the app, not the panel">Interact</button></span>
         <button class="vs-mirror" hidden title="Repeat your clicks and typing on the other version, so both walk through the same flow">⇆ Mirror clicks</button>
+        <button class="vs-match" hidden title="Both sides drifted apart? Reload both at this screen's starting state (its URL, fixture and screen)">⟲ Match</button>
       </span>
       <span class="tb-group tb-end">
         <a class="tb" href="/__ui-tweaks/system" title="Design system: every token in your CSS, editable">Tokens</a>
@@ -928,7 +929,7 @@ export function studioPage(appPath) {
   // The app's routes, with ways to add them as screens. Routes with parameters ask for values.
   const FIND_SCREENS = "Find the screens of this app and set them up for the UI tweak kit's studio. " +
     "1) Find every distinct screen, and the states worth designing for each (empty, loading, error, signed out, a long list…). " +
-    "2) If screens or states can't be reached by URL, add a small development-only hook: ?screen=<name> opens a screen, and ?fixture=<name> loads a named, made-up data state instead of the saved one and never writes it back; both are ignored outside development (e.g. behind import.meta.env.DEV). Keep it to one small new file plus the few lines where the app picks its first screen and loads its state, and don't change what users see. " +
+    "2) If screens or states can't be reached by URL, add a small development-only hook: ?screen=<name> opens a screen, and ?fixture=<name> loads a named, made-up data state instead of the saved one and never writes it back; both are ignored outside development (e.g. behind import.meta.env.DEV). In development, also keep ?screen= in the URL in step as people move between screens (history.replaceState), so the studio can follow the screen you're on. Keep it to one small new file plus the few lines where the app picks its first screen and loads its state, and don't change what users see. " +
     '3) Write .ui-tweaks/canvas.json as {"version":1,"artboards":[{"id":"a1","name":"Home","device":"i16","url":"/","x":0,"y":0}, …],"notes":[],"arrows":[]}: one artboard per screen or state, named like "Wallet · verified", keeping the artboards already there.';
   const fillParams = (p) => {
     let cancelled = false;
@@ -1395,10 +1396,26 @@ export function studioPage(appPath) {
     const on = versusOn();
     $(".vs-modes").hidden = !on;
     $(".vs-mirror").hidden = !on || view.vsMode !== "interact";
+    $(".vs-match").hidden = !on;
     for (const b of document.querySelectorAll(".vs-modes button")) b.classList.toggle("on", b.dataset.mode === (view.vsMode || "inspect"));
     $(".vs-mirror").classList.toggle("on", view.vsMirror !== false);
   }
   for (const b of document.querySelectorAll(".vs-modes button")) b.addEventListener("click", () => setVsMode(b.dataset.mode));
+  // Apps that switch screens without the URL drift apart; this puts both back at the screen's own start.
+  $(".vs-match").addEventListener("click", () => {
+    const a = current();
+    const f = a && frames.get(a.id);
+    if (!a || !f || !versusOn() || versus.status !== "ready") return;
+    try {
+      const w = f.iframe.contentWindow;
+      if (w.location.href === new URL(a.url, location.href).href) w.location.reload();
+      else w.location.replace(a.url);
+    } catch { f.iframe.src = a.url; }
+    vs.src = versus.url + a.url;
+    vs.iframe.src = "about:blank";
+    setTimeout(() => { vs.iframe.src = vs.src; }, 30);
+    note("Both sides reloaded at “" + (a.name || a.url) + "”");
+  });
   $(".vs-mirror").addEventListener("click", () => { view.vsMirror = view.vsMirror === false; saveView(); drawModes(); note(view.vsMirror ? "Clicks and typing repeat on the other version" : "Each side on its own: click through them separately"); });
   addEventListener("message", (e) => {
     if (versus && e.origin === versus.url && e.data && e.data.uit === "mirror-miss") note("Not on " + versus.ref + ": “" + e.data.what + "”. Click it there yourself.");
@@ -1563,6 +1580,16 @@ async function readRunning(root) {
   }
 }
 
+// When a Claude Code session with the mod last said it's watching this project: { ago } in ms, or null.
+async function readListener(root) {
+  try {
+    const { at } = JSON.parse(await fs.readFile(path.join(tweaksDir(root), "listener.json"), "utf8"));
+    return typeof at === "number" ? { ago: Math.max(0, Date.now() - at) } : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function announceServer(root, url) {
   const dir = tweaksDir(root);
   await fs.mkdir(dir, { recursive: true });
@@ -1663,6 +1690,7 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
           update: updateStatus(),
           asks: await askStatus(root),
           running: await readRunning(root),
+          listener: await readListener(root),
         });
       }
       if (req.method === "POST" && url.pathname === `${PREFIX}/undo`) {

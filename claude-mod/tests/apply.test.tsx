@@ -211,6 +211,7 @@ test('ask outcomes: changed files, a question back, cleaned variants', () => {
   expect(askOutcome('edit', 'ok\n{"summary":"Added a pill"}', ['App.tsx'])).toEqual({ status: 'done', summary: 'Added a pill', files: ['App.tsx'] })
   expect(askOutcome('edit', '{"summary":"","needs":"Which card?"}', [])).toEqual({ status: 'failed', summary: '', needs: 'Which card?' })
   expect(askOutcome('edit', 'nothing', [])).toEqual({ status: 'failed', summary: '', error: 'No files changed.' })
+  expect(askOutcome('edit', '{"summary":"The screens were already set up; nothing to change."}', [])).toEqual({ status: 'done', summary: 'The screens were already set up; nothing to change.', files: [] })
   const v = askOutcome('variations', '{"variants":[{"name":"Bold","why":"x","changes":[{"target":":scope","prop":"padding","value":"20px"},{"prop":"color; x","value":"red"}]}]}', [])
   expect(v.variants).toEqual([{ name: 'Bold', why: 'x', changes: [{ target: ':scope', prop: 'padding', value: '20px' }] }])
   expect(askOutcome('variations', 'no json', []).status).toBe('failed')

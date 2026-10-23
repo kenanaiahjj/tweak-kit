@@ -326,6 +326,8 @@ export function askOutcome(kind: Ask['kind'], answer: string, changed: string[])
     const summary = typeof report?.summary === 'string' ? report.summary : ''
     const needs = typeof report?.needs === 'string' && report.needs ? report.needs : undefined
     if (changed.length) return { status: 'done', summary, files: changed }
+    // A clear report with nothing to change (e.g. "these screens are already set up") is a finished ask, not a failure.
+    if (!needs && summary) return { status: 'done', summary, files: [] }
     return { status: 'failed', summary, ...(needs ? { needs } : { error: 'No files changed.' }) }
   }
   const variants = cleanVariants(report?.variants)

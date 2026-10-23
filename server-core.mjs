@@ -367,6 +367,11 @@ export function studioPage(appPath) {
   .pages button.pg-route .tick { color: #8ee6a8; font-size: 11px; }
   .pages button.pg-route i { width: 6px; height: 6px; border-radius: 3px; background: #a78bfa; flex: none; }
   .pages .pages-empty { padding: 4px 2px; color: var(--dim); font-size: 12px; line-height: 1.5; }
+  .pages button.pg-screen .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-size: 12.5px; }
+  .pages button.pg-screen .src { font-family: var(--mono); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pages button.pg-screen.on { background: var(--active); color: #fff; }
+  .pages .pg-last { font-size: 11.5px; line-height: 1.45; color: var(--dim); padding: 2px 2px 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .pages .pg-last.err { color: #ef9a9a; }
 
   /* Popovers */
   .overview-pop, .vs-pop { background: #212121; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,.5); }
@@ -938,14 +943,30 @@ export function studioPage(appPath) {
   async function loadPages() {
     if (!view.pages) return;
     const box = $(".pages");
-    let data = { routes: [], pending: [] };
-    try { data = await fetch("/__ui-tweaks/routes").then((r) => r.json()); } catch {}
+    let data = { routes: [], pending: [] }, asks = [];
+    try {
+      [data, { asks = [] }] = await Promise.all([fetch("/__ui-tweaks/routes").then((r) => r.json()), fetch("/__ui-tweaks/status", { cache: "no-store" }).then((r) => r.json())]);
+    } catch {}
+    // The latest Find screens request: running ones block another, a finished one shows what it did.
+    const find = asks.filter((a) => (a.instruction || "").startsWith(FIND_SCREENS.slice(0, 40))).sort((x, y) => (y.at || 0) - (x.at || 0))[0];
+    const finding = find && (find.status === "waiting" || find.status === "running");
+    clearTimeout(loadPages.t);
+    if (finding) loadPages.t = setTimeout(loadPages, 2000);
+    const fid = focusedId();
+    const screens = canvas.artboards;
     const have = new Set(canvas.artboards.map((a) => (a.url || "/").split(/[?#]/)[0]));
     const fresh = data.routes.filter((r) => !r.params && !have.has(r.path));
     const needValues = data.routes.filter((r) => r.params).length;
-    box.innerHTML = '<div class="pages-actions"><button class="pg-all primary"' + (fresh.length ? "" : " disabled") + ">" + (fresh.length ? "Add all " + fresh.length + " routes" : "All routes added") + '</button><button class="pg-find" title="For apps that switch screens without URLs: Claude adds a dev-only ?screen= / ?fixture= hook and lists the screens here (needs the ui-tweaks mod in an open Claude Code session)">Find screens with Claude</button></div>' +
+    box.innerHTML = '<div class="pages-actions"><button class="pg-all primary"' + (fresh.length ? "" : " disabled") + ">" + (fresh.length ? "Add all " + fresh.length + " routes" : "All routes added") + '</button><button class="pg-find"' + (finding ? " disabled" : "") + ' title="For apps that switch screens without URLs: Claude adds a dev-only ?screen= / ?fixture= hook and adds every screen and state to the Screens list (needs the ui-tweaks mod in an open Claude Code session)">' + (finding ? (find.status === "running" ? "Claude is finding screens…" : "Waiting for Claude Code…") : "Find screens with Claude") + "</button>" +
+      // A run that changed nothing but says why (older ones were filed as failed) reads as its summary.
+      (find && !finding ? (() => { const bad = find.status === "failed" && !(find.summary && !find.needs); return '<div class="pg-last' + (bad ? " err" : "") + '" title="' + esc(find.summary || find.error || "") + '">' + esc("Last run: " + (bad ? find.needs || find.error || "didn't finish" : find.summary || "done")) + "</div>"; })() : "") + "</div>" +
+      // Every screen in canvas.json: the app's routes, plus the screens and states reached by ?screen= / ?fixture=.
+      "<h4>Screens <span>" + screens.length + "</span></h4>" +
+      '<div class="pg-list">' + screens.map((a) => '<button class="pg-route pg-screen' + (a.id === fid ? " on" : "") + '" data-screen="' + esc(a.id) + '" title="' + esc(a.url) + '"><span class="name">' + esc(a.name || a.url) + '</span><span class="src">' + esc((a.url || "/").replace(/^\\/\\??/, "") || "/") + "</span></button>").join("") + "</div>" +
       "<h4>Routes <span>" + data.routes.length + "</span></h4>" +
+      (data.routes.length === 1 && screens.length > 1 ? '<div class="pages-empty">One URL: this app switches screens without changing the path, so they\\'re listed under Screens.</div>' : "") +
       (data.routes.length ? '<div class="pg-list">' + data.routes.map((r) => '<button class="pg-route' + (have.has(r.path) ? " have" : "") + '" data-path="' + esc(r.path) + '"' + (r.params ? ' data-params="1" title="Has a parameter: click to give it a value"' : have.has(r.path) ? ' title="Already a screen: click to add another"' : "") + ">" + (data.pending.includes(r.path) ? "<i title='Has pending tweaks'></i>" : "") + '<span class="path">' + esc(r.path) + "</span>" + (have.has(r.path) ? '<span class="src tick">✓</span>' : "") + '<span class="src">' + (r.params ? "needs value" : esc(r.source)) + "</span></button>").join("") + "</div>" : '<div class="pages-empty">No routes found. If the app switches screens without URLs, use Find screens.</div>');
+    for (const b of box.querySelectorAll("button[data-screen]")) b.addEventListener("click", () => { select(b.dataset.screen); setMode("focus", b.dataset.screen); loadPages(); });
     for (const b of box.querySelectorAll("button[data-path]")) b.addEventListener("click", () => {
       const p = b.dataset.params ? fillParams(b.dataset.path) : b.dataset.path;
       if (!p) return;
@@ -962,7 +983,8 @@ export function studioPage(appPath) {
       try {
         const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "edit", instruction: FIND_SCREENS, page: { url: "/", path: "/" } }) });
         if (!res.ok) throw new Error((await res.json()).error);
-        note("Claude is finding the screens; they'll appear in the screen list as it adds them (keep a Claude Code session with the ui-tweaks mod open).");
+        note("Claude is finding the screens; they'll appear under Screens as it adds them (keep a Claude Code session with the ui-tweaks mod open).");
+        loadPages();
       } catch (e) {
         note("Couldn't ask Claude: " + e.message);
       }

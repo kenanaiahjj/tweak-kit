@@ -1282,13 +1282,15 @@ export function studioPage(appPath) {
   function labelParts(side) {
     const cur = (refsInfo && refsInfo.current) || {};
     if (side === "here") return [(cur.name || "This version") + (cur.dirty ? " (with your changes)" : ""), [cur.sha, cur.dirty ? "uncommitted changes" : "last commit"].filter(Boolean).join(" · ")];
-    return [versus.ref, [versus.sha, versus.when, versus.subject].filter(Boolean).join(" · ")];
+    return [versus.ref === cur.name ? versus.ref + " (last commit)" : versus.ref, [versus.sha, versus.when, versus.subject].filter(Boolean).join(" · ")];
   }
   // The branch badge, what that side is for, and its commit.
   function labelHtml(side) {
     const cur = (refsInfo && refsInfo.current) || {};
-    const name = side === "here" ? cur.name || "This version" : versus.ref;
-    const role = side === "here" ? (cur.dirty ? "Editing · with your changes" : "Editing") : "Comparing · view only";
+    // The branch you're on, opened again, is its last commit: say so, or the two look like the same thing.
+    const sameBranch = versus.ref === cur.name;
+    const name = side === "here" ? cur.name || "This version" : sameBranch ? versus.ref + " · last commit" : versus.ref;
+    const role = side === "here" ? (cur.dirty ? "Editing · with your uncommitted changes" : "Editing") : sameBranch ? "Committed · without your changes" : "Comparing · view only";
     const meta = side === "here" ? [cur.sha, cur.dirty ? "uncommitted changes" : "last commit"].filter(Boolean).join(" · ") : [versus.sha, versus.when, versus.subject].filter(Boolean).join(" · ");
     return '<span class="vs-branch" title="' + esc(name) + '"><span>' + esc(name) + '</span></span><span class="vs-role">' + esc(role) + '</span><span class="vs-meta" title="' + esc(meta) + '">' + esc(meta) + "</span>";
   }
@@ -1477,7 +1479,7 @@ export function studioPage(appPath) {
     else if (refsInfo.error) html += '<div class="vs-err">' + esc(refsInfo.error) + "</div>";
     else {
       const match = (r) => !q || r.name.toLowerCase().includes(q.toLowerCase());
-      const item = (r) => '<button class="vs-ref' + (versus && versus.ref === r.name ? " on" : "") + '" data-ref="' + esc(r.name) + '">' + esc(r.name) + (r.name === refsInfo.current.name ? " (this checkout)" : "") + "<span>" + esc([r.sha, r.when, r.subject].join(" · ")) + "</span></button>";
+      const item = (r) => '<button class="vs-ref' + (versus && versus.ref === r.name ? " on" : "") + '" data-ref="' + esc(r.name) + '">' + esc(r.name) + (r.name === refsInfo.current.name ? (refsInfo.current.dirty ? " (last commit, without your changes)" : " (this checkout)") : "") + "<span>" + esc([r.sha, r.when, r.subject].join(" · ")) + "</span></button>";
       const local = refsInfo.refs.filter((r) => !r.remote && match(r)), remote = refsInfo.refs.filter((r) => r.remote && match(r));
       html += '<input placeholder="Find a branch, or type a commit / tag" value="' + esc(q) + '" /><div class="vs-list">';
       if (local.length) html += "<h4>Branches</h4>" + local.map(item).join("");

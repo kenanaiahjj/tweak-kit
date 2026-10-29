@@ -198,6 +198,14 @@ With the `--api-only` sidecar (Next.js and others, a different origin), **Tweak*
 
 Everything below works the same in the studio or on the page.
 
+### Explore: variations on a board
+
+Select an element, optionally type a direction in **Ask Claude** ("bolder", "more compact"), and press **Explore** (in the studio; outside it the button is **3 variations** and previews them in place). The canvas makes way for the **Explore board**: the element as it is now, then each variation Claude proposes, side by side. Each card is a live copy of the screen (the same URL, fixture and screen) with the variation's styles on the element, cropped to it, so you see it in context, real fonts and all.
+
+- **More like this** on a card asks for three more that push that one further; **More variations** on the original (or the box at the top, with a new direction) asks for three more from scratch. New cards appear as they come in; a spinning card means Claude is still sketching.
+- **Use on screen** puts that variation on the real screen as ordinary tweaks and closes the board: send them as usual (or they apply right away in instant mode), and undo works as for any tweak.
+- **Close** (or Esc) goes back to the screen. Variations are styles only (colour, spacing, type, shape, shadows), not new elements.
+
 ### Selecting
 
 - **Click** an element on the page, or pick it in the **layers list** at the top of the panel. The list shows the element in context, so you can reach a button next to a heading. Hovering a row outlines it on the page.

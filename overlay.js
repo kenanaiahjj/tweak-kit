@@ -5,6 +5,8 @@
  * <root>/.ui-tweaks/pending.json for Claude to apply in the real source. */
 (() => {
   if (window.__uiTweaks) return;
+  // The studio's Explore board shows variations in hidden copies of the screen: no panel in those.
+  if (window.name === "uit-explore") return;
 
   const script = document.currentScript;
   const ROOT = (script && script.dataset.root) || "";
@@ -3038,9 +3040,16 @@
       const res = await fetch(API + "/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const out = await res.json();
       if (!res.ok) throw new Error(out.error || res.statusText);
-      state.asks = [...(state.asks || []), { id: out.ask.id, kind, instruction, status: "waiting", page: here(), selector: body.element && body.element.selector }];
+      // In the studio, variations open on the Explore board, each shown live and cropped to the element.
+      const board = kind === "variations" && el && STUDIO && STUDIO.__studio && STUDIO.__studio.explore;
+      if (board) {
+        const d = describe(el);
+        STUDIO.__studio.explore({ askId: out.ask.id, instruction, selector: body.element.selector, label: (d.react && d.react.components && d.react.components[0] ? d.react.components[0].name + " · " : "") + (d.classes[0] ? "." + d.classes[0] : d.tag), element: body.element, page: body.page, context: body.context, url: here() });
+      } else {
+        state.asks = [...(state.asks || []), { id: out.ask.id, kind, instruction, status: "waiting", page: here(), selector: body.element && body.element.selector }];
+      }
       if (kind === "edit") state.askDraft = "";
-      toast(kind === "edit" ? "Sent to Claude. It edits the code in the background." : "Claude is sketching variations…");
+      toast(kind === "edit" ? "Sent to Claude. It edits the code in the background." : board ? "Claude is sketching variations on the Explore board…" : "Claude is sketching variations…");
       render();
     } catch (error) {
       toast("Couldn't reach the tweaks server (" + error.message + ")");
@@ -3062,7 +3071,12 @@
     actions.className = "ask-actions";
     const go = Object.assign(document.createElement("button"), { className: "go", textContent: "Do it", title: "Claude edits the code (⌘Enter). Undo with Undo apply" });
     go.addEventListener("click", () => input.value.trim() ? ask("edit", el, input.value.trim()) : toast("Say what to change first"));
-    const vary = Object.assign(document.createElement("button"), { textContent: "3 variations", title: "Claude proposes three looks for this element (styles only); preview them and pick one. The text above, if any, sets the direction" });
+    const vary = Object.assign(document.createElement("button"), {
+      textContent: STUDIO ? "Explore" : "3 variations",
+      title: STUDIO
+        ? "Put this element on a board and explore variations from Claude: see them side by side, ask for more like one, and use one on the screen. The text above, if any, sets the direction"
+        : "Claude proposes three looks for this element (styles only); preview them and pick one. The text above, if any, sets the direction",
+    });
     vary.disabled = !el;
     vary.addEventListener("click", () => el && ask("variations", el, input.value.trim()));
     actions.append(go, vary);
@@ -5002,6 +5016,8 @@
     verifyApplied,
     send: () => send([...state.tweaks.values()].filter((t) => !t.batchId)),
     compare,
+    // The studio's Explore board: put a variation on the real screen as ordinary tweaks.
+    useVariant: (selector, changes, name) => useVariant({ selector }, { name, changes }),
     // Picking on or off (off: clicks reach the app, as when the studio's comparison is set to Interact).
     get isPicking() { return state.isPicking; },
     setPicking: (on) => { state.isPicking = !!on; if (!on) { state.hovered = null; } render(); },

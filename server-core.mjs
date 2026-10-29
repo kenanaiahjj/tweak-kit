@@ -277,6 +277,38 @@ export function studioPage(appPath) {
   .vs-pop .vs-ref span { display: block; color: var(--dim); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .vs-pop .vs-err { padding: 10px 12px; color: #ff8a80; white-space: pre-wrap; font-size: 11px; }
   .vs-toggle.on { color: var(--accent); }
+  /* Explore board: an element and its variations, each a live copy of the screen cropped to it. */
+  .body { position: relative; }
+  .explore { position: absolute; inset: 0; z-index: 8; display: flex; flex-direction: column; background: #171717; }
+  .explore[hidden] { display: none; }
+  .ex-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--line); background: #1c1c1c; }
+  .ex-head h3 { margin: 0; font-size: 14px; font-weight: 600; color: #fff; letter-spacing: -.01em; }
+  .ex-head .ex-el { font: 12px var(--mono); color: var(--dim); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ex-head input { flex: 1 1 220px; min-width: 160px; height: 32px; border: 0; border-radius: 8px; background: rgba(255,255,255,.05); color: var(--text); padding: 0 10px; font: 500 12.5px system-ui, -apple-system, sans-serif; outline: none; }
+  .ex-head input:focus { background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 1px rgba(255,255,255,.15); }
+  .ex-head button { height: 32px; padding: 0 12px; border: 0; border-radius: 8px; background: rgba(255,255,255,.06); color: var(--label); font: 500 12.5px system-ui, -apple-system, sans-serif; cursor: pointer; white-space: nowrap; }
+  .ex-head button:hover { background: rgba(255,255,255,.1); color: var(--text); }
+  .ex-head button.ex-more { background: #fff; color: #212121; font-weight: 600; }
+  .ex-head button.ex-more:hover { background: #e4e4e4; }
+  .ex-grid { flex: 1; overflow: auto; padding: 20px 16px 40px; display: flex; flex-wrap: wrap; gap: 20px; align-content: flex-start; align-items: flex-start; }
+  .ex-card { flex: none; display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 14px; background: #212121; border: 1px solid var(--line); max-width: 100%; }
+  .ex-card.original { border-color: rgba(108,184,255,.35); }
+  .ex-card .ex-name { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #fff; }
+  .ex-card.original .ex-name::before { content: "Original"; font: 600 10.5px system-ui, sans-serif; color: #6cb8ff; background: rgba(13,153,255,.16); padding: 2px 7px; border-radius: 999px; }
+  .ex-card .ex-why { font-size: 12px; color: var(--dim); line-height: 1.45; max-width: 360px; }
+  .ex-view { position: relative; overflow: hidden; border-radius: 10px; background: repeating-conic-gradient(#1e1e1e 0 25%, #191919 0 50%) 0 0 / 16px 16px; min-width: 120px; min-height: 60px; }
+  .ex-view iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; pointer-events: none; background: transparent; }
+  .ex-view .ex-msg { position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; text-align: center; color: var(--dim); font-size: 12px; }
+  .ex-card .ex-actions { display: flex; gap: 6px; }
+  .ex-card .ex-actions button { flex: 1; height: 30px; border: 0; border-radius: 8px; background: rgba(255,255,255,.06); color: var(--label); font: 500 12px system-ui, -apple-system, sans-serif; cursor: pointer; white-space: nowrap; }
+  .ex-card .ex-actions button:hover { background: rgba(255,255,255,.1); color: var(--text); }
+  .ex-card .ex-actions button.use { background: #fff; color: #212121; font-weight: 600; }
+  .ex-card .ex-actions button.use:hover { background: #e4e4e4; }
+  .ex-card.pending { width: 260px; }
+  .ex-card.pending .ex-view { height: 140px; display: grid; place-items: center; color: var(--dim); font-size: 12px; }
+  .ex-card.pending .ex-view::after { content: ""; width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255,255,255,.15); border-top-color: #fff; animation: ex-spin .8s linear infinite; }
+  @keyframes ex-spin { to { transform: rotate(360deg); } }
+  .ex-card.failed .ex-view { height: 80px; }
   .rv-pop { position: fixed; z-index: 20; width: 320px; padding: 12px; background: #212121; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,.5); display: grid; gap: 8px; }
   .rv-pop[hidden], .rv-progress[hidden] { display: none; }
   .rv-pop h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--label); }
@@ -471,6 +503,7 @@ export function studioPage(appPath) {
     </div>
     <div class="body">
       <div class="pages" hidden></div>
+      <div class="explore" hidden></div>
       <div class="viewport">
         <div class="dots"></div>
         <div class="world"></div>
@@ -759,6 +792,16 @@ export function studioPage(appPath) {
       void r;
     },
     hand: setHand,
+    // The panel's Explore: open the board for an element, with its first variations request.
+    explore(req) {
+      const a = current();
+      clearTimeout(ex.timer);
+      ex.req = { ...req, size: a ? size(a) : [393, 852] };
+      ex.asks = req.askId ? [{ id: req.askId, instruction: req.instruction || "", status: "waiting" }] : [];
+      $(".explore").innerHTML = "";
+      drawExplore();
+      pollExplore();
+    },
     // The command palette lists and opens screens.
     screens() {
       return canvas.artboards.map((a) => ({ id: a.id, name: a.name || a.url, shown: a.id === focusedId() }));
@@ -1295,6 +1338,176 @@ export function studioPage(appPath) {
   // On hold: the 📷 snapshot and the Review page. Set to true to bring both back.
   const CAPTURE = false;
   for (const b of document.querySelectorAll(".shot, .review-toggle")) b.hidden = !CAPTURE;
+
+  // ---------- explore ----------
+  // An element on a board of its own, with variations from Claude: each card is a live copy of the screen
+  // (a hidden frame of the app at the same URL), the variation's styles put on the element, cropped to it.
+  // Use on screen hands the variation to the panel as ordinary tweaks; More like this asks for more from it.
+  const ex = { req: null, asks: [], cards: [], timer: 0 };
+  const EX_PAD = 24, EX_MAX = 380;
+  function exRun(id) { return ex.asks.find((a) => a.id === id); }
+  async function exAsk(instruction) {
+    const r = ex.req;
+    const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "variations", instruction, element: r.element, page: r.page, context: r.context, count: 3 }) });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error || res.statusText);
+    ex.asks.push({ id: out.ask.id, instruction, status: "waiting" });
+    drawExplore();
+    pollExplore();
+  }
+  async function pollExplore() {
+    clearTimeout(ex.timer);
+    if (!ex.req) return;
+    const open = ex.asks.filter((a) => a.status !== "done" && a.status !== "failed");
+    if (!open.length) return;
+    try {
+      const { asks = [] } = await fetch("/__ui-tweaks/status", { cache: "no-store" }).then((r) => r.json());
+      let changed = false;
+      for (const a of open) {
+        const s = asks.find((x) => x.id === a.id);
+        if (s && s.status !== a.status) { Object.assign(a, { status: s.status, variants: s.variants || [], error: s.error }); changed = true; }
+      }
+      if (changed) drawExplore();
+    } catch {}
+    ex.timer = setTimeout(pollExplore, 1200);
+  }
+  // A live copy of the screen showing the element with the given changes on it, cropped to the element.
+  function exPreview(view, changes) {
+    const r = ex.req;
+    const [w, h] = r.size;
+    const frame = document.createElement("iframe");
+    frame.name = "uit-explore"; // the panel's script stays out of these
+    frame.width = w;
+    frame.height = h;
+    frame.style.width = w + "px";
+    frame.style.height = h + "px";
+    frame.tabIndex = -1;
+    frame.setAttribute("aria-hidden", "true");
+    const msg = (t) => { view.innerHTML = '<div class="ex-msg">' + esc(t) + "</div>"; };
+    frame.addEventListener("load", async () => {
+      let doc, el = null;
+      for (let i = 0; i < 40 && !el; i++) {
+        try { doc = frame.contentDocument; el = doc && doc.querySelector(r.selector); } catch { return msg("Can't show this screen here."); }
+        if (!el) await sleep(150);
+      }
+      if (!el) return msg("This element isn't on a fresh load of the screen.");
+      // Styles go on the element as it is now, and again whenever the app re-renders it into a new one.
+      const put = () => {
+        el = doc.querySelector(r.selector) || el;
+        for (const c of changes || []) {
+          let node = null;
+          try { node = c.target === ":scope" ? el : el.querySelector(c.target); } catch {}
+          if (node && node.style.getPropertyValue(c.prop) !== c.value) node.style.setProperty(c.prop, c.value, "important");
+        }
+      };
+      put();
+      const watch = new frame.contentWindow.MutationObserver(() => { if (doc.querySelector(r.selector) !== el) put(); });
+      watch.observe(doc.body, { childList: true, subtree: true });
+      setTimeout(() => watch.disconnect(), 8000);
+      // Let it lay out and settle: entrance animations finish (endless ones are left running), fonts load.
+      await sleep(150);
+      try {
+        const finite = (doc.getAnimations ? doc.getAnimations() : []).filter((x) => { try { return isFinite(x.effect.getComputedTiming().endTime); } catch { return false; } });
+        await Promise.race([Promise.all(finite.map((x) => x.finished.catch(() => {}))), sleep(2500)]);
+        if (doc.fonts) await Promise.race([doc.fonts.ready, sleep(1000)]);
+      } catch {}
+      await sleep(120);
+      put();
+      // Scroll only when the element is out of view, and only as far as needed: a scrolled frame can
+      // show its pixels out of step with where the crop expects them.
+      const vb = el.getBoundingClientRect();
+      if (vb.bottom > frame.contentWindow.innerHeight || vb.top < 0 || vb.right > frame.contentWindow.innerWidth || vb.left < 0) el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+      // Some entrance animations run in script, out of sight of the checks above: wait until the
+      // element's box holds still for a few frames (or 3s), then crop to where it ended up.
+      let b = el.getBoundingClientRect(), still = 0;
+      for (let i = 0; i < 30 && still < 3; i++) {
+        await sleep(100);
+        put();
+        const n = el.getBoundingClientRect();
+        still = Math.abs(n.top - b.top) + Math.abs(n.left - b.left) + Math.abs(n.width - b.width) + Math.abs(n.height - b.height) < 0.5 ? still + 1 : 0;
+        b = n;
+      }
+      const cw = Math.ceil(b.width + EX_PAD * 2), ch = Math.ceil(b.height + EX_PAD * 2);
+      const scale = Math.min(1, EX_MAX / cw);
+      view.style.width = Math.round(cw * scale) + "px";
+      view.style.height = Math.round(ch * scale) + "px";
+      frame.style.transform = "scale(" + scale + ") translate(" + (EX_PAD - b.left) + "px," + (EX_PAD - b.top) + "px)";
+      frame.style.visibility = "";
+    });
+    frame.style.visibility = "hidden";
+    view.style.width = Math.min(EX_MAX, w) + "px";
+    view.style.height = "120px";
+    view.append(frame);
+    frame.src = r.url;
+  }
+  function exCard(kind, v, a) {
+    const card = document.createElement("div");
+    card.className = "ex-card " + kind;
+    if (kind === "pending") {
+      card.innerHTML = '<div class="ex-name">' + esc(a.instruction ? "Sketching: " + a.instruction.slice(0, 40) : "Claude is sketching…") + '</div><div class="ex-view"></div><div class="ex-why">' + (a.status === "waiting" ? "Waiting for Claude Code…" : "Working…") + "</div>";
+      return card;
+    }
+    if (kind === "failed") {
+      card.innerHTML = '<div class="ex-name">No variations</div><div class="ex-why">' + esc(a.error || "It didn't work out; try again.") + "</div>";
+      return card;
+    }
+    card.innerHTML = '<div class="ex-name">' + esc(v.name) + '</div><div class="ex-view"></div>' + (v.why ? '<div class="ex-why">' + esc(v.why) + "</div>" : "") + '<div class="ex-actions"></div>';
+    exPreview(card.querySelector(".ex-view"), v.changes);
+    const actions = card.querySelector(".ex-actions");
+    if (kind !== "original") {
+      const use = Object.assign(document.createElement("button"), { className: "use", textContent: "Use on screen", title: "Put this on the real screen as tweaks (send them, or they apply in instant mode)" });
+      use.addEventListener("click", () => exUse(v));
+      actions.append(use);
+    }
+    const more = Object.assign(document.createElement("button"), { textContent: kind === "original" ? "More variations" : "More like this", title: kind === "original" ? "Ask Claude for three more" : "Three more that push this one further" });
+    more.addEventListener("click", () => {
+      const dir = $(".ex-dir").value.trim();
+      const text = kind === "original" ? dir : "Variations on “" + v.name + "” (" + (v.why || "") + "). Push that idea further in different ways" + (dir ? ", " + dir : "") + ". Start from its changes and return full change sets: " + JSON.stringify(v.changes);
+      exAsk(text).catch((e) => note("Couldn't ask Claude: " + e.message));
+    });
+    actions.append(more);
+    return card;
+  }
+  function drawExplore() {
+    const box = $(".explore");
+    if (!ex.req) { box.hidden = true; box.innerHTML = ""; return; }
+    const grid = box.querySelector(".ex-grid");
+    if (!grid) {
+      box.innerHTML = '<div class="ex-head"><h3>Explore</h3><span class="ex-el"></span><input class="ex-dir" placeholder="Direction for more, e.g. “bolder, more compact”" /><button class="ex-more">More variations</button><button class="ex-close" title="Back to the screen (Esc)">Close</button></div><div class="ex-grid"></div>';
+      box.querySelector(".ex-el").textContent = ex.req.label;
+      box.querySelector(".ex-el").title = ex.req.selector;
+      box.querySelector(".ex-dir").value = ex.req.instruction || "";
+      box.querySelector(".ex-dir").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") box.querySelector(".ex-more").click(); if (e.key === "Escape") closeExplore(); });
+      box.querySelector(".ex-more").addEventListener("click", () => exAsk(box.querySelector(".ex-dir").value.trim()).catch((e) => note("Couldn't ask Claude: " + e.message)));
+      box.querySelector(".ex-close").addEventListener("click", closeExplore);
+      box.hidden = false;
+      box.querySelector(".ex-grid").append(exCard("original", { name: ex.req.label, changes: [] }));
+    }
+    // Cards are added as results come in and kept, so live previews don't reload.
+    const g = box.querySelector(".ex-grid");
+    for (const a of ex.asks) {
+      if (a.drawn === a.status) continue;
+      if (a.placeholder) { a.placeholder.remove(); a.placeholder = null; }
+      if (a.status === "done") for (const v of a.variants || []) g.append(exCard("variant", v, a));
+      else if (a.status === "failed") g.append(exCard("failed", null, a));
+      else { a.placeholder = exCard("pending", null, a); g.append(a.placeholder); }
+      a.drawn = a.status;
+    }
+  }
+  function exUse(v) {
+    const f = frames.get(focusedId());
+    try {
+      f.iframe.contentWindow.__uiTweaks.useVariant(ex.req.selector, v.changes, v.name);
+      closeExplore();
+    } catch { note("Couldn't reach the screen's panel; reload it and try again."); }
+  }
+  function closeExplore() {
+    clearTimeout(ex.timer);
+    ex.req = null;
+    ex.asks = [];
+    drawExplore();
+  }
+  addEventListener("keydown", (e) => { if (e.key === "Escape" && ex.req) closeExplore(); });
 
   // ---------- review pages ----------
   // Every screen (or this one) captured in one pass, side by side with the other version when comparing,

@@ -1741,6 +1741,15 @@
     .grad-row .swatch { margin: 0; width: 26px; height: 26px; }
     .grad-row button.icon:disabled { opacity: .3; }
     .grad-css summary { cursor: pointer; color: var(--dim); font-size: 12px; margin-top: 4px; }
+    /* Reference images in Ask Claude */
+    .ask-refs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--gap); align-items: center; }
+    .ref-chip { position: relative; width: 44px; height: 44px; border-radius: 8px; overflow: hidden; background: var(--bg2); box-shadow: inset 0 0 0 1px var(--line); }
+    .ref-chip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .ref-chip button { position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%; background: rgba(0,0,0,.65); color: #fff; font-size: 9px; line-height: 16px; cursor: pointer; opacity: 0; transition: opacity .15s; }
+    .ref-chip:hover button, .ref-chip button:focus-visible { opacity: 1; }
+    .ref-add { height: 28px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--bg2); color: var(--label); font-size: 12px; font-weight: 500; cursor: pointer; }
+    .ref-add:hover { background: var(--hover); color: var(--text); }
+    .ask-box.dropping { outline: 2px dashed rgba(255,255,255,.35); outline-offset: 4px; border-radius: var(--radius); }
     .hidden { display: none !important; }
   </style>
   <div class="hover-box hidden"></div>
@@ -3465,7 +3474,8 @@
 
   async function ask(kind, el, instruction) {
     try {
-      const body = { kind, instruction, element: el ? describe(el) : null, page: { url: here(), path: location.pathname }, context: kind === "variations" && el ? subtreeContext(el) : null, count: 3 };
+      const refs = (state.askRefs || []).map((r) => r.path);
+      const body = { kind, instruction, refs, element: el ? describe(el) : null, page: { url: here(), path: location.pathname }, context: kind === "variations" && el ? subtreeContext(el) : null, count: 2 };
       const res = await fetch(API + "/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const out = await res.json();
       if (!res.ok) throw new Error(out.error || res.statusText);
@@ -3479,7 +3489,7 @@
           const snap = await fetch(API + "/snapshots", { method: "POST", headers: { "Content-Type": "text/html" }, body: snapshotHtml(el) });
           if (snap.ok) snapshot = (await snap.json()).url;
         } catch {}
-        STUDIO.__studio.explore({ askId: out.ask.id, instruction, snapshot, selector: body.element.selector, label: (d.react && d.react.components && d.react.components[0] ? d.react.components[0].name + " · " : "") + (d.classes[0] ? "." + d.classes[0] : d.tag), element: body.element, page: body.page, context: body.context, url: here() });
+        STUDIO.__studio.explore({ askId: out.ask.id, instruction, snapshot, refs: state.askRefs || [], selector: body.element.selector, label: (d.react && d.react.components && d.react.components[0] ? d.react.components[0].name + " · " : "") + (d.classes[0] ? "." + d.classes[0] : d.tag), element: body.element, page: body.page, context: body.context, url: here() });
       } else {
         state.asks = [...(state.asks || []), { id: out.ask.id, kind, instruction, status: "waiting", page: here(), selector: body.element && body.element.selector }];
       }
@@ -3502,22 +3512,64 @@
       e.stopPropagation();
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && input.value.trim()) ask("edit", el, input.value.trim());
     });
+    // Reference images: what it should look like. Click to add, paste into the box, or drop on it.
+    const refs = document.createElement("div");
+    refs.className = "ask-refs";
+    const drawRefs = () => {
+      refs.innerHTML = "";
+      for (const r of state.askRefs || []) {
+        const chip = document.createElement("span");
+        chip.className = "ref-chip";
+        chip.title = r.name || "Reference";
+        chip.append(Object.assign(document.createElement("img"), { src: r.url, alt: r.name || "Reference" }));
+        const x = Object.assign(document.createElement("button"), { textContent: "✕", title: "Remove this reference" });
+        x.addEventListener("click", () => { state.askRefs = state.askRefs.filter((o) => o !== r); drawRefs(); });
+        chip.append(x);
+        refs.append(chip);
+      }
+      const add = Object.assign(document.createElement("button"), { className: "ref-add", textContent: (state.askRefs || []).length ? "＋" : "＋ Reference", title: "Add a reference image (or paste or drop one): Claude looks at it for the look you want" });
+      const file = Object.assign(document.createElement("input"), { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", multiple: true, hidden: true });
+      add.addEventListener("click", () => file.click());
+      file.addEventListener("change", () => { addRefs([...file.files]); file.value = ""; });
+      refs.append(add, file);
+    };
+    const addRefs = async (files) => {
+      for (const f of files.filter((x) => /^image\/(png|jpeg|webp|gif)$/.test(x.type)).slice(0, 6 - (state.askRefs || []).length)) {
+        try {
+          const res = await fetch(API + "/refs", { method: "POST", headers: { "Content-Type": f.type }, body: f });
+          const out = await res.json();
+          if (!res.ok) throw new Error(out.error);
+          state.askRefs = [...(state.askRefs || []), { path: out.path, url: API.replace(/\/__ui-tweaks$/, "") + out.url, name: f.name }];
+        } catch (error) {
+          toast("Couldn't add that image: " + error.message);
+        }
+      }
+      drawRefs();
+    };
+    input.addEventListener("paste", (e) => {
+      const files = [...(e.clipboardData ? e.clipboardData.files : [])];
+      if (files.length) { e.preventDefault(); addRefs(files); }
+    });
+    box.addEventListener("dragover", (e) => { if ([...e.dataTransfer.items].some((i) => i.kind === "file")) { e.preventDefault(); box.classList.add("dropping"); } });
+    box.addEventListener("dragleave", () => box.classList.remove("dropping"));
+    box.addEventListener("drop", (e) => { e.preventDefault(); box.classList.remove("dropping"); addRefs([...e.dataTransfer.files]); });
+    drawRefs();
     const actions = document.createElement("div");
     actions.className = "ask-actions";
     const go = Object.assign(document.createElement("button"), { className: "go", textContent: "Do it", title: "Claude edits the code (⌘Enter). Undo with Undo apply" });
     go.addEventListener("click", () => input.value.trim() ? ask("edit", el, input.value.trim()) : toast("Say what to change first"));
     const vary = Object.assign(document.createElement("button"), {
-      textContent: STUDIO ? "Explore" : "3 variations",
+      textContent: STUDIO ? "Explore" : "Variations",
       title: STUDIO
         ? "Put this element on a board and explore variations from Claude: see them side by side, ask for more like one, and use one on the screen. The text above, if any, sets the direction"
-        : "Claude proposes three looks for this element (styles only); preview them and pick one. The text above, if any, sets the direction",
+        : "Claude proposes a couple of looks for this element (styles only; say how many in the box for more); preview them and pick one. The text above, if any, sets the direction",
     });
     vary.disabled = !el;
     vary.addEventListener("click", () => el && ask("variations", el, input.value.trim()));
     actions.append(go, vary);
     const list = document.createElement("div");
     list.className = "ask-list";
-    box.append(input, actions, list);
+    box.append(input, refs, actions, list);
     renderAskList(list);
     return section("Ask Claude", box);
   }

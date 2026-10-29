@@ -204,6 +204,9 @@ Select an element, optionally type a direction in **Ask Claude** ("bolder", "mor
 
 - **More like this** on a card asks for three more that push that one further; **More variations** on the original (or the box at the top, with a new direction) asks for three more from scratch. New cards appear as they come in; a spinning card means Claude is still sketching.
 - **Use on screen** puts that variation on the real screen as ordinary tweaks and closes the board: send them as usual (or they apply right away in instant mode), and undo works as for any tweak.
+- **How many:** two variations a batch, unless your direction asks for another number ("give me 4", "just one"; four at most).
+- **References:** **＋ Reference** under Ask Claude (or paste an image into the box, or drop one on it) attaches pictures of the look you want; the board's header has its own **＋ Reference** for the next batch. They're saved in `.ui-tweaks/refs/`, and Claude looks at each one before designing (for Do it too).
+- **A design skill:** when the impeccable skill is installed (`~/.claude/skills/impeccable`), the variations and Do it agents are given it and hold their work to its craft standards (they read its references; they don't run its scripts).
 - **Nothing is thrown away.** Explorations are kept in your browser: Use on screen closes the board, and **✦ Explorations** in the toolbar lists them (element, screen, how many variations, which one you used) to reopen with every card, the used one marked **Used**. Exploring the same element on the same screen again adds to its board. **Forget these** clears the list.
 - **Close** (or Esc) goes back to the screen. Variations are styles only (colour, spacing, type, shape, shadows), not new elements.
 

@@ -33,8 +33,10 @@ export async function addAsk(root, body) {
     element: body.element || null,
     page: body.page || null,
     context: body.context || null, // for variations: the element's subtree and current styles
-    count: Math.min(4, Math.max(2, Number(body.count) || 3)),
+    count: Math.min(4, Math.max(1, Number(body.count) || 2)),
     ...(kind === "publish" ? { file: body.file, title: String(body.title || "Design review").slice(0, 120) } : {}),
+    // Reference images attached in the panel (files the dev server saved in .ui-tweaks/refs).
+    ...(Array.isArray(body.refs) && body.refs.length ? { refs: body.refs.filter((r) => /^\.ui-tweaks\/refs\/r[a-z0-9]+\.(png|jpg|webp|gif)$/.test(String(r))).slice(0, 6) } : {}),
     at: Date.now(),
   };
   await fs.mkdir(path.join(dir(root), "asks"), { recursive: true });

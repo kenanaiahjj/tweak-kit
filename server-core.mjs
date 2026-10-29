@@ -148,6 +148,21 @@ function readBody(req, limit = 5_000_000) {
   });
 }
 
+// The body as bytes (images), up to `limit`.
+function readRaw(req, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", (c) => {
+      size += c.length;
+      if (size > limit) reject(Object.assign(new Error("That file is too big (10 MB at most)"), { status: 413 }));
+      else chunks.push(c);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
 function send(res, status, body, type = "application/json") {
   res.statusCode = status;
   res.setHeader("Content-Type", type);
@@ -288,6 +303,11 @@ export function studioPage(appPath) {
   .ex-head input:focus { background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 1px rgba(255,255,255,.15); }
   .ex-head button { height: 32px; padding: 0 12px; border: 0; border-radius: 8px; background: rgba(255,255,255,.06); color: var(--label); font: 500 12.5px system-ui, -apple-system, sans-serif; cursor: pointer; white-space: nowrap; }
   .ex-head button:hover { background: rgba(255,255,255,.1); color: var(--text); }
+  .ex-refs { display: inline-flex; gap: 4px; }
+  .ex-ref { position: relative; width: 32px; height: 32px; border-radius: 6px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line); }
+  .ex-ref img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ex-ref button { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; border-radius: 0; background: rgba(0,0,0,.55); color: #fff; font-size: 11px; opacity: 0; }
+  .ex-ref:hover button { opacity: 1; }
   .ex-head button.ex-more { background: #fff; color: #212121; font-weight: 600; }
   .ex-head button.ex-more:hover { background: #e4e4e4; }
   .ex-grid { flex: 1; overflow: auto; padding: 20px 16px 40px; display: flex; flex-wrap: wrap; gap: 20px; align-content: flex-start; align-items: flex-start; }
@@ -1409,7 +1429,7 @@ export function studioPage(appPath) {
   function exRun(id) { return ex.asks.find((a) => a.id === id); }
   async function exAsk(instruction) {
     const r = ex.req;
-    const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "variations", instruction, element: r.element, page: r.page, context: r.context, count: 3 }) });
+    const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "variations", instruction, refs: (r.refs || []).map((x) => x.path), element: r.element, page: r.page, context: r.context, count: 2 }) });
     const out = await res.json();
     if (!res.ok) throw new Error(out.error || res.statusText);
     ex.asks.push({ id: out.ask.id, instruction, status: "waiting" });
@@ -1525,7 +1545,7 @@ export function studioPage(appPath) {
       use.addEventListener("click", () => exUse(v));
       actions.append(use);
     }
-    const more = Object.assign(document.createElement("button"), { textContent: kind === "original" ? "More variations" : "More like this", title: kind === "original" ? "Ask Claude for three more" : "Three more that push this one further" });
+    const more = Object.assign(document.createElement("button"), { textContent: kind === "original" ? "More variations" : "More like this", title: kind === "original" ? "Ask Claude for more (two, unless the direction says how many)" : "More that push this one further" });
     more.addEventListener("click", () => {
       const dir = $(".ex-dir").value.trim();
       const text = kind === "original" ? dir : "Variations on “" + v.name + "” (" + (v.why || "") + "). Push that idea further in different ways" + (dir ? ", " + dir : "") + ". Start from its changes and return full change sets: " + JSON.stringify(v.changes);
@@ -1539,13 +1559,35 @@ export function studioPage(appPath) {
     if (!ex.req) { box.hidden = true; box.innerHTML = ""; return; }
     const grid = box.querySelector(".ex-grid");
     if (!grid) {
-      box.innerHTML = '<div class="ex-head"><h3>Explore</h3><span class="ex-el"></span><input class="ex-dir" placeholder="Direction for more, e.g. “bolder, more compact”" /><button class="ex-more">More variations</button><button class="ex-close" title="Back to the screen (Esc)">Close</button></div><div class="ex-grid"></div>';
+      box.innerHTML = '<div class="ex-head"><h3>Explore</h3><span class="ex-el"></span><input class="ex-dir" placeholder="Direction for more, e.g. “bolder, more compact”" /><span class="ex-refs"></span><button class="ex-ref-add" title="Add a reference image for the next variations (or drop one here)">＋ Reference</button><input type="file" class="ex-ref-file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden /><button class="ex-more">More variations</button><button class="ex-close" title="Back to the screen (Esc)">Close</button></div><div class="ex-grid"></div>';
       box.querySelector(".ex-el").textContent = ex.req.label;
       box.querySelector(".ex-el").title = ex.req.selector;
       box.querySelector(".ex-dir").value = ex.req.instruction || "";
       box.querySelector(".ex-dir").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") box.querySelector(".ex-more").click(); if (e.key === "Escape") closeExplore(); });
       box.querySelector(".ex-more").addEventListener("click", () => exAsk(box.querySelector(".ex-dir").value.trim()).catch((e) => note("Couldn't ask Claude: " + e.message)));
       box.querySelector(".ex-close").addEventListener("click", closeExplore);
+      // References for the next requests: the ones from the panel, plus any added here.
+      const drawRefs = () => {
+        box.querySelector(".ex-refs").innerHTML = (ex.req.refs || []).map((r, i) => '<span class="ex-ref" title="' + esc(r.name || "Reference") + '"><img src="' + esc(r.url) + '" alt="" /><button data-i="' + i + '" title="Remove">✕</button></span>').join("");
+        for (const b of box.querySelectorAll(".ex-ref button")) b.addEventListener("click", () => { ex.req.refs.splice(Number(b.dataset.i), 1); saveExploration(); drawRefs(); });
+      };
+      const addRefs = async (files) => {
+        for (const f of [...files].filter((x) => /^image\\/(png|jpeg|webp|gif)$/.test(x.type)).slice(0, 6 - (ex.req.refs || []).length)) {
+          try {
+            const res = await fetch("/__ui-tweaks/refs", { method: "POST", headers: { "Content-Type": f.type }, body: f });
+            const out = await res.json();
+            if (!res.ok) throw new Error(out.error);
+            ex.req.refs = [...(ex.req.refs || []), { path: out.path, url: out.url, name: f.name }];
+          } catch (e) { note("Couldn't add that image: " + e.message); }
+        }
+        saveExploration();
+        drawRefs();
+      };
+      box.querySelector(".ex-ref-add").addEventListener("click", () => box.querySelector(".ex-ref-file").click());
+      box.querySelector(".ex-ref-file").addEventListener("change", (e) => { addRefs(e.target.files); e.target.value = ""; });
+      box.addEventListener("dragover", (e) => { if ([...e.dataTransfer.items].some((i) => i.kind === "file")) e.preventDefault(); });
+      box.addEventListener("drop", (e) => { e.preventDefault(); addRefs(e.dataTransfer.files); });
+      drawRefs();
       box.hidden = false;
       box.querySelector(".ex-grid").append(exCard("original", { name: ex.req.label, changes: [] }));
     }
@@ -2127,6 +2169,34 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
         const summary = await scanBreakpoints(root);
         const width = Number(url.searchParams.get("width"));
         return send(res, 200, { ...summary, scope: width > 0 ? scopeFor(summary, width) : null });
+      }
+      // Reference images for Ask Claude and Explore (the agents look at them): .ui-tweaks/refs/, last 60 kept.
+      if (url.pathname === `${PREFIX}/refs` && req.method === "POST") {
+        const ext = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" }[String(req.headers["content-type"] || "").split(";")[0]];
+        if (!ext) return send(res, 400, { error: "Add a PNG, JPEG, WebP or GIF image" });
+        try {
+          const bytes = await readRaw(req, 10_000_000);
+          const dir = path.join(tweaksDir(root), "refs");
+          await fs.mkdir(dir, { recursive: true });
+          const name = `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}.${ext}`;
+          await fs.writeFile(path.join(dir, name), bytes);
+          const old = (await fs.readdir(dir)).sort();
+          for (const n of old.slice(0, Math.max(0, old.length - 60))) await fs.rm(path.join(dir, n), { force: true });
+          return send(res, 200, { path: `.ui-tweaks/refs/${name}`, url: `${PREFIX}/refs/${name}` });
+        } catch (error) {
+          return send(res, error.status || 500, { error: error.message });
+        }
+      }
+      if (url.pathname.startsWith(`${PREFIX}/refs/`) && req.method === "GET") {
+        const name = url.pathname.slice(`${PREFIX}/refs/`.length);
+        const type = { png: "image/png", jpg: "image/jpeg", webp: "image/webp", gif: "image/gif" }[(/\.(\w+)$/.exec(name) || [])[1]];
+        if (!/^r[a-z0-9]+\.\w+$/.test(name) || !type) return send(res, 404, { error: "No such image" });
+        const bytes = await fs.readFile(path.join(tweaksDir(root), "refs", name)).catch(() => null);
+        if (!bytes) return send(res, 404, { error: "That image is gone" });
+        res.statusCode = 200;
+        res.setHeader("Content-Type", type);
+        res.setHeader("Cache-Control", "max-age=3600");
+        return res.end(bytes);
       }
       // Snapshots of a screen as it was, for the Explore board's cards (kept: the last 40).
       if (url.pathname === `${PREFIX}/snapshots` && req.method === "POST") {

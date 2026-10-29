@@ -221,7 +221,13 @@ test('answer parsing and prompts', () => {
   expect(lastJson('text\n{"a":1}\n')).toEqual({ a: 1 })
   expect(lastJson('{bad\nno json')).toBe(null)
   expect(cleanVariants([{ name: 'A', changes: [] }, 'x', { name: 'B', changes: [{ prop: 'gap', value: '8px' }] }])).toEqual([{ name: 'B', why: '', changes: [{ target: ':scope', prop: 'gap', value: '8px' }] }])
-  expect(askPrompt({ id: 'a', kind: 'variations', instruction: 'calmer', count: 2 }, '/p')).toContain('Propose 2 variations. Direction: calmer')
+  expect(askPrompt({ id: 'a', kind: 'variations', instruction: 'calmer', count: 2 }, '/p')).toContain('Propose 2 variations, unless the direction asks for a different number (then that many, at most 4). Direction: calmer')
+  const withRefs = askPrompt({ id: 'a', kind: 'variations', instruction: '', refs: ['.ui-tweaks/refs/r1.png', '../secret.png'] }, '/p', [{ name: 'impeccable', dir: '/h/.claude/skills/impeccable' }])
+  expect(withRefs).toContain('/p/.ui-tweaks/refs/r1.png')
+  expect(withRefs).not.toContain('secret.png')
+  expect(withRefs).toContain('impeccable (/h/.claude/skills/impeccable)')
+  expect(withRefs).toContain('only the JSON')
+  expect(askPrompt({ id: 'b', kind: 'edit', instruction: 'tidy it' }, '/p')).not.toContain('Design skill')
 })
 
 const fileAt = (files: Record<string, string>, rel: string) => Object.entries(files).find(([k]) => k === rel || k.endsWith('/' + rel))?.[1] ?? '{}'

@@ -195,7 +195,7 @@ const VARIATIONS_PROMPT = `You are a visual designer exploring alternatives for 
 Answer with exactly one line of JSON and nothing after it:
 {"variants":[{"name":"<2-4 words>","why":"<one sentence>","changes":[{"target":":scope","prop":"padding","value":"16px 20px"}]}]}`
 
-type Ask = { id: string; kind: 'edit' | 'variations' | 'publish'; instruction: string; file?: string; title?: string; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
+type Ask = { id: string; kind: 'edit' | 'variations' | 'publish'; instruction: string; file?: string; title?: string; refs?: string[]; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
 type AskOutcome = { status: 'running' | 'done' | 'failed'; startedAt?: number; summary?: string; needs?: string; files?: string[]; variants?: unknown[]; error?: string }
 
 /** The last line of an answer that parses as a JSON object. */
@@ -229,18 +229,57 @@ export function cleanVariants(raw: unknown, max = 4): { name: string; why: strin
     .slice(0, max)
 }
 
-export function askPrompt(ask: Ask, root: string | null): string {
+export function askPrompt(ask: Ask, root: string | null, skills: DesignSkill[] = []): string {
   const where = root ? `The project is ${root}; file paths are relative to it.` : ''
+  // Images the person attached in the panel, as direction: the agent looks at each one first.
+  const refs = (ask.refs ?? []).filter(r => /^\.ui-tweaks\/refs\/[\w.-]+$/.test(r)).map(r => (root ? `${root}/${r}` : r))
+  const refNote = refs.length
+    ? `Reference images from the person (look at each with Read before designing, and take their look, mood, colour and type cues; don't copy their content): ${refs.join(', ')}`
+    : ''
+  const skillNote = skills.length ? designSkillNote(skills, ask.kind) : ''
   if (ask.kind === 'edit') {
-    return [`Design request: ${ask.instruction}`, `Screen: ${ask.page?.url ?? '?'}`, `Selected element: ${JSON.stringify(ask.element ?? {})}`, where].join('\n')
+    return [`Design request: ${ask.instruction}`, `Screen: ${ask.page?.url ?? '?'}`, `Selected element: ${JSON.stringify(ask.element ?? {})}`, refNote, skillNote, where].filter(Boolean).join('\n')
   }
   return [
-    `Propose ${ask.count ?? 3} variations.${ask.instruction ? ` Direction: ${ask.instruction}` : ''}`,
+    // Two by default; the person's direction can ask for another number ("give me 4", "just one").
+    `Propose ${ask.count ?? 2} variation${(ask.count ?? 2) === 1 ? '' : 's'}, unless the direction asks for a different number (then that many, at most 4).${ask.instruction ? ` Direction: ${ask.instruction}` : ''}`,
     `Screen: ${ask.page?.url ?? '?'}`,
     `Element: ${JSON.stringify(ask.element ?? {})}`,
     `Subtree, tokens and width: ${JSON.stringify(ask.context ?? {})}`,
+    refNote,
+    skillNote,
     where,
-  ].join('\n')
+  ].filter(Boolean).join('\n')
+}
+
+// ---------- design skills ----------
+// A design skill the person has installed (impeccable by default) gives the designer and variations
+// agents its taste and craft standards. They only read it: no scripts, and variations still return JSON.
+export type DesignSkill = { name: string; dir: string }
+export const DESIGN_SKILLS = ['impeccable']
+
+export function designSkillNote(skills: DesignSkill[], kind: Ask['kind']): string {
+  const list = skills.map(s => `${s.name} (${s.dir})`).join(', ')
+  return kind === 'edit'
+    ? `Design skill: ${list} is loaded. Hold this change to its craft standards (read its reference/craft-floor.md before editing, and the playbook that fits the request); this is a refinement, so keep the app's identity. Don't run its scripts.`
+    : `Design skill: ${list} is loaded. Use its judgment for these variations: read its reference/craft-floor.md, and whichever of reference/bolder.md, colorize.md, distill.md, layout.md or typeset.md fits the direction, then make each variation something a strong designer would ship, distinct and polished, in the app's own world (refinement, not a new brand). Don't run its scripts or edit files: your answer is still only the JSON.`
+}
+
+let designSkills: DesignSkill[] | null = null
+async function findDesignSkills($: EngineInterface): Promise<DesignSkill[]> {
+  if (designSkills !== null) return designSkills
+  const home = await $.env.get('HOME').catch(() => undefined)
+  const found: DesignSkill[] = []
+  for (const name of DESIGN_SKILLS) {
+    for (const dir of [home && `${home}/.claude/skills/${name}`, home && `${home}/.agents/skills/${name}`].filter(Boolean) as string[]) {
+      if (await $.fs.read(`${dir}/SKILL.md`).then(() => true, () => false)) {
+        found.push({ name, dir })
+        break
+      }
+    }
+  }
+  designSkills = found
+  return found
 }
 
 async function readAsksFile($: EngineInterface): Promise<Ask[]> {
@@ -320,7 +359,7 @@ async function startNextAsk($: EngineInterface) {
     subagentType: next.kind === 'edit' ? DESIGNER : VARIATOR,
     model: 'sonnet',
     description: next.kind === 'edit' ? 'Design change' : 'Design variations',
-    prompt: askPrompt(next, projectRoot),
+    prompt: askPrompt(next, projectRoot, await findDesignSkills($)),
     ...(projectRoot ? { cwd: projectRoot } : {}),
   })
   if ('deny' in started) {
@@ -849,12 +888,14 @@ async function openStudio($: EngineInterface, arg: string): Promise<string> {
 let applierRegistered = false
 async function registerApplier($: EngineInterface) {
   applierRegistered = true
+  const skills = (await findDesignSkills($)).map(s => s.name)
   await $.agent.register({
     name: 'designer',
     description: 'Makes a design change asked for in the ui-tweaks panel, in the source',
     prompt: DESIGNER_PROMPT,
     model: 'sonnet',
     tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
+    ...(skills.length ? { skills } : {}),
     maxTurns: 40,
   })
   await $.agent.register({
@@ -863,8 +904,9 @@ async function registerApplier($: EngineInterface) {
     prompt: VARIATIONS_PROMPT,
     model: 'sonnet',
     tools: ['Read', 'Grep', 'Glob'],
+    ...(skills.length ? { skills } : {}),
     omitClaudeMd: true,
-    maxTurns: 12,
+    maxTurns: 20,
   })
   await $.agent.register({
     name: 'applier',

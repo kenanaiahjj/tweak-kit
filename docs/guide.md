@@ -214,6 +214,12 @@ Select an element, optionally type a direction in **Ask Claude** ("bolder", "mor
 
 ### Editing
 
+**Colours.** Click any colour swatch for the panel's picker: a saturation and brightness square, hue and opacity sliders, hex and opacity fields, the eyedropper (Chrome and Edge), your recent colours and the project's colour tokens (picking a token writes `var(--name)`). Changes show live as you drag; the whole picking session is one undo step. You can still type a hex, `#hex 50%`, a colour name or `var(--token)` in the field.
+
+**Gradients.** Fill switches between **Solid** and **Gradient** (a new gradient starts from the current colour, lighter to darker). Pick Linear, Radial or Conic; turn the angle with the dial (Shift snaps to 15°) or type it. On the bar, click to add a stop (it takes the colour already there), drag a stop to move it, or drag it down off the bar to remove it; the picked stop's colour, position and Remove are under the bar, with ⇄ to reverse. Gradients the editor can't show (colour hints, lengths) stay editable as CSS.
+
+**Value boxes.** Clicking a box selects its value; Enter keeps it, Esc puts the old value back; ↑/↓ step numbers (Shift for ×10), and labels scrub when dragged.
+
 | Section | Controls |
 | --- | --- |
 | Default / Hover / Active / Focus | Which state you're editing. The page shows that state while the element is selected. |

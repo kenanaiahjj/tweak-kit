@@ -1686,6 +1686,59 @@
     .by-tag.by-direct, .by-tag.by-tokens { background: rgba(142,230,168,.12); color: #8ee6a8; }
     .by-tag.by-haiku { background: rgba(255,196,107,.14); color: #ffc46b; }
     .by-tag.by-claude { background: rgba(103,232,249,.12); color: #67e8f9; }
+    /* Colour picker */
+    .scroll { position: relative; }
+    .cp { position: absolute; left: 10px; right: 10px; z-index: 30; display: grid; gap: 10px; padding: 12px; background: #2a2a2a; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 36px rgba(0,0,0,.5); }
+    .cp-title { font-size: 12px; font-weight: 600; color: var(--label); }
+    .cp-sv { position: relative; height: 150px; border-radius: 8px; cursor: crosshair; background-image: linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent); touch-action: none; }
+    .cp-bar { position: relative; height: 12px; border-radius: 6px; cursor: pointer; touch-action: none; }
+    .cp-hue { background: linear-gradient(90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
+    .cp-alpha { background: repeating-conic-gradient(#555 0 25%, #888 0 50%) 0 0 / 8px 8px; }
+    .cp-alpha span { position: absolute; inset: 0; border-radius: 6px; }
+    .cp-knob { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.35), 0 1px 4px rgba(0,0,0,.4); pointer-events: none; }
+    .cp-sv .cp-knob { margin: -7px; }
+    .cp-row { display: flex; align-items: center; gap: 6px; }
+    .cp-chip { width: 26px; height: 26px; flex: none; border-radius: 6px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.15); }
+    .cp-row input { min-width: 0; height: 28px; border: 0; border-radius: 6px; background: var(--bg2); color: var(--text); font: 500 12px var(--mono); padding: 0 8px; outline: none; }
+    .cp-row input:focus { background: var(--active); box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .cp-hex { flex: 1; text-transform: uppercase; }
+    .cp-a { width: 44px; text-align: right; }
+    .cp-pct { color: var(--dim); font-size: 12px; margin-left: -2px; }
+    .cp-sw, .cp-tokens { display: flex; flex-wrap: wrap; gap: 5px; }
+    .cp-label { font-size: 11px; font-weight: 600; color: var(--dim); margin-bottom: -4px; }
+    .cp-s, .cp-drop { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; cursor: pointer; background: repeating-conic-gradient(#555 0 25%, #888 0 50%) 0 0 / 8px 8px; overflow: hidden; }
+    .cp-s i { display: block; width: 100%; height: 100%; box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); border-radius: 6px; }
+    .cp-s:hover { outline: 2px solid rgba(255,255,255,.5); }
+    .cp-drop { background: var(--bg2); color: var(--label); font-size: 13px; }
+    .cp-drop:hover { background: var(--hover); color: #fff; }
+    .swatch { cursor: pointer; }
+    .swatch:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+    /* Gradient editor */
+    .fill-mode { margin-bottom: var(--gap); }
+    .grad { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 10px; border-radius: var(--radius); background: var(--bg2); }
+    .grad .seg button { min-width: 0; }
+    .cp { grid-template-columns: minmax(0, 1fr); }
+    .grad.changed { box-shadow: inset 2px 0 0 var(--accent2); }
+    .grad-top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 6px; }
+    .grad-top .seg { flex: 1 1 100%; }
+    .grad-angle-label { font-size: 12px; color: var(--dim); margin-right: 2px; }
+    .grad-top .seg button { height: 28px; font-size: 12px; }
+    .grad-dial { position: relative; width: 26px; height: 26px; flex: none; border-radius: 50%; background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); cursor: grab; touch-action: none; }
+    .grad-dial i { position: absolute; left: 50%; top: 3px; width: 2px; height: 10px; margin-left: -1px; border-radius: 1px; background: #fff; transform-origin: 1px 10px; transform: rotate(var(--a)); }
+    .grad-deg, .grad-pos { width: 40px; height: 28px; border: 0; border-radius: 6px; background: rgba(255,255,255,.06); color: var(--text); font: 500 12px var(--mono); text-align: right; padding: 0 6px; outline: none; }
+    .grad-hex { flex: 1; min-width: 0; height: 28px; border: 0; border-radius: 6px; background: rgba(255,255,255,.06); color: var(--text); font: 500 12px var(--mono); padding: 0 8px; outline: none; }
+    .grad-deg:focus, .grad-pos:focus, .grad-hex:focus { background: var(--active); box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .grad-unit { color: var(--dim); font-size: 12px; margin-left: -3px; }
+    .grad-bar { position: relative; height: 26px; margin: 4px 7px 8px; border-radius: 6px; background: repeating-conic-gradient(#555 0 25%, #888 0 50%) 0 0 / 8px 8px; cursor: copy; touch-action: none; }
+    .grad-bar > span { position: absolute; inset: 0; border-radius: 6px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); }
+    .grad-stop { position: absolute; top: -3px; width: 16px; height: 32px; margin-left: -8px; padding: 2px; border: 0; border-radius: 6px; background: #fff; cursor: grab; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+    .grad-stop i { display: block; width: 100%; height: 100%; border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+    .grad-stop.on { outline: 2px solid var(--accent, #0d99ff); outline-offset: 1px; z-index: 1; }
+    .grad-stop.leaving { opacity: .35; }
+    .grad-row { display: flex; align-items: center; gap: 6px; }
+    .grad-row .swatch { margin: 0; width: 26px; height: 26px; }
+    .grad-row button.icon:disabled { opacity: .3; }
+    .grad-css summary { cursor: pointer; color: var(--dim); font-size: 12px; margin-top: 4px; }
     .hidden { display: none !important; }
   </style>
   <div class="hover-box hidden"></div>
@@ -1841,6 +1894,17 @@
   });
 
   // ---------- controls ----------
+  // Every value box: clicking selects the value, Enter commits, Esc puts back what was there.
+  function wireText(input, shown, commit) {
+    input.addEventListener("focus", () => setTimeout(() => input.select(), 0));
+    input.addEventListener("change", () => commit(input.value));
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") input.blur();
+      if (e.key === "Escape") { input.value = shown(); input.blur(); }
+    });
+  }
+
   function numberField(el, prop, label, opts = {}) {
     const wrap = document.createElement("div");
     wrap.className = "field";
@@ -1866,9 +1930,8 @@
       setStyle(el, prop, normalizeLength(val, prop));
       input.value = display();
     };
-    input.addEventListener("change", () => commit(input.value));
+    wireText(input, display, commit);
     input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") input.blur();
       if (e.key === "ArrowUp" || e.key === "ArrowDown") {
         e.preventDefault();
         const p = parseNumber(input.value) || { n: 0, unit: "" };
@@ -2064,6 +2127,213 @@
     return out;
   }
 
+  // ---------- colour picker ----------
+  // One picker for every colour in the panel: a saturation/brightness square, hue and opacity sliders,
+  // hex and opacity fields, the eyedropper, the project's colour tokens and your recent colours. It edits
+  // live (quietly) and the whole session is one undo step; closing it redraws the panel.
+  const RECENT_KEY = "ui-tweaks:recent-colors";
+  const recentColors = () => { try { return JSON.parse(localStorage.getItem(RECENT_KEY) || "[]"); } catch { return []; } };
+  const rememberColor = (c) => { try { localStorage.setItem(RECENT_KEY, JSON.stringify([c, ...recentColors().filter((x) => x !== c)].slice(0, 14))); } catch {} };
+  function hsvOf({ r, g, b }) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    let h = 0;
+    if (d) h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return [(h * 60 + 360) % 360, max ? d / max : 0, max];
+  }
+  function rgbOfHsv(h, s, v) {
+    const f = (n) => { const k = (n + h / 60) % 6; return Math.round((v - v * s * Math.max(0, Math.min(k, 4 - k, 1))) * 255); };
+    return { r: f(5), g: f(3), b: f(1) };
+  }
+  const hexOf = ({ r, g, b }) => "#" + [r, g, b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  const colorText = (rgb, a) => (a >= 1 ? hexOf(rgb) : `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${+a.toFixed(2)})`);
+
+  let picker = null;
+  function closePicker(silent) {
+    if (!picker) return;
+    const p = picker;
+    picker = null;
+    p.box.remove();
+    for (const [doc, fn] of p.off) doc.removeEventListener("pointerdown", fn, true);
+    state.dragStamp = 0;
+    if (p.last) rememberColor(p.last);
+    if (!silent && p.onClose) p.onClose(p.last);
+  }
+  /** Opens the picker under `anchor`; onInput(color) on every change, onClose(last) when it closes. */
+  function openPicker(anchor, initial, { onInput, onClose, title }) {
+    closePicker(true);
+    const host = panel.querySelector(".scroll") || panel;
+    const start = rgbaOf(initial || "#000000");
+    let [h, sat, val] = hsvOf(start);
+    let a = start.a;
+    const box = document.createElement("div");
+    box.className = "cp";
+    box.innerHTML =
+      (title ? `<div class="cp-title">${title}</div>` : "") +
+      '<div class="cp-sv"><i class="cp-knob"></i></div>' +
+      '<div class="cp-bar cp-hue"><i class="cp-knob"></i></div>' +
+      '<div class="cp-bar cp-alpha"><span></span><i class="cp-knob"></i></div>' +
+      '<div class="cp-row"><span class="cp-chip"></span><input class="cp-hex" spellcheck="false" aria-label="Hex colour" /><input class="cp-a" aria-label="Opacity" /><span class="cp-pct">%</span></div>' +
+      '<div class="cp-sw"></div>';
+    const $b = (q) => box.querySelector(q);
+    const sv = $b(".cp-sv"), hue = $b(".cp-hue"), alpha = $b(".cp-alpha"), hex = $b(".cp-hex"), ain = $b(".cp-a"), chip = $b(".cp-chip");
+    const current = () => colorText(rgbOfHsv(h, sat, val), a);
+    const paint = (fromInput) => {
+      const rgb = rgbOfHsv(h, sat, val);
+      sv.style.backgroundColor = `hsl(${h}, 100%, 50%)`;
+      sv.querySelector(".cp-knob").style.cssText = `left:${sat * 100}%;top:${(1 - val) * 100}%;background:${hexOf(rgb)}`;
+      hue.querySelector(".cp-knob").style.left = (h / 360) * 100 + "%";
+      alpha.querySelector("span").style.background = `linear-gradient(90deg, transparent, ${hexOf(rgb)})`;
+      alpha.querySelector(".cp-knob").style.left = a * 100 + "%";
+      chip.style.background = current();
+      if (fromInput !== "hex") hex.value = hexOf(rgb).slice(1).toUpperCase();
+      if (fromInput !== "a") ain.value = String(Math.round(a * 100));
+    };
+    const emit = (fromInput) => {
+      paint(fromInput);
+      if (picker) picker.last = current();
+      onInput(current());
+    };
+    const drag = (el, at) => el.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      const move = (ev) => {
+        const r = el.getBoundingClientRect();
+        at(Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)), Math.max(0, Math.min(1, (ev.clientY - r.top) / r.height)));
+        emit();
+      };
+      move(e);
+      el.addEventListener("pointermove", move);
+      el.addEventListener("pointerup", () => el.removeEventListener("pointermove", move), { once: true });
+    });
+    drag(sv, (x, y) => { sat = x; val = 1 - y; });
+    drag(hue, (x) => { h = x * 360; });
+    drag(alpha, (x) => { a = Math.round(x * 100) / 100; });
+    const set = (color, from) => {
+      const c = rgbaOf(color);
+      [h, sat, val] = hsvOf(c);
+      a = c.a;
+      emit(from);
+    };
+    hex.addEventListener("input", () => {
+      const t = hex.value.trim().replace(/^#/, "");
+      if (/^([0-9a-f]{3}|[0-9a-f]{6})$/i.test(t)) { const keep = a; set("#" + t, "hex"); a = keep; emit("hex"); }
+    });
+    ain.addEventListener("input", () => {
+      const n = parseFloat(ain.value);
+      if (!isNaN(n)) { a = Math.max(0, Math.min(100, n)) / 100; emit("a"); }
+    });
+    for (const inp of [hex, ain]) {
+      inp.addEventListener("focus", () => inp.select());
+      inp.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter" || e.key === "Escape") closePicker();
+        if (inp === ain && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+          e.preventDefault();
+          a = Math.max(0, Math.min(1, a + (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 0.1 : 0.01)));
+          emit();
+        }
+      });
+    }
+    // Eyedropper, recent colours, then the project's colour tokens (a token is used as var(--name)).
+    const sw = $b(".cp-sw");
+    if (window.EyeDropper) {
+      const drop = Object.assign(document.createElement("button"), { className: "cp-drop", textContent: "⊙", title: "Pick a colour from the screen" });
+      drop.addEventListener("click", async () => { try { set((await new window.EyeDropper().open()).sRGBHex); } catch {} });
+      sw.append(drop);
+    }
+    const swatch = (color, label, use) => {
+      const b = document.createElement("button");
+      b.className = "cp-s";
+      b.title = label;
+      b.append(Object.assign(document.createElement("i"), { style: `background:${color}` }));
+      b.addEventListener("click", use);
+      return b;
+    };
+    for (const c of recentColors().slice(0, 9)) sw.append(swatch(c, prettyColor(c), () => set(c)));
+    const tokens = designTokens().colors;
+    if (tokens.length) {
+      const tk = document.createElement("div");
+      tk.className = "cp-tokens";
+      for (const t of tokens.slice(0, 40)) tk.append(swatch(t.value, `var(${t.name}) · ${t.value}`, () => { onInput(`var(${t.name})`); if (picker) picker.last = `var(${t.name})`; closePicker(); }));
+      box.append(Object.assign(document.createElement("div"), { className: "cp-label", textContent: "Tokens" }), tk);
+    }
+    // Under the field, inside the panel's scroll area so it moves with it.
+    const hr = host.getBoundingClientRect(), ar = anchor.getBoundingClientRect();
+    box.style.top = ar.bottom - hr.top + host.scrollTop + 6 + "px";
+    host.append(box);
+    const docs = [...new Set([panel.ownerDocument, document])];
+    const off = docs.map((doc) => {
+      const fn = (e) => { if (!e.composedPath().includes(box) && !e.composedPath().includes(anchor)) closePicker(); };
+      doc.addEventListener("pointerdown", fn, true);
+      return [doc, fn];
+    });
+    state.dragStamp = ++stampCounter; // the session is one undo step
+    picker = { box, off, onClose, last: null };
+    paint();
+    // Keep it in view.
+    requestAnimationFrame(() => box.scrollIntoView({ block: "nearest" }));
+    return picker;
+  }
+
+  // ---------- gradients ----------
+  // A gradient layer as { type, repeating, head, stops: [{ color, pos }] }, or null for one this editor
+  // can't represent (colour hints, double positions, lengths): those keep the CSS box.
+  const COLOR_START = new RegExp("^(" + COLOR_TOKEN.source + ")\\s*(.*)$", "i");
+  function parseGradient(layer) {
+    const m = /^(repeating-)?(linear|radial|conic)-gradient\(([\s\S]*)\)$/.exec(String(layer).trim());
+    if (!m) return null;
+    const parts = splitTopLevel(m[3]);
+    const head = parts.length && !COLOR_START.test(parts[0]) ? parts.shift() : null;
+    const stops = [];
+    for (const p of parts) {
+      const cm = COLOR_START.exec(p);
+      if (!cm) return null;
+      const rest = cm[2].trim();
+      if (rest && !/^-?[\d.]+%$/.test(rest)) return null;
+      stops.push({ color: cm[1], pos: rest ? parseFloat(rest) : null });
+    }
+    if (stops.length < 2) return null;
+    if (stops[0].pos === null) stops[0].pos = 0;
+    if (stops[stops.length - 1].pos === null) stops[stops.length - 1].pos = 100;
+    for (let i = 1; i < stops.length - 1; i++) {
+      if (stops[i].pos !== null) continue;
+      let j = i;
+      while (stops[j].pos === null) j++;
+      const from = stops[i - 1].pos, to = stops[j].pos;
+      for (let k = i; k < j; k++) stops[k].pos = from + ((to - from) * (k - i + 1)) / (j - i + 1);
+    }
+    return { repeating: !!m[1], type: m[2], head, stops };
+  }
+  // Stops are written in order of position (CSS needs them that way), wherever a drag left them.
+  const gradientCss = (g) => `${g.repeating ? "repeating-" : ""}${g.type}-gradient(${g.head ? g.head + ", " : ""}${[...g.stops].sort((x, y) => x.pos - y.pos).map((s) => `${s.color} ${Math.round(s.pos * 10) / 10}%`).join(", ")})`;
+  const SIDES = { "to top": 0, "to right": 90, "to bottom": 180, "to left": 270, "to top right": 45, "to right top": 45, "to bottom right": 135, "to right bottom": 135, "to bottom left": 225, "to left bottom": 225, "to top left": 315, "to left top": 315 };
+  function gradientAngle(g) {
+    if (g.type === "linear") {
+      if (!g.head) return 180;
+      const d = /^(-?[\d.]+)deg$/.exec(g.head);
+      return d ? parseFloat(d[1]) : g.head in SIDES ? SIDES[g.head] : null;
+    }
+    if (g.type === "conic") { const d = /from\s+(-?[\d.]+)deg/.exec(g.head || ""); return d ? parseFloat(d[1]) : 0; }
+    return null;
+  }
+  function withAngle(g, deg) {
+    deg = Math.round(((deg % 360) + 360) % 360);
+    if (g.type === "linear") return { ...g, head: `${deg}deg` };
+    if (g.type === "conic") return { ...g, head: `from ${deg}deg` + ((g.head || "").match(/\sat\s.*/) || [""])[0] };
+    return g;
+  }
+  // The colour a gradient has at `pos`, for a stop added there.
+  function colorAt(g, pos) {
+    const st = [...g.stops].sort((x, y) => x.pos - y.pos);
+    if (pos <= st[0].pos) return st[0].color;
+    if (pos >= st[st.length - 1].pos) return st[st.length - 1].color;
+    const i = st.findIndex((x) => x.pos >= pos);
+    const A = rgbaOf(st[i - 1].color), B = rgbaOf(st[i].color), t = (pos - st[i - 1].pos) / (st[i].pos - st[i - 1].pos || 1);
+    const mix = (x, y) => Math.round(x + (y - x) * t);
+    return colorText({ r: mix(A.r, B.r), g: mix(A.g, B.g), b: mix(A.b, B.b) }, Math.round((A.a + (B.a - A.a) * t) * 100) / 100);
+  }
+
   function colorField(el, prop) {
     const wrap = document.createElement("div");
     wrap.className = "field";
@@ -2074,31 +2344,28 @@
     sw.className = "swatch";
     const fill = document.createElement("i");
     fill.style.background = value;
-    const picker = document.createElement("input");
-    picker.type = "color";
-    picker.value = toHex(value);
     const text = document.createElement("input");
     text.value = prettyColor(value);
     text.spellcheck = false;
     text.title = `${prop}: ${value}`;
-    picker.addEventListener("input", () => {
-      const a = alphaOf(computed(el, prop));
-      const hex = picker.value;
-      const v = a < 1 && a > 0 ? parseColorInput(`${hex} ${Math.round(a * 100)}%`) : hex;
-      setStyle(el, prop, v, true);
-      fill.style.background = v;
-      text.value = prettyColor(computed(el, prop));
-    });
-    picker.addEventListener("change", () => renderPanel());
-    text.addEventListener("change", () => {
-      setStyle(el, prop, parseColorInput(text.value));
-      renderPanel();
-    });
-    text.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") text.blur();
-      e.stopPropagation();
-    });
-    sw.append(fill, picker);
+    // The swatch opens the panel's colour picker; the text takes a hex, "#hex 50%", a name or var(--token).
+    sw.tabIndex = 0;
+    sw.setAttribute("role", "button");
+    sw.title = "Pick a colour";
+    const open = () =>
+      openPicker(wrap, computed(el, prop), {
+        title: prop,
+        onInput: (c) => {
+          setStyle(el, prop, c, true);
+          fill.style.background = c;
+          text.value = /^var\(/.test(c) ? c : prettyColor(c);
+        },
+        onClose: () => renderPanel(),
+      });
+    sw.addEventListener("click", open);
+    sw.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+    wireText(text, () => prettyColor(computed(el, prop)), (v) => { setStyle(el, prop, parseColorInput(v)); renderPanel(); });
+    sw.append(fill);
     wrap.append(sw, text);
     // Pick a colour from anywhere on screen (Chrome and Edge).
     if (window.EyeDropper) {
@@ -2195,74 +2462,204 @@
     return seg;
   }
 
-  // Background fill: gradient layers with editable color stops, plus the solid color beneath them.
+  // Background fill: Solid or Gradient. A gradient gets a bar with its stops (drag to move, click the
+  // bar to add one, drag one off or press Remove to delete it), its type and angle, and the picked stop's
+  // colour and position; the solid colour underneath stays editable too.
   function fillControls(el) {
     const image = computed(el, "background-image");
     const layers = image && image !== "none" ? splitTopLevel(image) : [];
     const gradients = layers.map((layer, index) => ({ layer, index })).filter(({ layer }) => /gradient\(/.test(layer));
-    if (!gradients.length) return [lbl("Background"), colorField(el, "background-color")];
-
-    const out = [lbl(`Gradient fill · ${gradients.length} layer${gradients.length > 1 ? "s" : ""} (top first)`)];
     const tweak = state.tweaks.get(keyOf(el));
     const changed = !!(tweak && tweak.changes["background-image"]);
-    const write = (index, nextLayer, quiet) => {
+    const mode = document.createElement("div");
+    mode.className = "seg fill-mode";
+    for (const [name, on] of [["Solid", !gradients.length], ["Gradient", !!gradients.length]]) {
+      const b = Object.assign(document.createElement("button"), { textContent: name, className: on ? "on" : "" });
+      b.addEventListener("click", () => {
+        if (on) return;
+        if (name === "Solid") return makeSolid(el);
+        // A starting gradient from the current colour, lighter to darker.
+        const base = rgbaOf(computed(el, "background-color")).a ? computed(el, "background-color") : "#6c5ce7";
+        const c = rgbaOf(base), [hh, ss, vv] = hsvOf(c);
+        const lighter = colorText(rgbOfHsv(hh, Math.max(0, ss - 0.15), Math.min(1, vv + 0.15)), c.a || 1);
+        const darker = colorText(rgbOfHsv(hh, Math.min(1, ss + 0.1), Math.max(0, vv - 0.25)), c.a || 1);
+        state.gradSel = { key: keyOf(el), stop: 0 };
+        setStyle(el, "background-image", `linear-gradient(180deg, ${lighter} 0%, ${darker} 100%)`);
+      });
+      mode.append(b);
+    }
+    const out = [lbl("Fill"), mode];
+    if (!gradients.length) return [...out, colorField(el, "background-color")];
+
+    const write = (index, css, quiet) => {
       const current = splitTopLevel(computed(el, "background-image"));
-      current[index] = nextLayer;
+      current[index] = css;
       setStyle(el, "background-image", current.join(", "), quiet);
     };
+    // The top layer is the one being edited; other layers (rare) are listed below it.
+    const { layer, index } = gradients[0];
+    const g = parseGradient(layer);
+    if (g) {
+      const sel = state.gradSel && state.gradSel.key === keyOf(el) ? Math.min(state.gradSel.stop, g.stops.length - 1) : 0;
+      const ed = document.createElement("div");
+      ed.className = "grad" + (changed ? " changed" : "");
+      // Type and angle.
+      const top = document.createElement("div");
+      top.className = "grad-top";
+      const types = document.createElement("div");
+      types.className = "seg";
+      for (const t of ["linear", "radial", "conic"]) {
+        const b = Object.assign(document.createElement("button"), { textContent: t[0].toUpperCase() + t.slice(1), className: g.type === t ? "on" : "" });
+        b.addEventListener("click", () => {
+          if (g.type === t) return;
+          const ang = gradientAngle(g) ?? 180;
+          const next = { ...g, type: t, head: t === "linear" ? `${ang}deg` : t === "conic" ? `from ${ang}deg` : "circle" };
+          write(index, gradientCss(next));
+        });
+        types.append(b);
+      }
+      top.append(types);
+      const ang = gradientAngle(g);
+      if (ang !== null) {
+        const dial = document.createElement("span");
+        dial.className = "grad-dial";
+        dial.title = "Drag to turn; Shift snaps to 15°";
+        dial.innerHTML = "<i></i>";
+        dial.style.setProperty("--a", ang + "deg");
+        const deg = Object.assign(document.createElement("input"), { className: "grad-deg", value: String(Math.round(ang)), spellcheck: false });
+        deg.setAttribute("aria-label", "Angle in degrees");
+        wireText(deg, () => String(Math.round(ang)), (v) => { const n = parseFloat(v); if (!isNaN(n)) write(index, gradientCss(withAngle(g, n))); });
+        deg.addEventListener("keydown", (e) => {
+          if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+          e.preventDefault();
+          const n = (parseFloat(deg.value) || 0) + (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 15 : 1);
+          deg.value = String(((n % 360) + 360) % 360);
+          write(index, gradientCss(withAngle(g, n)), true);
+        });
+        dial.addEventListener("pointerdown", (e) => {
+          e.preventDefault();
+          dial.setPointerCapture(e.pointerId);
+          state.dragStamp = ++stampCounter;
+          const move = (ev) => {
+            const r = dial.getBoundingClientRect();
+            let n = (Math.atan2(ev.clientX - (r.left + r.width / 2), -(ev.clientY - (r.top + r.height / 2))) * 180) / Math.PI;
+            n = ((n % 360) + 360) % 360;
+            if (ev.shiftKey) n = Math.round(n / 15) * 15;
+            dial.style.setProperty("--a", n + "deg");
+            deg.value = String(Math.round(n));
+            write(index, gradientCss(withAngle(g, n)), true);
+          };
+          move(e);
+          dial.addEventListener("pointermove", move);
+          dial.addEventListener("pointerup", () => { dial.removeEventListener("pointermove", move); state.dragStamp = 0; renderPanel(); }, { once: true });
+        });
+        top.append(Object.assign(document.createElement("span"), { className: "grad-angle-label", textContent: g.type === "conic" ? "Start" : "Angle" }), dial, deg, Object.assign(document.createElement("span"), { className: "grad-unit", textContent: "°" }));
+      }
+      ed.append(top);
 
-    for (const { layer, index } of gradients) {
+      // The stop bar.
+      const bar = document.createElement("div");
+      bar.className = "grad-bar";
+      bar.title = "Click to add a stop; drag a stop to move it, or down off the bar to remove it";
+      const strip = document.createElement("span");
+      bar.append(strip);
+      const paintBar = () => { strip.style.background = gradientCss({ ...g, type: "linear", repeating: false, head: "90deg", stops: [...g.stops].sort((x, y) => x.pos - y.pos) }); };
+      paintBar();
+      const handles = g.stops.map((st, i) => {
+        const hd = document.createElement("button");
+        hd.className = "grad-stop" + (i === sel ? " on" : "");
+        hd.style.left = st.pos + "%";
+        hd.title = `${prettyColor(st.color)} at ${Math.round(st.pos)}%`;
+        hd.append(Object.assign(document.createElement("i"), { style: `background:${st.color}` }));
+        hd.addEventListener("pointerdown", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          hd.setPointerCapture(e.pointerId);
+          state.gradSel = { key: keyOf(el), stop: i };
+          for (const o of handles) o.classList.toggle("on", o === hd);
+          state.dragStamp = ++stampCounter;
+          const y0 = e.clientY;
+          let gone = false;
+          const move = (ev) => {
+            const r = bar.getBoundingClientRect();
+            gone = g.stops.length > 2 && ev.clientY - y0 > 36;
+            hd.classList.toggle("leaving", gone);
+            st.pos = Math.round(Math.max(0, Math.min(100, ((ev.clientX - r.left) / r.width) * 100)));
+            hd.style.left = st.pos + "%";
+            paintBar();
+            write(index, gradientCss(gone ? { ...g, stops: g.stops.filter((x) => x !== st) } : g), true);
+          };
+          hd.addEventListener("pointermove", move);
+          hd.addEventListener("pointerup", () => {
+            hd.removeEventListener("pointermove", move);
+            state.dragStamp = 0;
+            if (gone) state.gradSel = { key: keyOf(el), stop: 0 };
+            renderPanel();
+          }, { once: true });
+        });
+        bar.append(hd);
+        return hd;
+      });
+      bar.addEventListener("pointerdown", (e) => {
+        const r = bar.getBoundingClientRect();
+        const pos = Math.round(Math.max(0, Math.min(100, ((e.clientX - r.left) / r.width) * 100)));
+        const stops = [...g.stops, { color: colorAt(g, pos), pos }].sort((x, y) => x.pos - y.pos);
+        state.gradSel = { key: keyOf(el), stop: stops.findIndex((x) => x.pos === pos) };
+        write(index, gradientCss({ ...g, stops }));
+      });
+      ed.append(bar);
+
+      // The picked stop: colour, position, remove; and the whole gradient: reverse.
+      const st = g.stops[sel];
       const row = document.createElement("div");
-      row.className = "layer" + (changed ? " changed" : "");
-      const kind = /^(repeating-)?(linear|radial|conic)/.exec(layer);
-      const angle = /^linear-gradient\((-?[\d.]+deg)/.exec(layer);
-      const name = document.createElement("span");
-      name.className = "layer-name";
-      name.textContent = kind ? kind[2][0].toUpperCase() + kind[2].slice(1) + (angle ? " " + angle[1] : "") : "Gradient";
-      name.title = layer;
-      const stops = document.createElement("span");
-      stops.className = "stops";
-      const colors = layer.match(COLOR_TOKEN) || [];
-      colors.forEach((color, stopIndex) => {
-        const sw = document.createElement("span");
-        sw.className = "swatch";
-        const fill = document.createElement("i");
-        fill.style.background = color;
-        const picker = document.createElement("input");
-        picker.type = "color";
-        picker.value = toHex(color);
-        picker.title = `Stop ${stopIndex + 1}: ${prettyColor(color)}`;
-        const alpha = alphaOf(color);
-        const apply = (quiet) => {
-          let n = -1;
-          const nextLayer = splitTopLevel(computed(el, "background-image"))[index].replace(COLOR_TOKEN, (m) => (++n === stopIndex ? withAlpha(picker.value, alpha) : m));
-          fill.style.background = picker.value;
-          write(index, nextLayer, quiet);
-        };
-        picker.addEventListener("input", () => apply(true));
-        picker.addEventListener("change", () => renderPanel());
-        sw.append(fill, picker);
-        stops.append(sw);
+      row.className = "grad-row";
+      const sw = document.createElement("span");
+      sw.className = "swatch";
+      sw.tabIndex = 0;
+      sw.title = "Pick this stop's colour";
+      const fill = Object.assign(document.createElement("i"), { style: `background:${st.color}` });
+      sw.append(fill);
+      const hexIn = Object.assign(document.createElement("input"), { className: "grad-hex", value: prettyColor(st.color), spellcheck: false });
+      const posIn = Object.assign(document.createElement("input"), { className: "grad-pos", value: String(Math.round(st.pos)), spellcheck: false });
+      posIn.setAttribute("aria-label", "Stop position %");
+      const openStop = () =>
+        openPicker(row, st.color, {
+          title: `Stop ${sel + 1}`,
+          onInput: (c) => {
+            st.color = c;
+            fill.style.background = c;
+            handles[sel].querySelector("i").style.background = c;
+            hexIn.value = prettyColor(c);
+            paintBar();
+            write(index, gradientCss(g), true);
+          },
+          onClose: () => renderPanel(),
+        });
+      sw.addEventListener("click", openStop);
+      sw.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openStop(); } });
+      wireText(hexIn, () => prettyColor(st.color), (v) => { st.color = parseColorInput(v); write(index, gradientCss(g)); });
+      wireText(posIn, () => String(Math.round(st.pos)), (v) => { const n = parseFloat(v); if (!isNaN(n)) { st.pos = Math.max(0, Math.min(100, n)); write(index, gradientCss(g)); } });
+      posIn.addEventListener("keydown", (e) => {
+        if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+        e.preventDefault();
+        st.pos = Math.max(0, Math.min(100, st.pos + (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 10 : 1)));
+        posIn.value = String(Math.round(st.pos));
+        handles[sel].style.left = st.pos + "%";
+        paintBar();
+        write(index, gradientCss(g), true);
       });
-      const hide = document.createElement("button");
-      hide.className = "icon";
-      hide.textContent = "✕";
-      hide.title = "Remove this layer";
-      hide.addEventListener("click", () => {
-        const current = splitTopLevel(computed(el, "background-image"));
-        current.splice(index, 1);
-        setStyle(el, "background-image", current.length ? current.join(", ") : "none");
-      });
-      row.append(name, stops, hide);
-      out.push(row);
+      const del = Object.assign(document.createElement("button"), { className: "icon", textContent: "✕", title: "Remove this stop" });
+      del.disabled = g.stops.length <= 2;
+      del.addEventListener("click", () => { state.gradSel = { key: keyOf(el), stop: Math.max(0, sel - 1) }; write(index, gradientCss({ ...g, stops: g.stops.filter((x) => x !== st) })); });
+      const rev = Object.assign(document.createElement("button"), { className: "icon", textContent: "⇄", title: "Reverse the gradient" });
+      rev.addEventListener("click", () => write(index, gradientCss({ ...g, stops: g.stops.map((x) => ({ ...x, pos: 100 - x.pos })).reverse() })));
+      row.append(sw, hexIn, posIn, Object.assign(document.createElement("span"), { className: "grad-unit", textContent: "%" }), del, rev);
+      ed.append(row);
+      out.push(ed);
+    } else {
+      out.push(lbl("This gradient uses features the editor doesn't show (colour hints or lengths); edit it as CSS below."));
     }
-
-    const solid = document.createElement("button");
-    solid.className = "btn ghost";
-    solid.style.cssText = "width:100%;margin-top:6px";
-    solid.textContent = "Replace gradient with a solid color";
-    solid.addEventListener("click", () => makeSolid(el));
-    out.push(solid);
+    if (gradients.length > 1) out.push(lbl(`+ ${gradients.length - 1} more gradient layer${gradients.length > 2 ? "s" : ""} under this one (edit as CSS)`));
 
     const raw = document.createElement("textarea");
     raw.value = computed(el, "background-image");
@@ -2271,12 +2668,13 @@
     raw.addEventListener("change", () => setStyle(el, "background-image", raw.value.trim()));
     raw.addEventListener("keydown", (e) => e.stopPropagation());
     const details = document.createElement("details");
+    details.className = "grad-css";
     const summary = document.createElement("summary");
     summary.textContent = "Edit as CSS";
     details.append(summary, raw);
     out.push(details);
 
-    out.push(lbl("Base color (under the gradient)"), colorField(el, "background-color"));
+    out.push(lbl("Colour under the gradient"), colorField(el, "background-color"));
     return out;
   }
 

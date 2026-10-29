@@ -6,7 +6,8 @@
 // - a copy change on the element's JSX line is edited in place.
 // - a tweak scoped to a width (the panel's "At 430px and below") is written as an @media rule for the
 //   project's own breakpoint, in place when that block already has the rule.
-// Notes, hover/active/focus states and style props are left for Haiku.
+// - a hover/active/focus change edits the state's own rule, or adds one on the element's own class.
+// Notes and style props are left for Haiku.
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { detectTailwind, planUtilities } from "./tailwind.mjs";
@@ -149,7 +150,8 @@ export function collapse([a, b, c, d]) {
 function planStyleEdits(text, changes) {
   const edits = []; // { start, end, value }
   const byShorthand = new Map(); // `${ruleOpen}|${shorthand}` -> { decl, values }
-  for (const [prop, change] of Object.entries(changes)) {
+  for (const [key, change] of Object.entries(changes)) {
+    const prop = change.state ? change.prop || key.split(":")[0] : key; // a state change's key is "prop:state"
     let rule = change.authoredIn && change.authoredIn[0];
     if (!rule) return { error: `${prop} is not set by any rule yet` };
     const found = findRule(text, rule.selector, rule.conditions || []);
@@ -391,9 +393,9 @@ export async function importedStylesheet(root, jsxAbs, read) {
   return null;
 }
 
-export function planOverride(text, { base, anchor, conditions, items }, cls) {
+export function planOverride(text, { base, anchor, conditions, items, state }, cls) {
   if (base && base.includes("::")) return { error: "the rule targets a pseudo-element" };
-  const selector = base ? `${base}.${cls}` : `.${cls}`;
+  const selector = base ? `${base}.${cls}` : `.${cls}${state ? ":" + state : ""}`;
   const decls = collapseDecls(items);
   const existing = findRule(text, selector, conditions);
   if (existing.rule) {
@@ -480,6 +482,7 @@ export async function applyDirect(root, batch) {
     const tw = {}; // prop key -> true: written as a Tailwind utility on the element's className
     const changes = Object.entries(tweak.changes || {});
     const blocked = {}; // prop key -> reason
+    const newState = {}; // prop key -> state, for a state no rule sets yet
     const overridable = {}; // prop key -> true when an override rule can do it
     const scopeQuery = tweak.scope && tweak.scope.kind === "viewport" && tweak.scope.query ? tweak.scope.query : null;
     const mediaWrite = {}; // prop key -> true: written as an @media rule for scopeQuery
@@ -498,8 +501,19 @@ export async function applyDirect(root, batch) {
           tw[k] = true; // a utility class sets this (or nothing does yet): write a utility, not a CSS rule
           continue;
         }
-        if (c.state) blocked[k] = "changes a hover/active/focus state";
-        else if (c.inlineBefore) blocked[k] = "set by the element's style prop";
+        if (c.state && scopeQuery) blocked[k] = "a state at one screen width";
+        else if (c.state && !(r && r.forState)) {
+          // No rule for this state yet: a new :state rule on the element's own class.
+          blocked[k] = `no :${c.state} rule yet`;
+          overridable[k] = true;
+          newState[k] = c.state;
+        } else if (c.state && !/\.css$/i.test(r.file || "")) blocked[k] = `rule lives in ${r.file || "an unknown file"}`;
+        else if (c.state && tweak.reach === "all") continue;
+        else if (c.state) {
+          // The state's own rule: edited in place when its classes are this element's alone (no page match count: it isn't hovered).
+          if (r.selector.includes(",")) shared(`${r.selector} is a shared selector list`);
+          else if (r.usesVariable && !/^var\(/.test(c.to)) shared(`${r.property} uses a CSS variable`);
+        } else if (c.inlineBefore) blocked[k] = "set by the element's style prop";
         else if (!r) shared("not set by any rule yet");
         else if (!/\.css$/i.test(r.file || "")) blocked[k] = `rule lives in ${r.file || "an unknown file"}`;
         else if (scopeQuery && tweak.reach === "all") blocked[k] = "Everywhere and a width scope together";
@@ -586,19 +600,21 @@ export async function applyDirect(root, batch) {
         const groups = new Map();
         for (const [k, c] of toOverride) {
           const r = c.authoredIn && c.authoredIn[0];
+          const st = newState[k];
           const file = r ? r.file : fallbackFile;
-          const base = r ? r.part || (r.selector.includes(",") ? null : r.selector) : "";
+          // A new state rule hangs off the element's own class (.x--t1234:hover), next to the rule it varies.
+          const base = st ? "" : r ? r.part || (r.selector.includes(",") ? null : r.selector) : "";
           if (!file || !/\.css$/i.test(file) || base === null) continue;
-          const conditions = (r && r.conditions) || [];
-          const key = `${file}|${conditions.join("&")}|${base}`;
-          if (!groups.has(key)) groups.set(key, { file, base, anchor: r && r.selector, conditions, items: [], keys: [] });
-          groups.get(key).items.push({ prop: c.prop || k, value: c.to, important: !!(r && /!important$/.test(r.value || "")) });
+          const conditions = (!st && r && r.conditions) || [];
+          const key = `${file}|${conditions.join("&")}|${base}|${st || ""}`;
+          if (!groups.has(key)) groups.set(key, { file, base, state: st, anchor: st ? (r && !(r.conditions || []).length && !r.selector.includes(",") ? r.selector : null) : r && r.selector, conditions, items: [], keys: [] });
+          groups.get(key).items.push({ prop: c.prop || k.split(":")[0], value: c.to, important: !!(r && !st && /!important$/.test(r.value || "")) });
           groups.get(key).keys.push(k);
         }
         // A value no rule sets yet joins the element's other override rule in that file, when there is one.
         for (const [key, g] of groups) {
-          if (g.base !== "") continue;
-          const host = [...groups.values()].find((o) => o !== g && o.file === g.file && o.base && !o.conditions.length);
+          if (g.base !== "" || g.state) continue;
+          const host = [...groups.values()].find((o) => o !== g && o.file === g.file && o.base && !o.state && !o.conditions.length);
           if (!host) continue;
           host.items.push(...g.items);
           host.keys.push(...g.keys);

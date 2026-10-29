@@ -4,6 +4,8 @@ Figma-style visual tweaks in your running app, written back to the real source c
 
 Open your app and click **Tweak**: the studio opens your live app one screen at a time, on a real device size (iPhone Duo to 1080p), with your list of screens saved in `.ui-tweaks/canvas.json` and a Figma-style panel docked on the right. Click any element and drag it to reorder or move it, resize it from its handles, adjust position (absolute/fixed/sticky, offsets, align in parent), margin and padding, size (fixed, hug, fill), auto layout, type, color, gradients, radius, border, shadow, and hover/active/focus states. **⑂ Versions** shows another branch beside it, live and scrolling along, and **📷** copies both side by side to the clipboard for showing what changed. When you're happy, press **Send to Claude**. Most tweaks are written to your CSS and JSX instantly, with no AI involved. The rest are applied by a small Haiku agent in Claude Code, which is checked, logged and undoable.
 
+Select an element and press **Explore** for a board of variations from Claude (guided by your reference images and, when installed, the impeccable design skill): edit a variation's values, see it on the whole screen, ask for more like it, then use one. Pin **comments** to elements for the team (M), revert any earlier apply from History, and get nudged toward your tokens where a value is typed by hand.
+
 **Tokens** opens a design system page built from your CSS: every token (colours, type, spacing, radius, shadows, motion) previewed per theme mode, editable in place and written straight back to your stylesheet, plus the values typed by hand that could use a token.
 
 It has two parts:

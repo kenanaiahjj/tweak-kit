@@ -29,7 +29,7 @@ const HISTORY = '.ui-tweaks/history.json'
 const SLOTS = 10
 const STUCK_MS = 10 * 60 * 1000
 
-type HistoryEntry = { id: string; at: number; by: 'haiku' | 'direct' | 'claude' | 'tokens'; count: number; slot: string; files: string[] }
+type HistoryEntry = { id: string; at: number; by: 'haiku' | 'direct' | 'claude' | 'tokens'; count: number; slot: string; files: string[]; what?: string }
 type SlotFile = { id: string; files: { path: string; before: string; after: string }[] }
 
 // Each file as it was before the running Haiku apply edited it (one run at a time): the files the
@@ -354,7 +354,7 @@ async function startNextAsk($: EngineInterface) {
   }
   const startedAt = await $.clock.now()
   await writeOutcome($, next.id, { status: 'running', startedAt })
-  await update($, askRun, () => ({ id: next.id, kind: next.kind, startedAt }))
+  await update($, askRun, () => ({ id: next.id, kind: next.kind, startedAt, instruction: next.instruction }))
   const started = await $.agent.spawn({
     subagentType: next.kind === 'edit' ? DESIGNER : VARIATOR,
     model: 'sonnet',
@@ -393,7 +393,7 @@ async function finishAsk($: EngineInterface, answer: string) {
   let names: string[] = []
   if (current.kind === 'edit') {
     const files = await changedFiles($)
-    await recordApply($, files.length ? 1 : 0, files, 'claude')
+    await recordApply($, files.length ? 1 : 0, files, 'claude', current.instruction ? `Claude: ${current.instruction}` : undefined)
     await releaseLock($)
     names = files.map(f => f.path.split('/').at(-1) ?? f.path)
   }
@@ -473,7 +473,7 @@ async function appendLog($: EngineInterface, items: LogItem[]) {
   await $.fs.write(inProject(LOG), JSON.stringify({ entries: [...entries, ...items].slice(-300) }, null, 2) + '\n')
 }
 
-async function recordApply($: EngineInterface, count: number, files: SlotFile['files'], by: HistoryEntry['by'] = 'haiku') {
+async function recordApply($: EngineInterface, count: number, files: SlotFile['files'], by: HistoryEntry['by'] = 'haiku', what?: string) {
   if (files.length === 0) return
   const entries = await readHistory($)
   const lastSlot = Number(/(\d+)\.json$/.exec(entries.at(-1)?.slot ?? '')?.[1] ?? -1)
@@ -481,7 +481,7 @@ async function recordApply($: EngineInterface, count: number, files: SlotFile['f
   const at = await $.clock.now()
   const id = `h${at.toString(36)}`
   await $.fs.write(inProject(slot), JSON.stringify({ id, files } satisfies SlotFile))
-  const next = [...entries.filter(e => e.slot !== slot), { id, at, by, count, slot, files: files.map(f => f.path) }]
+  const next = [...entries.filter(e => e.slot !== slot), { id, at, by, count, slot, files: files.map(f => f.path), ...(what ? { what: what.slice(0, 200) } : {}) }]
   await $.fs.write(inProject(HISTORY), JSON.stringify({ entries: next.slice(-SLOTS) }, null, 2) + '\n')
   await syncLastApply($)
 }
@@ -677,7 +677,12 @@ async function finishHaiku($: EngineInterface, answer: string) {
   if (reverted) {
     for (const f of files) await $.fs.write(f.path, f.before).catch(() => {})
   } else {
-    await recordApply($, applied.length, files)
+    const what = applied.map(id => {
+      const t = tweaks.get(id) as { element?: { classes?: string[]; tag?: string }; changes?: Record<string, unknown> } | undefined
+      const el = t?.element?.classes?.[0] ? '.' + t.element.classes[0] : t?.element?.tag ?? '?'
+      return `${el} ${Object.keys(t?.changes ?? {}).join(', ')}`.trim()
+    }).join('; ')
+    await recordApply($, applied.length, files, 'haiku', what)
   }
   await setRun($, () => null)
   if (text) await $.fs.write(inProject(FILE), settle(text, applied, skipped))

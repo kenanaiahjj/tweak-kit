@@ -67,12 +67,12 @@ test("copy changes on the JSX line are applied", async () => {
   assert.match(out.files[0].after, /<h1>Your sports identity<\/h1>/);
 });
 
-test("notes, states, style props and unplaceable values go to Haiku with a reason", async () => {
+test("notes, style props and unplaceable values go to Haiku with a reason", async () => {
   const root = await project();
   const out = await applyDirect(root, {
     tweaks: [
       tweak("t-0", { color: { from: "#111", to: "#222", authoredIn: [rule(".card", "color")] } }, { note: "make it pop" }),
-      tweak("t-1", { color: { from: "#111", to: "#222", state: "hover", authoredIn: [rule(".card", "color")] } }),
+      tweak("t-1", { "color:hover": { prop: "color", from: "#111", to: "#222", state: "hover", authoredIn: [rule(".card", "color")] } }, { scope: { kind: "viewport", width: 375, query: "(max-width: 600px)" } }),
       tweak("t-2", { "margin-bottom": { from: "0px", to: "8px", inlineBefore: "18px", authoredIn: [] } }),
       tweak("t-3", { gap: { from: "0px", to: "8px", authoredIn: [] } }, { element: { classes: [], react: { jsxSource: "src/Nowhere.tsx:4" } } }),
     ],
@@ -80,7 +80,7 @@ test("notes, states, style props and unplaceable values go to Haiku with a reaso
   assert.equal(out.applied.length, 0);
   assert.deepEqual(out.remaining.map((t) => t.directSkip), [
     "has a note",
-    "changes a hover/active/focus state",
+    "a state at one screen width",
     "set by the element's style prop",
     "not set by any rule yet; no JSX tag at the JSX line",
   ]);
@@ -139,12 +139,12 @@ test("a tweak is split: values Haiku must do stay queued, the rest is applied", 
     tweaks: [tweak("t-0", {
       "font-size": { from: "40px", to: "44px", authoredIn: [rule(".hero h1", "font-size")] },
       color: { from: "#111", to: "#5b3df5", authoredIn: [rule(".hero h1", "color", { usesVariable: true })] },
-      "background-color": { from: "#fff", to: "#000", state: "hover", authoredIn: [] },
+      "margin-top": { from: "0px", to: "4px", inlineBefore: "0px", authoredIn: [] },
     })],
   });
-  // font-size in place; the token color as an override on the h1 alone; the hover state for Haiku.
+  // font-size in place; the token color as an override on the h1 alone; the style prop for Haiku.
   assert.deepEqual(out.applied.map((a) => a.props), [["font-size", "color"]]);
-  assert.deepEqual(Object.keys(out.remaining[0].changes), ["background-color"]);
+  assert.deepEqual(Object.keys(out.remaining[0].changes), ["margin-top"]);
   assert.deepEqual(out.remaining[0].directApplied, ["font-size", "color"]);
   const css = out.files.find((f) => f.path.endsWith("styles.css")).after;
   assert.match(css, /\.hero h1 \{ font-size: 44px; color: var\(--ink\); \}\n\n\.hero h1\.[a-z0-9]+--t[0-9a-z]{4} \{\n  color: #5b3df5;\n\}/);
@@ -315,4 +315,31 @@ test("a value no rule sets yet, on an element without classes, goes to the style
   const css = after("styles.css");
   assert.match(css, new RegExp(`\\.${cls} \\{\\n  height: 49px;\\n  flex-shrink: 0;\\n\\}`));
   assert.match(css, /^\.hero \{ color: red; \}/);
+});
+
+test("a hover change edits the element's own :hover rule in place", async () => {
+  const root = await project();
+  await writeFile(path.join(root, "src/styles.css"), CSS + ".card:hover { color: #333; }\n");
+  const out = await applyDirect(root, {
+    tweaks: [tweak("t-0", { "color:hover": { prop: "color", state: "hover", from: "#333", to: "#0a0", authoredIn: [rule(".card:hover", "color", { forState: true, matches: 0 })] } }, { element: { classes: ["card"], react: { jsxSource: "src/App.tsx:5" } } })],
+  });
+  assert.equal(out.remaining.length, 0);
+  assert.match(out.files[0].after, /\.card:hover \{ color: #0a0; \}/);
+});
+
+test("a state no rule sets yet gets a :state rule on the element's own class, next to its base rule", async () => {
+  const root = await project();
+  const el = { classes: ["card"], selector: "div.card", react: { jsxSource: "src/App.tsx:5" } };
+  const out = await applyDirect(root, {
+    tweaks: [{ id: "t-0", element: el, changes: {
+      "background-color:hover": { prop: "background-color", state: "hover", from: "#fff", to: "#eee", authoredIn: [] },
+      "color:focus-visible": { prop: "color", state: "focus-visible", from: "#111", to: "#00f", authoredIn: [rule(".card", "color")] },
+    } }],
+  });
+  assert.equal(out.remaining.length, 0, out.remaining.map((t) => t.directSkip).join());
+  const css = out.files.find((f) => f.path.endsWith("styles.css")).after;
+  const cls = out.files.find((f) => f.path.endsWith("App.tsx")).after.match(/className="card (card--t[0-9a-z]{4})"/)[1];
+  assert.match(css, new RegExp(`\\.card \\{[^}]*\\}\\n\\n\\.${cls}:focus-visible \\{\\n  color: #00f;\\n\\}`));
+  assert.match(css, new RegExp(`\\.${cls}:hover \\{\\n  background-color: #eee;\\n\\}`));
+  assert.doesNotMatch(css, /\.card \{ padding: 12px 20px; color: #00f/); // the base rule is untouched
 });

@@ -28,7 +28,7 @@ export function tweaksDir(root) {
 }
 
 // .ui-tweaks/ stays out of git, except the canvas layout, which is part of the project.
-const GITIGNORE = "*\n!.gitignore\n!canvas.json\n";
+const GITIGNORE = "*\n!.gitignore\n!canvas.json\n!comments.json\n";
 
 // ---------- the canvas ----------
 // .ui-tweaks/canvas.json: the studio's artboards (a screen + state + device each), notes and arrows.
@@ -92,7 +92,7 @@ async function readHistory(root) {
 const SLOTS = 10;
 
 /** Records an apply for undo, in the same format the Claude Code mod writes. */
-export async function recordHistory(root, { by, count, files }) {
+export async function recordHistory(root, { by, count, files, what }) {
   if (!files.length) return null;
   const dir = tweaksDir(root);
   const entries = await readHistory(root);
@@ -102,9 +102,43 @@ export async function recordHistory(root, { by, count, files }) {
   const id = `h${at.toString(36)}`;
   await fs.mkdir(path.join(dir, "history"), { recursive: true });
   await fs.writeFile(path.resolve(root, slot), JSON.stringify({ id, files }));
-  const next = [...entries.filter((e) => e.slot !== slot), { id, at, by, count, slot, files: files.map((f) => f.path) }].slice(-SLOTS);
+  const next = [...entries.filter((e) => e.slot !== slot), { id, at, by, count, slot, files: files.map((f) => f.path), ...(what ? { what } : {}) }].slice(-SLOTS);
   await fs.writeFile(path.join(dir, "history.json"), JSON.stringify({ entries: next }, null, 2) + "\n");
   return id;
+}
+
+// ---------- comments ----------
+// .ui-tweaks/comments.json: notes pinned to elements on a screen (kept in git, so the team sees them).
+async function readComments(root) {
+  try {
+    return JSON.parse(await fs.readFile(path.join(tweaksDir(root), "comments.json"), "utf8")).comments || [];
+  } catch {
+    return [];
+  }
+}
+async function writeComments(root, comments) {
+  await fs.mkdir(tweaksDir(root), { recursive: true });
+  await fs.writeFile(path.join(tweaksDir(root), ".gitignore"), GITIGNORE);
+  await fs.writeFile(path.join(tweaksDir(root), "comments.json"), JSON.stringify({ comments }, null, 2) + "\n");
+}
+const clip = (v, n) => String(v ?? "").slice(0, n);
+/** Adds, edits (text, resolved) or deletes a comment; returns the list. */
+export async function changeComments(root, method, body = {}, id = null) {
+  const comments = await readComments(root);
+  if (method === "POST") {
+    if (!String(body.text || "").trim() || !body.selector) throw Object.assign(new Error("A comment needs text and an element."), { status: 400 });
+    comments.push({ id: `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, url: clip(body.url || "/", 500), selector: clip(body.selector, 1000), label: clip(body.label, 120), text: clip(body.text, 2000).trim(), author: clip(body.author, 60) || undefined, at: Date.now(), resolved: false });
+  } else {
+    const i = comments.findIndex((c) => c.id === (id || body.id));
+    if (i < 0) throw Object.assign(new Error("No such comment."), { status: 404 });
+    if (method === "DELETE") comments.splice(i, 1);
+    else {
+      if (typeof body.resolved === "boolean") comments[i].resolved = body.resolved;
+      if (typeof body.text === "string" && body.text.trim()) comments[i].text = clip(body.text, 2000).trim();
+    }
+  }
+  await writeComments(root, comments);
+  return comments;
 }
 
 /** Appends outcomes to .ui-tweaks/log.json (newest last, last 300 kept). */
@@ -116,6 +150,28 @@ export async function appendLog(root, items) {
     log = JSON.parse(await fs.readFile(file, "utf8")).entries || [];
   } catch {}
   await fs.writeFile(file, JSON.stringify({ entries: [...log, ...items].slice(-300) }, null, 2) + "\n");
+}
+
+/**
+ * Reverts applies newest first, up to and including the one with this id (just the newest without one).
+ * Each step restores its files only while nothing else changed them since; it stops at the first that can't.
+ */
+export async function undoApplies(root, id) {
+  const entries = await readHistory(root);
+  if (id && !entries.some((e) => e.id === id)) return { status: 404, body: { error: "That apply is no longer in the history." } };
+  const files = new Set();
+  let undone = 0;
+  for (;;) {
+    const last = (await readHistory(root)).at(-1);
+    const step = await undoLastApply(root);
+    if (step.status !== 200) {
+      if (!undone) return step;
+      return { status: 409, body: { error: `Reverted ${undone}, then stopped: ${step.body.error}`, files: [...files], undone } };
+    }
+    undone++;
+    step.body.files.forEach((f) => files.add(f));
+    if (!id || last.id === id) return { status: 200, body: { ok: true, files: [...files], undone } };
+  }
 }
 
 /** Restores the files of the newest apply, unless one changed since; same rules as the mod's undo. */
@@ -319,7 +375,25 @@ export function studioPage(appPath) {
   .ex-view { position: relative; overflow: hidden; border-radius: 10px; background: repeating-conic-gradient(#1e1e1e 0 25%, #191919 0 50%) 0 0 / 16px 16px; min-width: 120px; min-height: 60px; }
   .ex-view iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; pointer-events: none; background: transparent; }
   .ex-view .ex-msg { position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; text-align: center; color: var(--dim); font-size: 12px; }
-  .ex-card .ex-actions { display: flex; gap: 6px; }
+  .ex-card .ex-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .ex-card .ex-actions button.on { background: rgba(255,255,255,.14); color: #fff; }
+  .ex-edit { display: grid; gap: 4px; max-width: 360px; }
+  .ex-edit[hidden] { display: none; }
+  .ex-edit-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.2fr) 24px; gap: 4px; align-items: center; font: 11px var(--mono); color: var(--dim); }
+  .ex-edit-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ex-edit-row input:not(.ex-swatch) { min-width: 0; height: 26px; border: 0; border-radius: 6px; background: rgba(255,255,255,.05); color: var(--text); padding: 0 8px; font: 11.5px var(--mono); outline: none; }
+  .ex-edit-row input:not(.ex-swatch):focus { box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+  .ex-edit-row .ex-swatch { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: none; cursor: pointer; }
+  .ex-edit-row:not(:has(.ex-swatch)) { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) 24px; }
+  .ex-card .ex-edit-row button { height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--dim); cursor: pointer; }
+  .ex-card .ex-edit-row button:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .ex-card .ex-edit .ex-keep { height: 28px; margin-top: 2px; border: 0; border-radius: 8px; background: rgba(255,255,255,.06); color: var(--label); font: 500 12px system-ui, -apple-system, sans-serif; cursor: pointer; }
+  .ex-full { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px; background: rgba(12,12,12,.92); overflow: auto; }
+  .ex-full-head { display: flex; align-items: center; gap: 10px; color: #fff; font-size: 13px; }
+  .ex-full-head span { color: var(--dim); font-size: 12px; }
+  .ex-full-head button { height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: rgba(255,255,255,.08); color: var(--label); font: 500 12px system-ui, -apple-system, sans-serif; cursor: pointer; }
+  .ex-full-head button.use { background: #fff; color: #212121; font-weight: 600; }
+  .ex-full .ex-view { flex: none; box-shadow: 0 8px 40px rgba(0,0,0,.5); }
   .ex-card .ex-actions button { flex: 1; height: 30px; border: 0; border-radius: 8px; background: rgba(255,255,255,.06); color: var(--label); font: 500 12px system-ui, -apple-system, sans-serif; cursor: pointer; white-space: nowrap; }
   .ex-card .ex-actions button:hover { background: rgba(255,255,255,.1); color: var(--text); }
   .ex-card .ex-actions button.use { background: #fff; color: #212121; font-weight: 600; }
@@ -332,6 +406,8 @@ export function studioPage(appPath) {
   .ex-pop button { display: grid; gap: 2px; text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; font: 500 12.5px system-ui, -apple-system, sans-serif; }
   .ex-pop button:hover { background: rgba(255,255,255,.08); }
   .ex-pop button span { color: var(--dim); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cm-pop .cm-empty { padding: 10px; color: var(--dim); font-size: 12px; line-height: 1.45; }
+  .toolbar .cm-toggle.on { background: rgba(255,178,32,.16); color: #ffb020; }
   .ex-pop .ex-forget { color: var(--dim); font-size: 11.5px; text-align: center; }
   .ex-card.pending .ex-view { height: 140px; display: grid; place-items: center; color: var(--dim); font-size: 12px; }
   .ex-card.pending .ex-view::after { content: ""; width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255,255,255,.15); border-top-color: #fff; animation: ex-spin .8s linear infinite; }
@@ -520,6 +596,7 @@ export function studioPage(appPath) {
         <button class="review-toggle" hidden title="Make a review page: every screen captured (side by side with the other version when comparing), which ones changed, and a note; open it or publish it with Claude">Review</button>
       </span>
       <span class="tb-group">
+        <button class="cm-toggle" title="Comments pinned to elements (M on a screen: pin one to the selected element)">💬</button>
         <button class="ex-toggle" hidden title="Your explorations: reopen the variations Claude made for an element">✦ Explorations</button>
         <button class="vs-toggle" title="Compare with another branch or commit, side by side">⑂ Versions</button>
         <span class="vs-modes"><button data-mode="inspect" title="Inspect (V): click elements to select and tweak them">Inspect</button><button data-mode="interact" title="Interact (C): use the app; clicks go to it, not the panel">Interact</button></span>
@@ -547,6 +624,7 @@ export function studioPage(appPath) {
 <div class="guides-pop" hidden></div>
 <div class="rv-pop" hidden></div>
 <div class="ex-pop" hidden></div>
+<div class="ex-pop cm-pop" hidden></div>
 <div class="rv-progress" hidden></div>
 <div class="vs-pop" hidden></div>
 <script>
@@ -822,6 +900,8 @@ export function studioPage(appPath) {
       void r;
     },
     hand: setHand,
+    // A screen's panel turned its comment pins on or off, or changed a comment.
+    commentsChanged: () => loadCm(),
     // The panel's Explore: open the board for an element, with its first variations request.
     explore(req) {
       const a = current();
@@ -1423,8 +1503,56 @@ export function studioPage(appPath) {
     for (const b of pop.querySelectorAll("button[data-i]")) b.addEventListener("click", () => { pop.hidden = true; openExploration(list[Number(b.dataset.i)]); });
     pop.querySelector(".ex-forget").addEventListener("click", () => { try { localStorage.removeItem(EX_KEY); } catch {} pop.hidden = true; drawExToggle(); });
   });
-  addEventListener("pointerdown", (e) => { const pop = $(".ex-pop"); if (!pop.hidden && !e.target.closest(".ex-pop, .ex-toggle")) pop.hidden = true; });
+  addEventListener("pointerdown", (e) => { const pop = $(".ex-pop:not(.cm-pop)"); if (!pop.hidden && !e.target.closest(".ex-pop, .ex-toggle")) pop.hidden = true; });
   drawExToggle();
+
+  // ---------- comments ----------
+  // 💬 shows the pins on the screen and lists open comments on every screen; a row goes to its screen.
+  const cm = { list: [] };
+  const shownTweaks = () => { try { return frames.get(focusedId()).iframe.contentWindow.__uiTweaks; } catch { return null; } };
+  async function loadCm() {
+    try { cm.list = ((await fetch("/__ui-tweaks/comments", { cache: "no-store" }).then((r) => r.json())).comments || []).filter((c) => !c.resolved); } catch {}
+    drawCmToggle();
+  }
+  function drawCmToggle() {
+    const b = $(".cm-toggle");
+    const t = shownTweaks();
+    b.textContent = "💬" + (cm.list.length ? " " + cm.list.length : "");
+    b.classList.toggle("on", !!(t && t.showComments));
+  }
+  const urlPath = (u) => { try { const x = new URL(u || "/", location.origin); return x.pathname + x.search; } catch { return u || "/"; } };
+  $(".cm-toggle").addEventListener("click", async (e) => {
+    const pop = $(".cm-pop");
+    const t = shownTweaks();
+    const r = e.currentTarget.getBoundingClientRect();
+    if (pop.hidden) {
+      if (t && !t.showComments) t.setComments(true);
+      await loadCm();
+      pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 308)) + "px";
+      pop.style.top = r.bottom + 6 + "px";
+      const screenFor = (c) => canvas.artboards.find((a) => urlPath(a.url) === c.url);
+      pop.innerHTML = (cm.list.length ? cm.list.map((c, i) => {
+        const a = screenFor(c);
+        return '<button data-i="' + i + '">' + esc(c.text.length > 90 ? c.text.slice(0, 89) + "…" : c.text) + "<span>" + esc((a ? a.name || a.url : c.url) + " · " + (c.label || "element")) + "</span></button>";
+      }).join("") : '<div class="cm-empty">No open comments. Select an element on a screen and press M to pin one.</div>') + '<button class="ex-forget cm-hide">Hide pins</button>';
+      for (const b of pop.querySelectorAll("button[data-i]")) b.addEventListener("click", () => {
+        const c = cm.list[Number(b.dataset.i)];
+        const a = screenFor(c);
+        pop.hidden = true;
+        if (a && a.id !== focusedId()) setMode("focus", a.id);
+        else if (!a) note("That comment is on " + c.url + ", which isn't one of your screens.");
+        // The pins show once that screen's panel is up.
+        const show = (n = 0) => { const x = shownTweaks(); if (x) { x.setComments(true); drawCmToggle(); } else if (n < 30) setTimeout(() => show(n + 1), 200); };
+        show();
+      });
+      pop.querySelector(".cm-hide").addEventListener("click", () => { pop.hidden = true; const x = shownTweaks(); if (x) x.setComments(false); drawCmToggle(); });
+      pop.hidden = false;
+    } else pop.hidden = true;
+    drawCmToggle();
+  });
+  addEventListener("pointerdown", (e) => { const pop = $(".cm-pop"); if (!pop.hidden && !e.target.closest(".cm-pop, .cm-toggle")) pop.hidden = true; });
+  loadCm();
+  setInterval(() => { if (!document.hidden) loadCm(); }, 15000);
   const EX_PAD = 24, EX_MAX = 380;
   function exRun(id) { return ex.asks.find((a) => a.id === id); }
   async function exAsk(instruction) {
@@ -1457,7 +1585,8 @@ export function studioPage(appPath) {
     ex.timer = setTimeout(pollExplore, 1200);
   }
   // A live copy of the screen showing the element with the given changes on it, cropped to the element.
-  function exPreview(view, changes) {
+  // With full, the whole screen is shown (scaled to fit the board), not cropped to the element.
+  function exPreview(view, changes, full) {
     const r = ex.req;
     const [w, h] = r.size;
     const frame = document.createElement("iframe");
@@ -1504,6 +1633,12 @@ export function studioPage(appPath) {
       if (vb.bottom > frame.contentWindow.innerHeight || vb.top < 0 || vb.right > frame.contentWindow.innerWidth || vb.left < 0) el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
       // Some entrance animations run in script, out of sight of the checks above: wait until the
       // element's box holds still for a few frames (or 3s), then crop to where it ended up.
+      if (full) {
+        el.style.setProperty("outline", "2px dashed rgba(120,170,255,.8)", "important");
+        el.style.setProperty("outline-offset", "3px", "important");
+        frame.style.visibility = "";
+        return;
+      }
       let b = el.getBoundingClientRect(), still = 0;
       for (let i = 0; i < 30 && still < 3; i++) {
         await sleep(100);
@@ -1520,8 +1655,17 @@ export function studioPage(appPath) {
       frame.style.visibility = "";
     });
     frame.style.visibility = "hidden";
-    view.style.width = Math.min(EX_MAX, w) + "px";
-    view.style.height = "120px";
+    if (full) {
+      const board = $(".explore");
+      const scale = Math.min(1, (board.clientHeight - 90) / h, (board.clientWidth - 40) / w);
+      view.style.width = Math.round(w * scale) + "px";
+      view.style.height = Math.round(h * scale) + "px";
+      frame.style.transform = "scale(" + scale + ")";
+      frame.style.pointerEvents = "auto"; // scroll around the screen
+    } else {
+      view.style.width = Math.min(EX_MAX, w) + "px";
+      view.style.height = "120px";
+    }
     view.append(frame);
     frame.src = r.snapshot || r.url;
   }
@@ -1537,22 +1681,90 @@ export function studioPage(appPath) {
       return card;
     }
     if (kind === "variant" && ex.req.used === v.name) card.classList.add("used");
-    card.innerHTML = '<div class="ex-name">' + esc(v.name) + '</div><div class="ex-view"></div>' + (v.why ? '<div class="ex-why">' + esc(v.why) + "</div>" : "") + '<div class="ex-actions"></div>';
-    exPreview(card.querySelector(".ex-view"), v.changes);
+    // The card works on its own copy of the changes, so Edit can adjust them before they're used.
+    let cur = { ...v, changes: JSON.parse(JSON.stringify(v.changes || [])) };
+    card.innerHTML = '<div class="ex-name">' + esc(v.name) + '</div><div class="ex-view"></div>' + (v.why ? '<div class="ex-why">' + esc(v.why) + "</div>" : "") + '<div class="ex-edit" hidden></div><div class="ex-actions"></div>';
+    const redraw = () => { const view = card.querySelector(".ex-view"); view.innerHTML = ""; exPreview(view, cur.changes); };
+    redraw();
     const actions = card.querySelector(".ex-actions");
+    const btn = (text, title, run, cls) => { const b = Object.assign(document.createElement("button"), { textContent: text, title }); if (cls) b.className = cls; b.addEventListener("click", run); actions.append(b); return b; };
     if (kind !== "original") {
-      const use = Object.assign(document.createElement("button"), { className: "use", textContent: "Use on screen", title: "Put this on the real screen as tweaks (send them, or they apply in instant mode)" });
-      use.addEventListener("click", () => exUse(v));
-      actions.append(use);
+      btn("Use on screen", "Put this on the real screen as tweaks (send them, or they apply in instant mode)", () => exUse(cur), "use");
+      const edit = card.querySelector(".ex-edit");
+      const editBtn = btn("Edit", "Adjust this variation's values before using it", () => {
+        edit.hidden = !edit.hidden;
+        editBtn.classList.toggle("on", !edit.hidden);
+        if (!edit.hidden) drawEdit();
+      });
+      const drawEdit = () => {
+        edit.innerHTML = "";
+        cur.changes.forEach((c, i) => {
+          const row = document.createElement("label");
+          row.className = "ex-edit-row";
+          const what = (c.target === ":scope" ? "" : c.target + " ") + c.prop;
+          row.innerHTML = '<span title="' + esc(what) + '">' + esc(what) + "</span>";
+          const input = Object.assign(document.createElement("input"), { value: c.value, spellcheck: false });
+          const commit = () => {
+            if (input.value.trim() === c.value) return;
+            cur.changes[i] = { ...c, value: input.value.trim() };
+            if (!/ \\(edited\\)$/.test(cur.name)) cur.name = v.name + " (edited)";
+            card.querySelector(".ex-name").textContent = cur.name;
+            redraw();
+            drawEdit();
+          };
+          input.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") commit(); if (e.key === "Escape") { input.value = c.value; input.blur(); } });
+          input.addEventListener("change", commit);
+          if (/^(#|rgb|hsl|oklch)/i.test(c.value.trim())) {
+            const sw = Object.assign(document.createElement("input"), { type: "color", className: "ex-swatch" });
+            try { const d = document.createElement("canvas").getContext("2d"); d.fillStyle = c.value; sw.value = /^#[0-9a-f]{6}$/i.test(d.fillStyle) ? d.fillStyle : "#000000"; } catch {}
+            sw.addEventListener("change", () => { input.value = sw.value; commit(); });
+            row.append(sw);
+          }
+          row.append(input);
+          const x = Object.assign(document.createElement("button"), { textContent: "✕", title: "Drop this change" });
+          x.addEventListener("click", (e) => { e.preventDefault(); cur.changes.splice(i, 1); if (!/ \\(edited\\)$/.test(cur.name)) cur.name = v.name + " (edited)"; card.querySelector(".ex-name").textContent = cur.name; redraw(); drawEdit(); });
+          row.append(x);
+          edit.append(row);
+        });
+        if (cur !== v && cur.name !== v.name) {
+          const keep = Object.assign(document.createElement("button"), { className: "ex-keep", textContent: "Keep as a new variation", title: "Add the edited one to this exploration, beside the original" });
+          keep.addEventListener("click", () => {
+            const a = { id: "edit-" + Date.now().toString(36), instruction: "", status: "done", variants: [cur] };
+            ex.asks.push(a);
+            cur = { ...v, changes: JSON.parse(JSON.stringify(v.changes || [])) };
+            card.querySelector(".ex-name").textContent = v.name;
+            redraw();
+            edit.hidden = true;
+            editBtn.classList.remove("on");
+            saveExploration();
+            drawExplore();
+          });
+          edit.append(keep);
+        }
+      };
     }
-    const more = Object.assign(document.createElement("button"), { textContent: kind === "original" ? "More variations" : "More like this", title: kind === "original" ? "Ask Claude for more (two, unless the direction says how many)" : "More that push this one further" });
-    more.addEventListener("click", () => {
+    btn("On screen", "See it on the whole screen", () => exFull(cur));
+    btn(kind === "original" ? "More variations" : "More like this", kind === "original" ? "Ask Claude for more (two, unless the direction says how many)" : "More that push this one further", () => {
       const dir = $(".ex-dir").value.trim();
-      const text = kind === "original" ? dir : "Variations on “" + v.name + "” (" + (v.why || "") + "). Push that idea further in different ways" + (dir ? ", " + dir : "") + ". Start from its changes and return full change sets: " + JSON.stringify(v.changes);
+      const text = kind === "original" ? dir : "Variations on “" + cur.name + "” (" + (v.why || "") + "). Push that idea further in different ways" + (dir ? ", " + dir : "") + ". Start from its changes and return full change sets: " + JSON.stringify(cur.changes);
       exAsk(text).catch((e) => note("Couldn't ask Claude: " + e.message));
     });
-    actions.append(more);
     return card;
+  }
+  // The whole screen with a variation on it, over the board.
+  function exFull(v) {
+    const box = $(".explore");
+    box.querySelector(".ex-full")?.remove();
+    const full = document.createElement("div");
+    full.className = "ex-full";
+    full.innerHTML = '<div class="ex-full-head"><b></b><span>The element is outlined</span><button class="use">Use on screen</button><button class="ex-full-close">Back to variations</button></div><div class="ex-view"></div>';
+    full.querySelector("b").textContent = v.name;
+    full.querySelector(".use").hidden = !v.changes || !v.changes.length;
+    full.querySelector(".use").addEventListener("click", () => exUse(v));
+    full.querySelector(".ex-full-close").addEventListener("click", () => full.remove());
+    full.addEventListener("click", (e) => { if (e.target === full) full.remove(); });
+    box.append(full);
+    exPreview(full.querySelector(".ex-view"), v.changes, true);
   }
   function drawExplore() {
     const box = $(".explore");
@@ -1618,7 +1830,12 @@ export function studioPage(appPath) {
     ex.asks = [];
     drawExplore();
   }
-  addEventListener("keydown", (e) => { if (e.key === "Escape" && ex.req) closeExplore(); });
+  addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !ex.req) return;
+    const full = $(".explore .ex-full");
+    if (full) full.remove();
+    else closeExplore();
+  });
 
   // ---------- review pages ----------
   // Every screen (or this one) captured in one pass, side by side with the other version when comparing,
@@ -2163,7 +2380,7 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
         try {
           log = (JSON.parse(await fs.readFile(path.join(tweaksDir(root), "log.json"), "utf8")).entries || []).slice(-40);
         } catch {}
-        return send(res, 200, { entries: (await readHistory(root)).map((e) => ({ id: e.id, at: e.at, by: e.by, count: e.count, files: e.files.map((f) => path.relative(root, f)) })), log });
+        return send(res, 200, { entries: (await readHistory(root)).map((e) => ({ id: e.id, at: e.at, by: e.by, count: e.count, files: e.files.map((f) => path.relative(root, f)), what: e.what || null })), log });
       }
       if (req.method === "GET" && url.pathname === `${PREFIX}/breakpoints`) {
         const summary = await scanBreakpoints(root);
@@ -2263,8 +2480,21 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
           listener: await readListener(root),
         });
       }
+      if (url.pathname === `${PREFIX}/comments`) {
+        if (req.method === "GET") return send(res, 200, { comments: await readComments(root) });
+        if (["POST", "PATCH", "DELETE"].includes(req.method)) {
+          try {
+            const body = req.method === "DELETE" ? {} : JSON.parse((await readBody(req, 100_000)) || "{}");
+            return send(res, 200, { comments: await changeComments(root, req.method, body, url.searchParams.get("id")) });
+          } catch (error) {
+            return send(res, error.status || 400, { error: error.message });
+          }
+        }
+      }
       if (req.method === "POST" && url.pathname === `${PREFIX}/undo`) {
-        const { status, body } = await undoLastApply(root);
+        let id = null;
+        try { id = JSON.parse((await readBody(req)) || "{}").id || null; } catch {}
+        const { status, body } = await undoApplies(root, id);
         return send(res, status, body);
       }
       // Dry run of a Send: what would be written directly (as diffs) and what is left for Haiku. Writes nothing.
@@ -2294,9 +2524,10 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
         for (const f of direct.files) await fs.writeFile(f.path, f.after);
         await fs.mkdir(tweaksDir(root), { recursive: true });
         await fs.writeFile(path.join(tweaksDir(root), ".gitignore"), GITIGNORE);
-        await recordHistory(root, { by: "direct", count: direct.applied.length, files: direct.files });
         const label = (t) => (t.element && (t.element.classes[0] ? "." + t.element.classes[0] : t.element.tag)) || "?";
         const byId = new Map(batch.tweaks.map((t) => [t.id, t]));
+        const what = direct.applied.map((a) => `${label(byId.get(a.id))} ${[...a.props, ...(a.text ? ["text"] : [])].join(", ")}`).join("; ");
+        await recordHistory(root, { by: "direct", count: direct.applied.length, files: direct.files, what });
         await appendLog(root, [
           ...direct.applied.map((a) => ({ at: batch.createdAt, id: a.id, element: label(byId.get(a.id)), by: "direct", outcome: "applied", props: [...a.props, ...(a.text ? ["text"] : [])], files: a.files })),
           ...direct.remaining.map((t) => ({ at: batch.createdAt, id: t.id, element: label(t), by: "direct", outcome: "sent to Haiku", props: Object.keys(t.changes || {}), reason: t.directSkip })),
@@ -2308,7 +2539,6 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
         }
         let committed = null;
         if (clean) {
-          const what = direct.applied.map((a) => `${label(byId.get(a.id))} ${[...a.props, ...(a.text ? ["text"] : [])].join(", ")}`).join("; ");
           const message = `UI tweak: ${what.length > 68 ? what.slice(0, 67) + "…" : what}`;
           committed = clean.ok ? await commitFiles(root, direct.files.map((f) => f.path), message) : { ok: false, reason: clean.reason };
         }

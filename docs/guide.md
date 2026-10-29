@@ -140,7 +140,7 @@ React 19 (and so Next 15+) no longer exposes JSX line numbers in development. On
 
 ### Keep `.ui-tweaks/` out of git
 
-Nothing to do: the kit writes a `.gitignore` containing `*` inside `.ui-tweaks/`, so the folder ignores itself.
+Nothing to do: the kit writes a `.gitignore` inside `.ui-tweaks/` that ignores everything but the studio's screens (`canvas.json`) and comments (`comments.json`), which are meant to be shared with the team.
 
 ## 3. Use it
 
@@ -202,7 +202,9 @@ Everything below works the same in the studio or on the page.
 
 Select an element, optionally type a direction in **Ask Claude** ("bolder", "more compact"), and press **Explore** (in the studio; outside it the button is **3 variations** and previews them in place). The canvas makes way for the **Explore board**: the element as it is now, then each variation Claude proposes, side by side. Each card shows the screen exactly as it was when you pressed Explore (a snapshot the panel takes and the dev server keeps in `.ui-tweaks/snapshots/`, so screens reached by clicking around work too), with the variation's styles on the element, cropped to it, so you see it in context, real fonts and all.
 
-- **More like this** on a card asks for three more that push that one further; **More variations** on the original (or the box at the top, with a new direction) asks for three more from scratch. New cards appear as they come in; a spinning card means Claude is still sketching.
+- **More like this** on a card asks for more that push that one further (from the card's values, edited or not); **More variations** on the original (or the box at the top, with a new direction) asks for more from scratch. New cards appear as they come in; a spinning card means Claude is still sketching.
+- **Edit** on a card lists the variation's values (property, and the child it targets): change one (colour values get a swatch) or drop it with ✕, and the card redraws. Use on screen, More like this and On screen then use the edited values; **Keep as a new variation** adds the edited one to the board beside the original.
+- **On screen** shows the whole screen with that variation on it, the element outlined, scaled to fit the board (scroll it like the app). **Back to variations** (or Esc) returns.
 - **Use on screen** puts that variation on the real screen as ordinary tweaks and closes the board: send them as usual (or they apply right away in instant mode), and undo works as for any tweak.
 - **How many:** two variations a batch, unless your direction asks for another number ("give me 4", "just one"; four at most).
 - **References:** **＋ Reference** under Ask Claude (or paste an image into the box, or drop one on it) attaches pictures of the look you want; the board's header has its own **＋ Reference** for the next batch. They're saved in `.ui-tweaks/refs/`, and Claude looks at each one before designing (for Do it too).
@@ -247,10 +249,12 @@ Select an element, optionally type a direction in **Ask Claude** ("bolder", "mor
 - **Drag the handles** on the selection to resize; Shift on a corner keeps the proportions. On an absolute element, the handle on the side it's pinned to moves that side.
 - **Drag a row in the layers list** onto a sibling's row to reorder.
 - **Spacing handles:** with an element selected, pink handles sit in its padding and between the children of an auto-layout element. Drag one to change that padding or the gap; **Alt** changes all four paddings, **Shift** steps by 8.
+- **Radius handle:** the white dot inside the top-left corner of the selection rounds the corners as you drag it inward (all four; **Alt** just that corner; **Shift** steps by 8).
 - **Snapping:** dragging a positioned element snaps its edges and centre to its parent and its siblings, with a red guide to what it lines up with (hold ⌘/Ctrl to place freely).
 - **Multi-select:** **Shift-click** adds or removes elements; panel edits then apply to all of them as one undo step, and Delete or ⌘D act on all. **Matching** (element header, or ⌘K) selects every instance of the same component, or every element with the same tag and classes.
 - **⚡ Instant mode** (next to Send): each change is applied to the source about a second after you make it (once you stop dragging or typing), without pressing Send. The setting is remembered.
-- **🕘 History** (panel bar): this session's edits newest first, each with **Rewind** to go back to that point (⌘⇧Z brings them back), and what was applied to the source, with who applied it, the files, and **Undo** on the latest; plus recent skip reasons.
+- **🕘 History** (panel bar): this session's edits newest first, each with **Rewind** to go back to that point (⌘⇧Z brings them back), and what was applied to the source: what changed (e.g. `.card padding-top`, or the request Claude worked on), who applied it, the files, with **Undo** on the latest and **Revert** on older ones (that apply and every one after it, newest first); plus recent skip reasons.
+- **Comments:** **Comment** in the element header (or **M** with an element selected) pins a note to it; ⌘Enter posts. **M** with nothing selected shows or hides the pins. A pin opens its note, with **Select**, **Delete** and **Resolve**. In the studio, **💬** shows how many are open, lists them by screen (a row goes to that screen and shows its pins) and **Hide pins**. They're saved in `.ui-tweaks/comments.json`, which is kept in git so the team sees them.
 - **⌘K** opens the command palette: type to find any action (select parent, duplicate, add auto layout, copy as code, insert, send…), any section or property ("padding-left" jumps to that field), or another screen in the studio. ↑/↓ and Enter run it.
 - **⌘⇧Z** (or Ctrl+Y, or ↷ in the bar) redoes what ⌘Z undid: styles, text, moves, removals, inserts and props alike.
 - **Colour fields** show the token a colour comes from (e.g. `var(--brand)`), the project's colour tokens as swatches to click (◇ lists them with names), and **⊙** picks a colour from anywhere on screen (Chrome, Edge).
@@ -267,7 +271,8 @@ Select an element, optionally type a direction in **Ask Claude** ("bolder", "mor
 - A **⚠ warning** appears when a value can't show, for example width on an inline element or a background color under a gradient.
 - **↶** or **⌘Z / Ctrl+Z** undoes your last edit (a whole drag counts as one step).
 - **Measure:** with an element selected, hold **Alt** and point at another to see the distances between them in red.
-- **Contrast** under the text color shows the ratio to the background behind it and whether it passes AA and AAA (large text needs less). Over a gradient it reports the lowest ratio across the gradient's colors; it can't measure over images or video.
+- **Off-token values** lists hand-written colours, paddings, gaps, radius and font size on the element where the project has a token: **Use --token** when the token holds the same value, **≈ --token** for the nearest one (which changes the value). Either sets the property to `var(--token)`.
+- **Contrast** under the text color, and live in the colour picker while you pick a text or background colour, shows the ratio to the background behind it and whether it passes AA and AAA (large text needs less). Over a gradient it reports the lowest ratio across the gradient's colors; it can't measure over images or video.
 - **Copy style / Paste style** (or **⌘⌥C** / **⌘⌥V**) copy an element's type, fill, border, radius, shadow and padding onto another; one undo takes a paste back.
 - **⧉** (on the page) docks the panel into the studio; Shift-click it to pop the panel into its own window instead (needs a browser that allows pop-ups).
 
@@ -318,9 +323,10 @@ Each tweak is split per property, and every property goes the cheapest route tha
    - **Copy edit:** the text change is found on the element's JSX line and replaced.
    - **Width scope:** "At 430px and below" (or "From 768px up") is written as an `@media` rule for a breakpoint the project already uses, in the direction it already writes them (desktop-first `max-width` or mobile-first `min-width`, read from its stylesheets; Tailwind's defaults when there are none). The rule inside that block is edited in place, or the block is created right after the base rule. Shared rules, another `@media` rule that wins at that width, and a block that sits above the base rule go to Haiku.
    - **Tailwind:** when no hand-written rule in a source stylesheet sets the value, the tweak becomes a utility class on the element: `pt-2` becomes `pt-5`, a new colour becomes `text-[#111]`, hover becomes `hover:bg-[#000]`, a width scope becomes `max-[430px]:`. Same-property utilities at the same variant are replaced; broader ones (`p-4` beside a new `pt-5`) stay, because Tailwind orders the more specific one last. `font-size` is always an arbitrary value (`text-lg` would also change line-height). Works on `className="…"` literals and the first string of `cn()` / `clsx()` / `twMerge()`; other className expressions and components go to Haiku.
+   - **States:** a hover/active/focus change edits the state's own rule (`.card:hover`) when there is one, the same way as above (in place, or an override such as `.card:hover.card--t3f2a`); when there isn't, a new rule on the element's own class (`.card--t3f2a:hover`) goes right after its base rule.
 2. **Haiku** (seconds, in the background, started by the mod):
    - notes
-   - hover/active/focus states (except in Tailwind projects, where they become `hover:` utilities)
+   - a state change scoped to one screen width
    - "only at N px" tweaks the project has no breakpoint for
    - values set through a React `style` prop
    - shared rules in plain HTML projects
@@ -341,13 +347,13 @@ An override applies to every element that JSX line renders. For a button rendere
 
 ## Undo
 
-- **Undo apply** in the panel, **Undo** in the band, or `/apply-tweaks undo` restores the files the last apply changed. Repeat to go further back (the last 10 applies are kept).
+- **Undo apply** in the panel, **Undo** in the band, or `/apply-tweaks undo` restores the files the last apply changed. Repeat to go further back (the last 10 applies are kept), or use **Revert** on an older apply in 🕘 History to go back to before it in one step.
 - A file that has changed since the apply isn't overwritten. You're told which file, and can undo by hand or ask Claude.
 - This covers direct and Haiku applies. Changes made by the main model are in your normal git history instead.
 
 ## Files it creates
 
-All inside `<project>/.ui-tweaks/`, which ignores itself in git:
+All inside `<project>/.ui-tweaks/`, which ignores itself in git (except `canvas.json` and `comments.json`):
 
 | File | What |
 | --- | --- |
@@ -355,6 +361,7 @@ All inside `<project>/.ui-tweaks/`, which ignores itself in git:
 | `log.json` | What happened to each tweak and why (last 300) |
 | `history.json`, `history/slot-N.json` | Undo history: file copies for the last 10 applies |
 | `lock.json` | Which session is applying right now |
+| `comments.json` | Comments pinned to elements (kept in git) |
 | `server.json` | The dev server's address (also registered in `~/.ui-tweaks/servers/`), so the mod finds the project even when its session started in another folder |
 
 ## Setting it up for a team

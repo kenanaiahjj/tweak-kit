@@ -1504,6 +1504,18 @@
     .sp-handle:hover, .sp-handle.on { opacity: 1; transform: scale(1.15); }
     .sp-handle.h { width: 18px; height: 5px; margin: -2.5px 0 0 -9px; cursor: ns-resize; }
     .sp-handle.v { width: 5px; height: 18px; margin: -9px 0 0 -2.5px; cursor: ew-resize; }
+    .off-token .btn { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
+    .cm-pin { position: fixed; pointer-events: auto; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 12px 12px 12px 2px; background: #ffb020; color: #1a1a1a; font: 700 11px/24px system-ui, -apple-system, sans-serif; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,.35), 0 0 0 2px #fff; cursor: pointer; z-index: 2; }
+    .cm-pin:hover, .cm-pin.on { transform: scale(1.12); }
+    .cm-bubble { position: fixed; pointer-events: auto; width: 260px; display: grid; gap: 8px; padding: 10px; border-radius: 12px; background: var(--bg); color: var(--text); box-shadow: 0 8px 32px rgba(0,0,0,.45), 0 0 0 1px var(--line); z-index: 3; font: 12px/1.45 system-ui, -apple-system, sans-serif; }
+    .cm-bubble .cm-head { display: flex; justify-content: space-between; gap: 8px; }
+    .cm-bubble .cm-head b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cm-bubble .cm-head span { color: var(--dim); flex: none; }
+    .cm-bubble .cm-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .cm-bubble textarea { resize: vertical; min-height: 60px; border: 0; border-radius: 8px; background: var(--bg2); color: var(--text); padding: 8px; font: inherit; outline: none; }
+    .cm-bubble textarea:focus { box-shadow: inset 0 0 0 1px var(--line-hover); }
+    .cm-bubble .cm-row { display: flex; gap: 6px; justify-content: flex-end; }
+    .sp-handle.r { width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; background: #fff; border-color: #f24e9e; cursor: nwse-resize; }
     .multi-box { position: fixed; pointer-events: none; outline: 2px solid var(--accent); outline-offset: 0; background: rgba(13,153,255,.06); }
     button.btn.ghost.on { background: #3d2f66; border-color: #7b61ff; color: #fff; }
     .hist-item { display: flex; gap: 8px; align-items: center; padding: 6px 4px; border-bottom: 1px dashed #333; }
@@ -1511,6 +1523,7 @@
     .hist-item .h-what { flex: 1; min-width: 0; }
     .hist-item .h-what b { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .hist-item .h-what span { color: var(--dim); font-size: 10.5px; }
+    .hist-item .h-what .h-detail { display: block; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .hist-item.now b::after { content: " · now"; color: var(--accent); font-weight: 500; }
     .handle { position: fixed; width: 8px; height: 8px; margin: -4px 0 0 -4px; background: #fff; border: 1px solid var(--accent); border-radius: 1px; pointer-events: auto; z-index: 1; }
     .handle[data-dir=n], .handle[data-dir=s] { cursor: ns-resize; }
@@ -1757,7 +1770,7 @@
   <div class="pad p-t hidden"></div><div class="pad p-r hidden"></div><div class="pad p-b hidden"></div><div class="pad p-l hidden"></div>
   <div class="sel-box hidden"></div>
   <div class="tag hidden"></div>
-  <div class="multi-layer"></div><div class="sp-layer"></div>
+  <div class="multi-layer"></div><div class="sp-layer"></div><div class="cm-layer"></div><div class="cm-bubble hidden"></div>
   <div class="drag-ghost hidden"></div><div class="drop-line hidden"></div><div class="guide gv hidden"></div><div class="guide gh hidden"></div><div class="drag-tip hidden"></div>
   ${["nw", "n", "ne", "e", "se", "s", "sw", "w"].map((d) => `<div class="handle hidden" data-dir="${d}"></div>`).join("")}
   <div class="measure hidden"></div><div class="measure hidden"></div><div class="measure hidden"></div><div class="measure hidden"></div>
@@ -1901,6 +1914,7 @@
     const active = (state.isOpen || state.measuring) && !document.hidden && (!STUDIO || ownsPanel() || !!state.hovered);
     if (active || !drawnIdle) time(stats.draw, drawBoxes);
     drawnIdle = !active;
+    if (state.showComments || pinsDrawn || bubble.id) drawPins();
     requestAnimationFrame(loop);
   });
 
@@ -2171,7 +2185,7 @@
     if (!silent && p.onClose) p.onClose(p.last);
   }
   /** Opens the picker under `anchor`; onInput(color) on every change, onClose(last) when it closes. */
-  function openPicker(anchor, initial, { onInput, onClose, title }) {
+  function openPicker(anchor, initial, { onInput, onClose, title, contrast }) {
     closePicker(true);
     const host = panel.querySelector(".scroll") || panel;
     const start = rgbaOf(initial || "#000000");
@@ -2185,6 +2199,7 @@
       '<div class="cp-bar cp-hue"><i class="cp-knob"></i></div>' +
       '<div class="cp-bar cp-alpha"><span></span><i class="cp-knob"></i></div>' +
       '<div class="cp-row"><span class="cp-chip"></span><input class="cp-hex" spellcheck="false" aria-label="Hex colour" /><input class="cp-a" aria-label="Opacity" /><span class="cp-pct">%</span></div>' +
+      (contrast ? '<div class="contrast cp-contrast"></div>' : "") +
       '<div class="cp-sw"></div>';
     const $b = (q) => box.querySelector(q);
     const sv = $b(".cp-sv"), hue = $b(".cp-hue"), alpha = $b(".cp-alpha"), hex = $b(".cp-hex"), ain = $b(".cp-a"), chip = $b(".cp-chip");
@@ -2204,6 +2219,7 @@
       paint(fromInput);
       if (picker) picker.last = current();
       onInput(current());
+      if (contrast) $b(".cp-contrast").innerHTML = contrast();
     };
     const drag = (el, at) => el.addEventListener("pointerdown", (e) => {
       e.preventDefault();
@@ -2282,6 +2298,7 @@
     state.dragStamp = ++stampCounter; // the session is one undo step
     picker = { box, off, onClose, last: null };
     paint();
+    if (contrast) $b(".cp-contrast").innerHTML = contrast();
     // Keep it in view.
     requestAnimationFrame(() => box.scrollIntoView({ block: "nearest" }));
     return picker;
@@ -2372,6 +2389,8 @@
           text.value = /^var\(/.test(c) ? c : prettyColor(c);
         },
         onClose: () => renderPanel(),
+        // Live contrast while picking a text or background colour, for an element with text of its own.
+        contrast: /^(color|background-color)$/.test(prop) && [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()) ? () => contrastRow(el).innerHTML : undefined,
       });
     sw.addEventListener("click", open);
     sw.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
@@ -3293,6 +3312,98 @@
     });
     return section("Tokens on this element", box);
   }
+  // ---------- Off-token values ----------
+  // Hand-written values on this element where the project has a token: the same value (swap it in)
+  // or the nearest one of the same kind. "Use" sets the property to var(--token).
+  const OFF_PROPS = [
+    ["color", "color"], ["background-color", "color"], ["border-top-color", "color"],
+    ["padding-top", "spacing"], ["padding-right", "spacing"], ["padding-bottom", "spacing"], ["padding-left", "spacing"],
+    ["row-gap", "spacing"], ["column-gap", "spacing"],
+    ["border-top-left-radius", "radius"], ["font-size", "type"],
+  ];
+  function tokenPx(v, el) {
+    const t = String(v).trim();
+    const n = parseFloat(t);
+    if (isNaN(n) || !/^-?[\d.]+(px|rem|em)?$/.test(t)) return null;
+    if (t.endsWith("rem")) return n * (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16);
+    if (t.endsWith("em")) return n * (parseFloat(getComputedStyle(el).fontSize) || 16);
+    return n;
+  }
+  function offTokens(el, scan) {
+    const own = state.tweaks.get(keyOf(el));
+    const cs = getComputedStyle(el);
+    const found = new Map(); // `${cat}|${value}` -> { props, value, exact, token, tokenValue }
+    for (const [prop, cat] of OFF_PROPS) {
+      const rule = matchedRules(el, prop)[0];
+      const authored = (own && own.changes[prop] && own.changes[prop].to) || el.style.getPropertyValue(prop) || (rule && rule.value) || "";
+      if (!authored || /var\(|inherit|initial|unset|currentcolor|transparent|auto|none/i.test(authored)) continue;
+      if (prop === "border-top-color" && !(parseFloat(cs.borderTopWidth) > 0)) continue; // no border to see
+      const value = cs.getPropertyValue(prop).trim();
+      const candidates = scan.tokens.filter((t) => t.category === cat).map((t) => ({ name: t.name, value: cs.getPropertyValue(t.name).trim() })).filter((t) => t.value);
+      let best = null;
+      if (cat === "color") {
+        const c = rgbaOf(value);
+        if (!c || c.a === 0) continue;
+        for (const t of candidates) {
+          const d = rgbaOf(t.value);
+          if (!d) continue;
+          const dist = Math.hypot(c.r - d.r, c.g - d.g, c.b - d.b) + Math.abs(c.a - d.a) * 255;
+          if (!best || dist < best.dist) best = { ...t, dist };
+        }
+        if (!best || best.dist > 20) continue;
+        best.exact = best.dist < 2;
+      } else {
+        const px = parseFloat(value);
+        if (!px) continue;
+        for (const t of candidates) {
+          const tp = tokenPx(t.value, el);
+          if (tp === null) continue;
+          const dist = Math.abs(tp - px);
+          if (!best || dist < best.dist) best = { ...t, dist };
+        }
+        if (!best || best.dist > Math.max(4, px * 0.25)) continue;
+        best.exact = best.dist < 0.5;
+      }
+      const key = `${cat}|${value}|${best.name}`;
+      const entry = found.get(key) || { props: [], value: cat === "color" ? prettyColor(value) : value, exact: best.exact, token: best.name, tokenValue: best.value };
+      entry.props.push(prop);
+      found.set(key, entry);
+    }
+    return [...found.values()];
+  }
+  function offTokenSection(el) {
+    const box = document.createElement("div");
+    const sec = section("Off-token values", box);
+    sec.style.display = "none";
+    loadTokenScan().then((scan) => {
+      if (!scan || !scan.tokens || !scan.tokens.length || !el.isConnected) return;
+      const list = offTokens(el, scan);
+      if (!list.length) return;
+      sec.style.display = "";
+      box.append(lbl("Hand-written values a token could hold"));
+      for (const o of list) {
+        const row = document.createElement("div");
+        row.className = "prop-row off-token";
+        const name = o.props.length > 1 && o.props.every((p) => p.startsWith("padding")) ? "padding" : o.props.join(", ");
+        row.append(Object.assign(document.createElement("span"), { textContent: `${name} ${o.value}`, title: o.props.join(", ") }));
+        const use = Object.assign(document.createElement("button"), {
+          className: "btn ghost",
+          textContent: o.exact ? `Use ${o.token}` : `≈ ${o.token}`,
+          title: o.exact ? `${o.token} is the same value: use the token instead` : `Nearest token: ${o.token} (${o.tokenValue}); using it changes the value`,
+        });
+        use.addEventListener("click", () => {
+          state.dragStamp = ++stampCounter;
+          for (const p of o.props) setStyle(el, p, `var(${o.token})`, true);
+          state.dragStamp = 0;
+          renderPanel();
+          toast(`${name} now uses ${o.token}`);
+        });
+        row.append(use);
+        box.append(row);
+      }
+    });
+    return sec;
+  }
   async function saveToken(name, decl, to) {
     if (!to || to === decl.value) return;
     try {
@@ -3724,17 +3835,22 @@
         w.className = "h-what";
         const head = Object.assign(document.createElement("b"), { textContent: `${e.count} change${e.count === 1 ? "" : "s"}` });
         head.append(byTag(e.by));
-        w.append(head, Object.assign(document.createElement("span"), { textContent: `${e.files.map((f) => f.split("/").pop()).join(", ")} · ${ago(e.at)}` }));
+        if (e.what) w.append(Object.assign(document.createElement("span"), { className: "h-detail", textContent: e.what, title: e.what }));
+        w.append(Object.assign(document.createElement("span"), { textContent: `${e.files.map((f) => f.split("/").pop()).join(", ")} · ${ago(e.at)}` }));
+        w.prepend(head);
         row.append(w);
-        if (i === 0) {
-          const u = Object.assign(document.createElement("button"), { className: "btn ghost", textContent: "Undo", title: "Put those files back (only while nothing else changed them)" });
-          u.addEventListener("click", async () => {
-            await undoLastApply();
-            state.showHistory = true;
-            render();
-          });
-          row.append(u);
-        }
+        const u = Object.assign(document.createElement("button"), {
+          className: "btn ghost",
+          textContent: i === 0 ? "Undo" : "Revert",
+          title: i === 0 ? "Put those files back (only while nothing else changed them)" : `Undo this apply and the ${i} after it, newest first (each only while nothing else changed its files)`,
+        });
+        u.addEventListener("click", async () => {
+          if (i > 0 && !confirm(`Revert this apply and the ${i} newer one${i === 1 ? "" : "s"}?`)) return;
+          await undoLastApply(e.id);
+          state.showHistory = true;
+          render();
+        });
+        row.append(u);
         applied.append(row);
       });
       const recent = log.slice().reverse().filter((l) => l.outcome !== "applied").slice(0, 8);
@@ -4008,6 +4124,7 @@
         ["CSS", "Copy its styles as CSS", (n) => copyCode(n, "css")],
         ["Tailwind", "Copy its styles as Tailwind classes", (n) => copyCode(n, "tailwind")],
         ["JSX", "Copy its JSX as written in the source", (n) => copyCode(n, "jsx")],
+        ["Comment", "Pin a comment to this element (M)", (n) => startComment(n)],
       ]) {
         const b = document.createElement("button");
         b.textContent = label;
@@ -4048,6 +4165,7 @@
       if (props) scroll.append(props);
       const tokensHere = tokensSection(el);
       if (tokensHere) scroll.append(tokensHere);
+      scroll.append(offTokenSection(el));
 
       const current = state.tweaks.get(keyOf(el));
       const warnings = current && el.isConnected ? hiddenReasons(current) : [];
@@ -4744,11 +4862,11 @@
     setStyle(el, "background-image", "none");
   }
 
-  async function undoLastApply() {
+  async function undoLastApply(id) {
     try {
-      const res = await fetch(API + "/undo", { method: "POST" });
+      const res = await fetch(API + "/undo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(id ? { id } : {}) });
       const body = await res.json();
-      toast(res.ok ? `Undid the apply: ${body.files.join(", ")} restored` : `Not undone: ${body.error}`);
+      toast(res.ok ? `Undid ${body.undone > 1 ? body.undone + " applies" : "the apply"}: ${body.files.join(", ")} restored` : `Not undone: ${body.error}`);
       if (res.ok) state.lastApply = null;
     } catch (error) {
       toast("Couldn't reach the tweaks server (" + error.message + ")");
@@ -4915,6 +5033,10 @@
       { prop: "padding-left", axis: "x", sign: 1, x: r.left + Math.max(4, pl / 2), y: r.top + r.height / 2 },
       { prop: "padding-right", axis: "x", sign: -1, x: r.right - Math.max(4, pr / 2), y: r.top + r.height / 2 },
     ];
+    // Corner radius: a dot inside the top-left corner, dragged inward to round (Alt: that corner only).
+    const rad = parseFloat(cs.borderTopLeftRadius) || 0;
+    const inset = Math.min(Math.max(10, rad * 0.3 + 6), r.width / 4, r.height / 4);
+    spots.push({ prop: "border-top-left-radius", axis: "xy", sign: 1, x: r.left + inset, y: r.top + inset, max: Math.min(r.width, r.height) / 2 });
     if (/flex|grid/.test(cs.display)) {
       const shown = kids(el).filter((c) => c.getClientRects().length > 0 && !/^(absolute|fixed)$/.test(getComputedStyle(c).position)).slice(0, 9);
       for (let i = 0; i + 1 < shown.length; i++) {
@@ -4925,11 +5047,11 @@
     }
     reuse(".sp-layer", spots.length, "sp-handle").forEach((h, i) => {
       const sp = spots[i];
-      const cls = "sp-handle " + (sp.axis === "y" ? "h" : "v");
+      const cls = "sp-handle " + (sp.axis === "xy" ? "r" : sp.axis === "y" ? "h" : "v");
       if (h.className !== cls) h.className = cls;
       h.style.left = sp.x + "px";
       h.style.top = sp.y + "px";
-      h.title = `${sp.prop}: drag to change${sp.prop.startsWith("padding") ? " (Alt: all sides)" : ""}, Shift for steps of 8`;
+      h.title = sp.axis === "xy" ? "Corner radius: drag inward to round (Alt: this corner only), Shift for steps of 8" : `${sp.prop}: drag to change${sp.prop.startsWith("padding") ? " (Alt: all sides)" : ""}, Shift for steps of 8`;
       h.onpointerdown = (e) => startSpacingDrag(e, h, el, sp);
     });
   }
@@ -4944,6 +5066,17 @@
     spacingDrag = sp;
     state.dragStamp = ++stampCounter;
     const move = (ev) => {
+      if (sp.axis === "xy") {
+        // Inward along the diagonal rounds more; the handle follows the pointer.
+        const d = ((ev.clientX - x0) + (ev.clientY - y0)) / 2;
+        let v = Math.max(0, Math.min(sp.max, Math.round(v0 + d * 1.5)));
+        if (ev.shiftKey) v = Math.round(v / 8) * 8;
+        for (const p of ev.altKey ? [sp.prop] : GROUPS["border-radius"]) setStyle(el, p, v + "px", true);
+        h.style.left = sp.x + d + "px";
+        h.style.top = sp.y + d + "px";
+        tip(`${ev.altKey ? "top-left radius" : "radius"} ${v}`, ev.clientX, ev.clientY);
+        return;
+      }
       const d = (sp.axis === "y" ? ev.clientY - y0 : ev.clientX - x0) * sp.sign;
       let v = Math.max(0, Math.round(v0 + d));
       if (ev.shiftKey) v = Math.round(v / 8) * 8;
@@ -4965,6 +5098,125 @@
     h.addEventListener("pointermove", move);
     h.addEventListener("pointerup", up);
     h.addEventListener("pointercancel", up);
+  }
+
+  // ---------- comments ----------
+  // Notes pinned to elements, saved in .ui-tweaks/comments.json (kept in git). M shows them, or pins
+  // one to the selected element; a pin opens its note, to resolve or delete.
+  const COMMENTS_KEY = "ui-tweaks:comments-on";
+  try { state.showComments = localStorage.getItem(COMMENTS_KEY) === "1"; } catch {}
+  state.comments = [];
+  let pinsDrawn = false, commentsAt = 0;
+  const pageKey = () => location.pathname + location.search;
+  async function loadComments(force) {
+    if (!force && Date.now() - commentsAt < 4000) return state.comments;
+    commentsAt = Date.now();
+    try { state.comments = (await fetch(API + "/comments", { cache: "no-store" }).then((r) => r.json())).comments || []; } catch {}
+    return state.comments;
+  }
+  async function changeComment(method, body, id) {
+    try {
+      const res = await fetch(API + "/comments" + (id ? "?id=" + encodeURIComponent(id) : ""), { method, headers: { "Content-Type": "application/json" }, body: method === "DELETE" ? undefined : JSON.stringify(body) });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error);
+      state.comments = out.comments;
+      commentsAt = Date.now();
+      if (STUDIO && STUDIO.__studio && STUDIO.__studio.commentsChanged) STUDIO.__studio.commentsChanged();
+      return true;
+    } catch (error) {
+      toast("Comment not saved: " + error.message);
+      return false;
+    }
+  }
+  function setComments(on) {
+    state.showComments = on;
+    try { localStorage.setItem(COMMENTS_KEY, on ? "1" : "0"); } catch {}
+    if (on) loadComments(true);
+    else closeBubble();
+    if (STUDIO && STUDIO.__studio && STUDIO.__studio.commentsChanged) STUDIO.__studio.commentsChanged();
+  }
+  const pinned = () => state.comments.filter((c) => !c.resolved && c.url === pageKey());
+  const commentTarget = (c) => { try { return document.querySelector(c.selector); } catch { return null; } };
+  function drawPins() {
+    if (state.showComments) loadComments();
+    const list = state.showComments ? pinned() : [];
+    pinsDrawn = list.length > 0;
+    reuse(".cm-layer", list.length, "cm-pin").forEach((p, i) => {
+      const c = list[i];
+      const el = commentTarget(c);
+      const r = el && el.getClientRects().length ? el.getBoundingClientRect() : null;
+      p.classList.toggle("hidden", !r);
+      if (!r) return;
+      p.textContent = String(i + 1);
+      p.title = c.text;
+      p.style.left = Math.min(innerWidth - 14, Math.max(14, r.right)) + "px";
+      p.style.top = Math.max(14, r.top) + "px";
+      p.classList.toggle("on", bubble.id === c.id);
+      p.onclick = (e) => { e.stopPropagation(); bubble.id === c.id ? closeBubble() : openBubble(c, p); };
+    });
+    if (bubble.id && bubble.anchor && bubble.anchor.isConnected) {
+      const r = bubble.anchor.getBoundingClientRect();
+      const box = $(".cm-bubble");
+      box.style.left = Math.max(8, Math.min(innerWidth - 268, r.right + 8)) + "px";
+      box.style.top = Math.max(8, Math.min(innerHeight - box.offsetHeight - 8, r.top)) + "px";
+    }
+  }
+  const bubble = { id: null, anchor: null };
+  function closeBubble() {
+    bubble.id = null;
+    bubble.anchor = null;
+    $(".cm-bubble").classList.add("hidden");
+  }
+  function openBubble(c, anchor) {
+    bubble.id = c.id;
+    bubble.anchor = anchor;
+    const box = $(".cm-bubble");
+    box.innerHTML = "";
+    const head = Object.assign(document.createElement("div"), { className: "cm-head" });
+    head.append(Object.assign(document.createElement("b"), { textContent: c.label || "Element" }), Object.assign(document.createElement("span"), { textContent: ago(c.at) }));
+    const text = Object.assign(document.createElement("div"), { className: "cm-text", textContent: c.text });
+    const row = Object.assign(document.createElement("div"), { className: "cm-row" });
+    const btn = (label, run, cls) => { const b = Object.assign(document.createElement("button"), { className: "btn " + (cls || "ghost"), textContent: label }); b.addEventListener("click", run); row.append(b); };
+    btn("Select", () => { const el = commentTarget(c); if (el) { if (!state.isOpen) toggle(true); select(el); } });
+    btn("Delete", async () => { if (await changeComment("DELETE", null, c.id)) closeBubble(); });
+    btn("Resolve", async () => { if (await changeComment("PATCH", { id: c.id, resolved: true })) { closeBubble(); toast("Resolved"); } }, "primary");
+    box.append(head, text, row);
+    box.classList.remove("hidden");
+  }
+  const commentLabel = (el) => {
+    const d = describe(el);
+    const cls = d.classes.find((c) => !/--t[0-9a-z]{4}$/.test(c));
+    return (cls ? `${d.tag}.${cls}` : d.tag) + (d.text ? ` “${d.text.slice(0, 30)}”` : "");
+  };
+  function startComment(el) {
+    if (!el || !el.isConnected) return toast("Select an element to comment on");
+    if (!state.showComments) setComments(true);
+    bubble.id = "new";
+    bubble.anchor = el;
+    const box = $(".cm-bubble");
+    box.innerHTML = "";
+    const head = Object.assign(document.createElement("div"), { className: "cm-head" });
+    head.append(Object.assign(document.createElement("b"), { textContent: "Comment on " + commentLabel(el) }));
+    const area = Object.assign(document.createElement("textarea"), { rows: 3, placeholder: "What should change here? (⌘↵ to post)" });
+    const row = Object.assign(document.createElement("div"), { className: "cm-row" });
+    const post = async () => {
+      if (!area.value.trim()) return;
+      if (await changeComment("POST", { url: pageKey(), selector: cssPath(el), label: commentLabel(el), text: area.value })) { closeBubble(); toast("Comment pinned"); }
+    };
+    area.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) post();
+      if (e.key === "Escape") closeBubble();
+    });
+    const cancel = Object.assign(document.createElement("button"), { className: "btn ghost", textContent: "Cancel" });
+    cancel.addEventListener("click", closeBubble);
+    const ok = Object.assign(document.createElement("button"), { className: "btn primary", textContent: "Post" });
+    ok.addEventListener("click", post);
+    row.append(cancel, ok);
+    box.append(head, area, row);
+    box.classList.remove("hidden");
+    drawPins();
+    setTimeout(() => area.focus(), 0);
   }
 
   // ---------- multi-select ----------
@@ -5415,6 +5667,11 @@
     if (e.key === "Escape") {
       if (state.selected) select(null);
       else toggle(false);
+    } else if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === "m") {
+      // M: comment on the selected element; with nothing selected, show or hide the comments.
+      e.preventDefault();
+      if (sel) startComment(sel);
+      else setComments(!state.showComments);
     } else if (!e.metaKey && !e.ctrlKey && !e.altKey && (e.key.toLowerCase() === "v" || e.key.toLowerCase() === "c")) {
       // V: Inspect (clicks pick elements). C, beside it: Interact (clicks reach the app).
       e.preventDefault();
@@ -5516,6 +5773,10 @@
     // Picking on or off (off: clicks reach the app, as when the studio's comparison is set to Interact).
     get isPicking() { return state.isPicking; },
     setPicking: (on) => { state.isPicking = !!on; if (!on) { state.hovered = null; } render(); },
+    // Comment pins: shown or not (the studio's 💬 switch), and pinning one to an element.
+    get showComments() { return state.showComments; },
+    setComments: (on) => setComments(!!on),
+    comment: (selector) => startComment(document.querySelector(selector)),
     // Hides outlines and the launcher (for snapshots).
     hideOverlay: (on) => (host.style.visibility = on ? "hidden" : ""),
     // Average and worst times (ms) of the overlay's background work, for checking it stays light.

@@ -3434,6 +3434,35 @@
     };
   }
 
+  // The screen exactly as it is now, as a static page, for the studio's Explore board: screens reached by
+  // clicking around (same URL, different state) can't be loaded fresh. Scripts are left out, styles kept
+  // (including ones added through the CSSOM, which aren't in the markup), the element is marked.
+  function snapshotHtml(el) {
+    el.setAttribute("data-uit-target", "");
+    // Typed values live in properties, not attributes: copy them over so the snapshot shows them.
+    const fields = [...document.querySelectorAll("input, textarea, select")];
+    const saved = fields.map((f) => [f, f.getAttribute("value"), f.getAttribute("checked")]);
+    for (const f of fields) {
+      if (f.type === "checkbox" || f.type === "radio") f.checked ? f.setAttribute("checked", "") : f.removeAttribute("checked");
+      else if (f.tagName !== "SELECT" && f.type !== "file" && f.type !== "password") f.setAttribute("value", f.value);
+    }
+    const clone = document.documentElement.cloneNode(true);
+    el.removeAttribute("data-uit-target");
+    for (const [f, v, c] of saved) { v === null ? f.removeAttribute("value") : f.setAttribute("value", v); if (f.type === "checkbox" || f.type === "radio") c === null ? f.removeAttribute("checked") : f.setAttribute("checked", c); }
+    for (const n of clone.querySelectorAll("script, noscript, ui-tweaks-overlay, iframe")) n.remove();
+    const head = clone.querySelector("head") || clone;
+    const extra = [];
+    for (const sheet of document.styleSheets) {
+      try {
+        const node = sheet.ownerNode;
+        if (node && node.tagName === "STYLE" && !node.textContent.trim() && sheet.cssRules.length) extra.push([...sheet.cssRules].map((r) => r.cssText).join("\n"));
+      } catch {}
+    }
+    if (extra.length) head.insertAdjacentHTML("beforeend", "<style>" + extra.join("\n").replace(/<\/style/gi, "<\\/style") + "</style>");
+    head.insertAdjacentHTML("afterbegin", '<base href="' + location.href.replace(/"/g, "&quot;") + '">');
+    return "<!doctype html>\n" + clone.outerHTML;
+  }
+
   async function ask(kind, el, instruction) {
     try {
       const body = { kind, instruction, element: el ? describe(el) : null, page: { url: here(), path: location.pathname }, context: kind === "variations" && el ? subtreeContext(el) : null, count: 3 };
@@ -3444,7 +3473,13 @@
       const board = kind === "variations" && el && STUDIO && STUDIO.__studio && STUDIO.__studio.explore;
       if (board) {
         const d = describe(el);
-        STUDIO.__studio.explore({ askId: out.ask.id, instruction, selector: body.element.selector, label: (d.react && d.react.components && d.react.components[0] ? d.react.components[0].name + " · " : "") + (d.classes[0] ? "." + d.classes[0] : d.tag), element: body.element, page: body.page, context: body.context, url: here() });
+        // The board shows the screen as it is now (a snapshot); without one it falls back to a fresh load.
+        let snapshot = null;
+        try {
+          const snap = await fetch(API + "/snapshots", { method: "POST", headers: { "Content-Type": "text/html" }, body: snapshotHtml(el) });
+          if (snap.ok) snapshot = (await snap.json()).url;
+        } catch {}
+        STUDIO.__studio.explore({ askId: out.ask.id, instruction, snapshot, selector: body.element.selector, label: (d.react && d.react.components && d.react.components[0] ? d.react.components[0].name + " · " : "") + (d.classes[0] ? "." + d.classes[0] : d.tag), element: body.element, page: body.page, context: body.context, url: here() });
       } else {
         state.asks = [...(state.asks || []), { id: out.ask.id, kind, instruction, status: "waiting", page: here(), selector: body.element && body.element.selector }];
       }

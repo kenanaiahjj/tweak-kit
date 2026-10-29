@@ -809,7 +809,7 @@ export function studioPage(appPath) {
       // The same element on the same screen again: carry on in its exploration, with the new batch added.
       const earlier = loadExplorations().find((x) => x.selector === req.selector && x.url === req.url);
       if (earlier) {
-        openExploration({ ...earlier, context: req.context || earlier.context, element: req.element || earlier.element, size: a ? size(a) : earlier.size, asks: [...(earlier.asks || []), ...(req.askId ? [fresh] : [])] });
+        openExploration({ ...earlier, snapshot: req.snapshot || earlier.snapshot, context: req.context || earlier.context, element: req.element || earlier.element, size: a ? size(a) : earlier.size, asks: [...(earlier.asks || []), ...(req.askId ? [fresh] : [])] });
       } else {
         const { askId, ...rest } = req;
         openExploration({ ...rest, sid: "x" + Date.now().toString(36), size: a ? size(a) : [393, 852], asks: askId ? [fresh] : [] });
@@ -1452,13 +1452,13 @@ export function studioPage(appPath) {
     frame.addEventListener("load", async () => {
       let doc, el = null;
       for (let i = 0; i < 40 && !el; i++) {
-        try { doc = frame.contentDocument; el = doc && doc.querySelector(r.selector); } catch { return msg("Can't show this screen here."); }
+        try { doc = frame.contentDocument; el = doc && doc.querySelector(r.snapshot ? "[data-uit-target]" : r.selector); } catch { return msg("Can't show this screen here."); }
         if (!el) await sleep(150);
       }
-      if (!el) return msg("This element isn't on a fresh load of the screen.");
+      if (!el) return msg(r.snapshot ? "The snapshot of this screen is gone; explore the element again." : "This element isn't on a fresh load of the screen (it was reached by clicking around). Explore it again to show it as it is now.");
       // Styles go on the element as it is now, and again whenever the app re-renders it into a new one.
       const put = () => {
-        el = doc.querySelector(r.selector) || el;
+        el = doc.querySelector(r.snapshot ? "[data-uit-target]" : r.selector) || el;
         for (const c of changes || []) {
           let node = null;
           try { node = c.target === ":scope" ? el : el.querySelector(c.target); } catch {}
@@ -1466,7 +1466,7 @@ export function studioPage(appPath) {
         }
       };
       put();
-      const watch = new frame.contentWindow.MutationObserver(() => { if (doc.querySelector(r.selector) !== el) put(); });
+      const watch = new frame.contentWindow.MutationObserver(() => { if (doc.querySelector(r.snapshot ? "[data-uit-target]" : r.selector) !== el) put(); });
       watch.observe(doc.body, { childList: true, subtree: true });
       setTimeout(() => watch.disconnect(), 8000);
       // Let it lay out and settle: entrance animations finish (endless ones are left running), fonts load.
@@ -1503,7 +1503,7 @@ export function studioPage(appPath) {
     view.style.width = Math.min(EX_MAX, w) + "px";
     view.style.height = "120px";
     view.append(frame);
-    frame.src = r.url;
+    frame.src = r.snapshot || r.url;
   }
   function exCard(kind, v, a) {
     const card = document.createElement("div");
@@ -2127,6 +2127,23 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
         const summary = await scanBreakpoints(root);
         const width = Number(url.searchParams.get("width"));
         return send(res, 200, { ...summary, scope: width > 0 ? scopeFor(summary, width) : null });
+      }
+      // Snapshots of a screen as it was, for the Explore board's cards (kept: the last 40).
+      if (url.pathname === `${PREFIX}/snapshots` && req.method === "POST") {
+        const html = await readBody(req, 30_000_000);
+        const dir = path.join(tweaksDir(root), "snapshots");
+        await fs.mkdir(dir, { recursive: true });
+        const id = `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+        await fs.writeFile(path.join(dir, `${id}.html`), html);
+        const old = (await fs.readdir(dir)).filter((n) => n.endsWith(".html")).sort();
+        for (const n of old.slice(0, Math.max(0, old.length - 40))) await fs.rm(path.join(dir, n), { force: true });
+        return send(res, 200, { url: `${PREFIX}/snapshots/${id}.html` });
+      }
+      if (url.pathname.startsWith(`${PREFIX}/snapshots/`) && req.method === "GET") {
+        const name = url.pathname.slice(`${PREFIX}/snapshots/`.length);
+        if (!/^s[a-z0-9]+\.html$/.test(name)) return send(res, 404, { error: "No such snapshot" });
+        const html = await fs.readFile(path.join(tweaksDir(root), "snapshots", name), "utf8").catch(() => null);
+        return html === null ? send(res, 404, { error: "That snapshot is gone" }) : send(res, 200, html, "text/html; charset=utf-8");
       }
       // Review pages: the studio sends every screen's capture, the server writes one shareable HTML file.
       if (url.pathname === `${PREFIX}/review` && req.method === "POST") {

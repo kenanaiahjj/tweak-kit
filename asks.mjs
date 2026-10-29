@@ -29,11 +29,13 @@ export async function addAsk(root, body) {
   const ask = {
     id: `ask${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
     kind,
-    instruction: instruction.slice(0, 4000),
+    instruction: instruction.slice(0, 24000), // a layout variation to build carries its markup
     element: body.element || null,
     page: body.page || null,
     context: body.context || null, // for variations: the element's subtree and current styles
     count: Math.min(4, Math.max(1, Number(body.count) || 2)),
+    // For variations: style changes only, rebuilt layouts only, or either.
+    ...(kind === "variations" && ["styles", "layout"].includes(body.mode) ? { mode: body.mode } : {}),
     ...(kind === "publish" ? { file: body.file, title: String(body.title || "Design review").slice(0, 120) } : {}),
     // Reference images attached in the panel (files the dev server saved in .ui-tweaks/refs).
     ...(Array.isArray(body.refs) && body.refs.length ? { refs: body.refs.filter((r) => /^\.ui-tweaks\/refs\/r[a-z0-9]+\.(png|jpg|webp|gif)$/.test(String(r))).slice(0, 6) } : {}),

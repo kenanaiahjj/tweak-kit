@@ -185,17 +185,18 @@ const DESIGNER_PROMPT = `You are a product designer who writes production code. 
 
 End with exactly one line of JSON and nothing after it: {"summary":"<one sentence: what changed>","needs":"<your question, only if you made no edits>"}`
 
-const VARIATIONS_PROMPT = `You are a visual designer exploring alternatives for one element of a running web app. You get its subtree with the current computed styles (each node has a "target": ":scope" is the element itself, others are selectors relative to it), the project's design tokens, the screen width, and maybe a direction from the user. Propose distinct, polished visual variations made of CSS changes only (no new elements).
+const VARIATIONS_PROMPT = `You are a visual designer exploring alternatives for one element of a running web app. You get its subtree with the current computed styles (each node has a "target": ":scope" is the element itself, others are selectors relative to it), its current markup ("html"), the project's design tokens, the screen width, and maybe a direction from the user. Propose distinct, polished variations of two kinds:
 
-- Each variation is a different idea (hierarchy, density, emphasis, shape, colour), not the same idea three times, and fits the app: prefer var(--token) values that exist.
-- Change only the targets given, with standard CSS properties and valid values; at most 14 changes per variation.
-- Keep text readable (contrast) and the layout intact at the given width.
-- You may Read the source files named in the request to understand the component. Do not edit anything.
+- Style variations: CSS changes only, on the targets given ("changes"). Standard properties, valid values, at most 14 changes.
+- Layout variations: the element rebuilt ("html"): its new outerHTML, with the content rearranged, regrouped, reordered or given a different structure (e.g. a stacked card becomes a row with the image beside the text, a list becomes a grid, actions move into a footer). Keep all of its real content and its existing classes where they still fit; style new wrappers with existing classes or inline style attributes (prefer var(--token) values). No scripts, no event handlers, no iframes, no images or URLs that aren't already in it. One root element. Add "changes" too if you need them (targets relative to the new root).
+
+The request says which kinds to make ("Kinds"). Each variation is a different idea (hierarchy, density, emphasis, arrangement, shape, colour), not the same idea twice, and fits the app: prefer var(--token) values that exist. Keep text readable (contrast) and the result working at the given width.
+You may Read the source files named in the request to understand the component. Do not edit anything.
 
 Answer with exactly one line of JSON and nothing after it:
-{"variants":[{"name":"<2-4 words>","why":"<one sentence>","changes":[{"target":":scope","prop":"padding","value":"16px 20px"}]}]}`
+{"variants":[{"name":"<2-4 words>","why":"<one sentence>","changes":[{"target":":scope","prop":"padding","value":"16px 20px"}]},{"name":"<2-4 words>","why":"<one sentence>","html":"<div class=\\"card\\">…</div>","changes":[]}]}`
 
-type Ask = { id: string; kind: 'edit' | 'variations' | 'publish'; instruction: string; file?: string; title?: string; refs?: string[]; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
+type Ask = { id: string; kind: 'edit' | 'variations' | 'publish'; instruction: string; file?: string; title?: string; refs?: string[]; mode?: 'any' | 'styles' | 'layout'; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
 type AskOutcome = { status: 'running' | 'done' | 'failed'; startedAt?: number; summary?: string; needs?: string; files?: string[]; variants?: unknown[]; error?: string }
 
 /** The last line of an answer that parses as a JSON object. */
@@ -213,19 +214,32 @@ export function lastJson(answer: string): Record<string, unknown> | null {
 }
 
 /** Variants as the panel can preview them: named, with changes of a target, a property and a value. */
-export function cleanVariants(raw: unknown, max = 4): { name: string; why: string; changes: { target: string; prop: string; value: string }[] }[] {
+// A layout variation's markup, made safe to put on a page: no scripts, frames, handlers or script URLs.
+export function cleanMarkup(html: unknown): string | undefined {
+  if (typeof html !== 'string') return undefined
+  const out = html
+    .replace(/<(script|style|iframe|object|embed|form|noscript|template)\b[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/<\/?(script|style|iframe|object|embed|link|meta|base|form|noscript|template)\b[^>]*>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/(href|src|action|formaction|xlink:href)\s*=\s*("|')\s*javascript:[^"']*\2/gi, '')
+    .trim()
+  return /^<[a-z]/i.test(out) && out.length <= 20000 ? out : undefined
+}
+
+export function cleanVariants(raw: unknown, max = 4): { name: string; why: string; changes: { target: string; prop: string; value: string }[]; html?: string }[] {
   if (!Array.isArray(raw)) return []
   return raw
     .map(v => {
-      const o = (v ?? {}) as { name?: unknown; why?: unknown; changes?: unknown }
+      const o = (v ?? {}) as { name?: unknown; why?: unknown; changes?: unknown; html?: unknown }
       const changes = (Array.isArray(o.changes) ? o.changes : [])
         .map(c => c as { target?: unknown; prop?: unknown; value?: unknown })
         .filter(c => typeof c.prop === 'string' && /^-?[a-z][a-z-]*$/.test(c.prop) && typeof c.value === 'string' && !/[;{}]/.test(c.value))
         .map(c => ({ target: typeof c.target === 'string' && c.target.trim() ? c.target.trim() : ':scope', prop: c.prop as string, value: (c.value as string).trim() }))
         .slice(0, 20)
-      return { name: String(o.name ?? 'Variation').slice(0, 40), why: String(o.why ?? '').slice(0, 200), changes }
+      const html = cleanMarkup(o.html)
+      return { name: String(o.name ?? 'Variation').slice(0, 40), why: String(o.why ?? '').slice(0, 200), changes, ...(html ? { html } : {}) }
     })
-    .filter(v => v.changes.length > 0)
+    .filter(v => v.changes.length > 0 || v.html)
     .slice(0, max)
 }
 
@@ -243,6 +257,7 @@ export function askPrompt(ask: Ask, root: string | null, skills: DesignSkill[] =
   return [
     // Two by default; the person's direction can ask for another number ("give me 4", "just one").
     `Propose ${ask.count ?? 2} variation${(ask.count ?? 2) === 1 ? '' : 's'}, unless the direction asks for a different number (then that many, at most 4).${ask.instruction ? ` Direction: ${ask.instruction}` : ''}`,
+    `Kinds: ${ask.mode === 'styles' ? 'style variations only' : ask.mode === 'layout' ? 'layout variations only (each one rebuilds the markup)' : 'style or layout, whichever serves the direction; unless it is clearly about colour or type alone, make at least one a layout variation'}.`,
     `Screen: ${ask.page?.url ?? '?'}`,
     `Element: ${JSON.stringify(ask.element ?? {})}`,
     `Subtree, tokens and width: ${JSON.stringify(ask.context ?? {})}`,
@@ -905,7 +920,7 @@ async function registerApplier($: EngineInterface) {
   })
   await $.agent.register({
     name: 'variations',
-    description: 'Proposes visual variations of an element as CSS changes',
+    description: 'Proposes variations of an element: CSS changes or a rebuilt layout',
     prompt: VARIATIONS_PROMPT,
     model: 'sonnet',
     tools: ['Read', 'Grep', 'Glob'],

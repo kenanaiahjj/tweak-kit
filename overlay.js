@@ -30,6 +30,144 @@
       return null;
     }
   })();
+  // ---------- light / dark preview ----------
+  // In the studio, the screens can be shown light or dark whatever the system is set to: prefers-color-scheme
+  // rules are rewritten to always or never apply, matchMedia answers to match (apps that read it in script),
+  // color-scheme is set (light-dark() and form controls follow it), and the theme classes or attributes the
+  // project's tokens are keyed on (.dark, .light-theme, [data-theme]) are put on or taken off.
+  const SCHEME_KEY = "ui-tweaks:studio-scheme";
+  let forcedScheme = null; // null (as the system is), "light" or "dark"
+  try { if (STUDIO) forcedScheme = /^(light|dark)$/.test(STUDIO.localStorage.getItem(SCHEME_KEY)) ? STUDIO.localStorage.getItem(SCHEME_KEY) : null; } catch {}
+  const schemeQueries = new Map(); // query -> the one matchMedia list handed out for it (prefers-color-scheme)
+  if (STUDIO) {
+    const realMatchMedia = window.matchMedia.bind(window);
+    window.matchMedia = (query) => {
+      const m = /prefers-color-scheme:\s*(dark|light)/i.exec(String(query));
+      if (!m) return realMatchMedia(query);
+      // One per query: apps (and the kit) ask again and again, and each would otherwise keep a listener.
+      if (schemeQueries.has(String(query))) return schemeQueries.get(String(query));
+      const list = realMatchMedia(query);
+      const listeners = new Set();
+      let onchange = null;
+      const forced = {
+        get media() { return list.media; },
+        get matches() { return forcedScheme ? forcedScheme === m[1].toLowerCase() : list.matches; },
+        get onchange() { return onchange; },
+        set onchange(f) { onchange = f; },
+        addEventListener: (type, f) => type === "change" && listeners.add(f),
+        removeEventListener: (type, f) => listeners.delete(f),
+        addListener: (f) => listeners.add(f),
+        removeListener: (f) => listeners.delete(f),
+        dispatchEvent: () => true,
+        fire() {
+          const e = { matches: forced.matches, media: list.media };
+          for (const f of [...listeners, onchange].filter(Boolean)) try { typeof f === "function" ? f.call(forced, e) : f.handleEvent && f.handleEvent(e); } catch {}
+        },
+      };
+      list.addEventListener("change", () => !forcedScheme && forced.fire());
+      schemeQueries.set(String(query), forced);
+      return forced;
+    };
+  }
+  const schemeMedia = new WeakMap(); // CSSMediaRule -> its own media text
+  function schemeRules(list, out) {
+    for (const r of list) {
+      if (r.media && r.cssRules) {
+        const text = schemeMedia.has(r) ? schemeMedia.get(r) : r.media.mediaText;
+        if (/prefers-color-scheme/i.test(text)) out.push([r, text]);
+      }
+      if (r.cssRules) try { schemeRules(r.cssRules, out); } catch {}
+    }
+  }
+  let themeHooks = null; // [{ host, cls?, attr?, value?, kind }] from the token modes
+  const themeOriginal = new Map(); // element -> its class and theme attributes before forcing
+  function loadThemeHooks() {
+    if (themeHooks) return;
+    themeHooks = [];
+    fetch(API + "/tokens", { cache: "no-store" }).then((r) => r.json()).then(({ modes = [] }) => {
+      const hooks = [];
+      for (const { key } of modes) {
+        const sel = key.split(" › ").pop();
+        for (const part of sel.split(",").map((x) => x.trim())) {
+          let m;
+          // .x:not(.light-theme) is the dark mode: the class is light-theme's, on when light.
+          if ((m = /^(.*?):not\(\.([\w-]*(dark|light)[\w-]*)\)$/i.exec(part))) hooks.push({ host: m[1], cls: m[2], kind: m[3].toLowerCase() });
+          else if ((m = /^(.*?)\.([\w-]*(dark|light)[\w-]*)$/i.exec(part))) hooks.push({ host: m[1], cls: m[2], kind: m[3].toLowerCase() });
+          else if ((m = /^(.*?)\[([\w-]+)=["']?([\w-]*(dark|light)[\w-]*)["']?\]$/i.exec(part))) hooks.push({ host: m[1], attr: m[2], value: m[3], kind: m[4].toLowerCase() });
+        }
+      }
+      const seen = new Set();
+      themeHooks = hooks.filter((h) => { const k = JSON.stringify(h); return !seen.has(k) && seen.add(k); });
+      // The watcher's attribute list is made from the hooks: start it again now they're known.
+      if (themeWatch) { themeWatch.disconnect(); themeWatch = null; }
+      applyScheme();
+    }).catch(() => {});
+  }
+  const hostsOf = (h) => { try { return h.host ? [...document.querySelectorAll(h.host)] : [document.documentElement]; } catch { return []; } };
+  function applyThemeHooks() {
+    for (const h of themeHooks || []) {
+      for (const el of hostsOf(h)) {
+        // What the theme classes and attributes were, so going back to the system's puts just those back.
+        if (!themeOriginal.has(el)) themeOriginal.set(el, { classes: Object.fromEntries((themeHooks || []).filter((x) => x.cls).map((x) => [x.cls, el.classList.contains(x.cls)])), attrs: Object.fromEntries((themeHooks || []).filter((x) => x.attr).map((x) => [x.attr, el.getAttribute(x.attr)])) });
+        if (h.cls) {
+          const on = forcedScheme === h.kind;
+          if (el.classList.contains(h.cls) !== on) el.classList.toggle(h.cls, on);
+        } else if (h.attr) {
+          // [data-theme="dark"]: the forced kind's value, or (no hook for it) the attribute off.
+          const want = (themeHooks.find((x) => x.attr === h.attr && x.host === h.host && x.kind === forcedScheme) || {}).value;
+          if (want === undefined ? el.hasAttribute(h.attr) : el.getAttribute(h.attr) !== want) want === undefined ? el.removeAttribute(h.attr) : el.setAttribute(h.attr, want);
+        }
+      }
+    }
+  }
+  let themeWatch = null, themeQueued = false;
+  function applyScheme() {
+    if (!STUDIO) return;
+    for (const sheet of document.styleSheets) {
+      const found = [];
+      try { schemeRules(sheet.cssRules, found); } catch { continue; }
+      for (const [rule, text] of found) {
+        if (!schemeMedia.has(rule)) schemeMedia.set(rule, text);
+        // A 0px-wide viewport never happens, any width always does: the rule always or never applies.
+        const next = forcedScheme ? text.replace(/\(\s*prefers-color-scheme\s*:\s*(dark|light)\s*\)/gi, (_, s) => (s.toLowerCase() === forcedScheme ? "(min-width: 0px)" : "(max-width: 0px)")) : text;
+        if (rule.media.mediaText !== next) rule.media.mediaText = next;
+      }
+    }
+    document.documentElement.style.colorScheme = forcedScheme || "";
+    if (forcedScheme) {
+      loadThemeHooks();
+      applyThemeHooks();
+      // The app may put its own theme back when it re-renders: keep the preview's on top.
+      if (!themeWatch) {
+        themeWatch = new MutationObserver(() => {
+          if (themeQueued || !forcedScheme) return;
+          themeQueued = true;
+          requestAnimationFrame(() => { themeQueued = false; applyThemeHooks(); });
+        });
+        themeWatch.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ["class", ...new Set((themeHooks || []).filter((h) => h.attr).map((h) => h.attr))] });
+      }
+    } else {
+      if (themeWatch) { themeWatch.disconnect(); themeWatch = null; }
+      for (const [el, o] of themeOriginal) {
+        for (const [c, on] of Object.entries(o.classes)) el.classList.toggle(c, on);
+        for (const [a, v] of Object.entries(o.attrs)) v === null ? el.removeAttribute(a) : el.setAttribute(a, v);
+      }
+      themeOriginal.clear();
+    }
+  }
+  function setScheme(scheme) {
+    forcedScheme = scheme === "light" || scheme === "dark" ? scheme : null;
+    applyScheme();
+    for (const q of schemeQueries.values()) q.fire();
+    sheetVersion++; // the rule lookups were cached under the other scheme
+  }
+  if (STUDIO && forcedScheme) {
+    // Before the app's own scripts run: they may read the theme once, at start.
+    applyScheme();
+    document.addEventListener("DOMContentLoaded", applyScheme);
+    addEventListener("load", applyScheme);
+  }
+
   // In the studio, start in its Inspect / Interact mode.
   try { if (STUDIO && STUDIO.__studio && STUDIO.__studio.mode && STUDIO.__studio.mode() === "interact") queueMicrotask(() => { state.isPicking = false; }); } catch {}
   // With several devices in the studio, each frame runs an overlay; the one whose panel is docked owns it.
@@ -289,7 +427,8 @@
       if (rule.selectorText !== undefined && rule.style) {
         out.push({ rule, sheet, conditions });
       } else if (rule.cssRules) {
-        const cond = rule.conditionText || rule.media?.mediaText || (rule.name ? `@layer ${rule.name}` : "");
+        // A rule the light / dark preview rewrote keeps its own condition (that's what's in the source).
+        const cond = (schemeMedia.has(rule) && schemeMedia.get(rule)) || rule.conditionText || rule.media?.mediaText || (rule.name ? `@layer ${rule.name}` : "");
         collectRules(rule.cssRules, sheet, cond ? [...conditions, cond] : conditions, out);
       }
     }
@@ -306,9 +445,16 @@
   const ourSheet = (n) => n && (n.id === STATE_SHEET_ID || n.id === "ui-tweaks-reach" || (n.parentNode && (n.parentNode.id === STATE_SHEET_ID || n.parentNode.id === "ui-tweaks-reach")));
   new MutationObserver((muts) => {
     const theirs = (m) => !ourSheet(m.target) && (m.type !== "childList" || [...m.addedNodes, ...m.removedNodes].some((n) => !ourSheet(n)));
-    if (muts.some(theirs)) sheetVersion++;
+    if (muts.some(theirs)) {
+      sheetVersion++;
+      if (forcedScheme) applyScheme(); // new or reloaded stylesheets (HMR) get the preview too
+    }
   }).observe(document.head, { childList: true, subtree: true, characterData: true });
-  document.addEventListener("load", (e) => e.target && e.target.tagName === "LINK" && sheetVersion++, true);
+  document.addEventListener("load", (e) => {
+    if (!e.target || e.target.tagName !== "LINK") return;
+    sheetVersion++;
+    if (forcedScheme) applyScheme();
+  }, true);
 
   let flat = null, flatVersion = -1;
   function flatRules() {
@@ -1505,6 +1651,24 @@
     .sp-handle.h { width: 18px; height: 5px; margin: -2.5px 0 0 -9px; cursor: ns-resize; }
     .sp-handle.v { width: 5px; height: 18px; margin: -9px 0 0 -2.5px; cursor: ew-resize; }
     .off-token .btn { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
+    .ck-pin { position: fixed; pointer-events: auto; min-width: 18px; height: 18px; margin: -9px 0 0 -9px; padding: 0 4px; border-radius: 9px; color: #fff; font: 700 10px/18px system-ui, -apple-system, sans-serif; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.4), 0 0 0 1.5px #fff; cursor: pointer; z-index: 2; }
+    .ck-pin.ck-bad { background: #e5484d; }
+    .ck-pin.ck-warn { background: #d97706; }
+    .ck-pin:hover, .ck-pin.on { transform: scale(1.2); z-index: 3; }
+    .ck-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .ck-fix { width: 100%; margin: 8px 0 4px; }
+    .ck-list { display: grid; gap: 2px; margin-top: 6px; }
+    .ck-row { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 8px; cursor: pointer; }
+    .ck-row:hover, .ck-row.on { background: var(--hover); }
+    .ck-row.gone { opacity: .45; }
+    .ck-row .btn { flex: none; }
+    .ck-n { flex: none; min-width: 18px; height: 18px; border-radius: 9px; color: #fff; font: 700 10px/18px system-ui, -apple-system, sans-serif; text-align: center; }
+    .ck-n.ck-bad { background: #e5484d; }
+    .ck-n.ck-warn { background: #d97706; }
+    .ck-text { flex: 1; min-width: 0; display: grid; }
+    .ck-text b { font-weight: 600; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ck-text span { color: var(--dim); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ck-back { display: block; width: 100%; margin-bottom: 8px; padding: 6px 8px; border: 0; border-radius: 8px; background: rgba(229,72,77,.12); color: var(--text); font: 500 11.5px system-ui, -apple-system, sans-serif; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .cm-pin { position: fixed; pointer-events: auto; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 12px 12px 12px 2px; background: #ffb020; color: #1a1a1a; font: 700 11px/24px system-ui, -apple-system, sans-serif; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,.35), 0 0 0 2px #fff; cursor: pointer; z-index: 2; }
     .cm-pin:hover, .cm-pin.on { transform: scale(1.12); }
     .cm-bubble { position: fixed; pointer-events: auto; width: 260px; display: grid; gap: 8px; padding: 10px; border-radius: 12px; background: var(--bg); color: var(--text); box-shadow: 0 8px 32px rgba(0,0,0,.45), 0 0 0 1px var(--line); z-index: 3; font: 12px/1.45 system-ui, -apple-system, sans-serif; }
@@ -1770,7 +1934,7 @@
   <div class="pad p-t hidden"></div><div class="pad p-r hidden"></div><div class="pad p-b hidden"></div><div class="pad p-l hidden"></div>
   <div class="sel-box hidden"></div>
   <div class="tag hidden"></div>
-  <div class="multi-layer"></div><div class="sp-layer"></div><div class="cm-layer"></div><div class="cm-bubble hidden"></div>
+  <div class="multi-layer"></div><div class="sp-layer"></div><div class="cm-layer"></div><div class="cm-bubble hidden"></div><div class="ck-layer"></div>
   <div class="drag-ghost hidden"></div><div class="drop-line hidden"></div><div class="guide gv hidden"></div><div class="guide gh hidden"></div><div class="drag-tip hidden"></div>
   ${["nw", "n", "ne", "e", "se", "s", "sw", "w"].map((d) => `<div class="handle hidden" data-dir="${d}"></div>`).join("")}
   <div class="measure hidden"></div><div class="measure hidden"></div><div class="measure hidden"></div><div class="measure hidden"></div>
@@ -1915,6 +2079,7 @@
     if (active || !drawnIdle) time(stats.draw, drawBoxes);
     drawnIdle = !active;
     if (state.showComments || pinsDrawn || bubble.id) drawPins();
+    if (state.showCheck || checkPinsDrawn) { drawCheckPins(); checkPinsDrawn = !!state.showCheck; }
     requestAnimationFrame(loop);
   });
 
@@ -2086,19 +2251,25 @@
     return { colors: [layers.reduceRight((acc, l) => over(l, acc), base)] };
   }
 
-  function contrastRow(el) {
-    const row = document.createElement("div");
-    row.className = "contrast";
+  // The text's contrast with what's behind it: null over an image or video.
+  function contrastOf(el) {
     const { colors, isImage, isGradient } = backdrops(el);
-    if (isImage || !colors.length) {
-      row.textContent = "Contrast: can't measure over an image";
-      return row;
-    }
+    if (isImage || !colors.length) return null;
     const fg = rgbaOf(computed(el, "color"));
     const value = Math.min(...colors.map((bg) => ratio(fg.a < 1 ? over(fg, bg) : { ...fg, a: 1 }, bg)));
     const size = parseFloat(computed(el, "font-size"));
     const isLarge = size >= 24 || (size >= 18.66 && parseInt(computed(el, "font-weight"), 10) >= 700);
-    const aa = value >= (isLarge ? 3 : 4.5), aaa = value >= (isLarge ? 4.5 : 7);
+    return { value, isLarge, isGradient, aa: value >= (isLarge ? 3 : 4.5), aaa: value >= (isLarge ? 4.5 : 7) };
+  }
+  function contrastRow(el) {
+    const row = document.createElement("div");
+    row.className = "contrast";
+    const c = contrastOf(el);
+    if (!c) {
+      row.textContent = "Contrast: can't measure over an image";
+      return row;
+    }
+    const { value, isLarge, isGradient, aa, aaa } = c;
     row.innerHTML = `Contrast <b>${value.toFixed(2)}:1</b>${isGradient ? " (lowest over the gradient)" : ""}
       <span class="${aa ? "ok" : "no"}">AA ${aa ? "✓" : "✗"}</span><span class="${aaa ? "ok" : "no"}">AAA ${aaa ? "✓" : "✗"}</span>`;
     row.title = isLarge ? "Large text: AA needs 3:1, AAA 4.5:1" : "Body text: AA needs 4.5:1, AAA 7:1";
@@ -2118,6 +2289,171 @@
     row.innerHTML = `Tap target <b>${w}×${h}</b> <span class="${ok ? "ok" : "no"}">44×44 ${ok ? "✓" : "✗"}</span>`;
     row.title = ok ? "Big enough to hit comfortably on a phone" : "Under 44×44 CSS px: hard to hit on a phone. Grow it, or pad it (padding counts, the visible shape needn't change)";
     return row;
+  }
+
+  // ---------- check this screen ----------
+  // One pass over what's on screen: text contrast, tap targets, missing labels and hand-written values a
+  // token could hold. Each finding is pinned on the page and listed in the panel; a click selects it.
+  const CHECK_KINDS = { contrast: "Contrast", tap: "Tap targets", label: "Labels", token: "Off-token values" };
+  const shownEl = (el) => {
+    if (!el.getClientRects().length) return false;
+    const cs = getComputedStyle(el);
+    if (cs.visibility === "hidden" || parseFloat(cs.opacity) === 0) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < Math.max(innerHeight, document.documentElement.scrollHeight) && r.left < innerWidth;
+  };
+  const ownText = (el) => [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+  const accessibleName = (el) => {
+    if ((el.getAttribute("aria-label") || "").trim() || el.getAttribute("aria-labelledby") || (el.getAttribute("title") || "").trim()) return true;
+    if ((el.innerText || el.textContent || "").trim()) return true;
+    return [...el.querySelectorAll("img[alt], svg[aria-label], [aria-label]")].some((n) => (n.getAttribute("alt") || n.getAttribute("aria-label") || "").trim());
+  };
+  const labelled = (el) => {
+    if ((el.getAttribute("aria-label") || "").trim() || el.getAttribute("aria-labelledby") || el.closest("label")) return true;
+    try { return !!(el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`)); } catch { return false; }
+  };
+  const nameOf = (el) => {
+    const d = describe(el);
+    const cls = d.classes.find((c) => !/--t[0-9a-z]{4}$/.test(c));
+    return (cls ? `${d.tag}.${cls}` : d.tag) + (d.text ? ` “${d.text.slice(0, 24)}${d.text.length > 24 ? "…" : ""}”` : "");
+  };
+  async function checkScreen() {
+    const issues = [];
+    const all = [...document.body.querySelectorAll("*")].filter((n) => !isOwn(n) && !/^(script|style|template|noscript|link|meta|br|head|title)$/i.test(n.tagName)).slice(0, 2500);
+    const shown = all.filter(shownEl);
+    const phone = innerWidth < 768;
+    for (const el of shown) {
+      if (ownText(el) && !el.closest("svg")) {
+        const c = contrastOf(el);
+        if (c && !c.aa) issues.push({ kind: "contrast", severe: c.value < (c.isLarge ? 2 : 3), el, what: `${c.value.toFixed(2)}:1`, detail: `needs ${c.isLarge ? 3 : 4.5}:1 (AA${c.isLarge ? ", large text" : ""})` });
+      }
+      if (el.matches(INTERACTIVE) && !el.matches('input[type="hidden"]')) {
+        const r = el.getBoundingClientRect();
+        const w = Math.round(r.width), h = Math.round(r.height);
+        if (w < 24 || h < 24) issues.push({ kind: "tap", severe: true, el, what: `${w}×${h}`, detail: "under 24×24, the WCAG minimum" });
+        else if (phone && (w < 44 || h < 44)) issues.push({ kind: "tap", severe: false, el, what: `${w}×${h}`, detail: "under 44×44, hard to hit on a phone" });
+      }
+      if (el.tagName === "IMG" && !el.hasAttribute("alt")) issues.push({ kind: "label", severe: true, el, what: "image without alt", detail: 'add alt text, or alt="" if it is decoration' });
+      else if (el.matches('button, a[href], [role="button"], [role="link"]') && !accessibleName(el)) issues.push({ kind: "label", severe: true, el, what: `${el.tagName === "A" ? "link" : "button"} without a name`, detail: "screen readers announce nothing: add text or aria-label" });
+      else if (el.matches('input:not([type="hidden"]):not([type="submit"]):not([type="button"]), select, textarea') && !labelled(el)) issues.push({ kind: "label", severe: !el.getAttribute("placeholder"), el, what: el.getAttribute("placeholder") ? "placeholder as the only label" : "field without a label", detail: "add a <label> or aria-label" });
+    }
+    // Off-token values on text and controls (the elements people see as the design), grouped per element.
+    const scan = await loadTokenScan();
+    if (scan && scan.tokens && scan.tokens.length) {
+      for (const el of shown.filter((n) => ownText(n) || n.matches(INTERACTIVE)).slice(0, 160)) {
+        const list = offTokens(el, scan);
+        if (list.length) issues.push({ kind: "token", severe: false, el, what: list.map((o) => `${o.props.length > 1 && o.props.every((p) => p.startsWith("padding")) ? "padding" : o.props[0]} ${o.value}`).join(", "), detail: list.map((o) => (o.exact ? `use ${o.token}` : `≈ ${o.token}`)).join(", "), offs: list });
+      }
+    }
+    // Page order, top to bottom.
+    issues.sort((a, b) => a.el.getBoundingClientRect().top - b.el.getBoundingClientRect().top || a.el.getBoundingClientRect().left - b.el.getBoundingClientRect().left);
+    return issues;
+  }
+  let checkPinsDrawn = false;
+  function drawCheckPins() {
+    const list = state.showCheck && state.check && !state.check.running ? state.check.issues.filter((i) => i.el.isConnected && !state.check.hidden.has(i.kind)) : [];
+    reuse(".ck-layer", list.length, "ck-pin").forEach((p, i) => {
+      const it = list[i];
+      const r = it.el.getBoundingClientRect();
+      p.className = "ck-pin " + (it.severe ? "ck-bad" : "ck-warn") + (state.check.focus === it ? " on" : "");
+      p.textContent = String(state.check.issues.indexOf(it) + 1);
+      p.title = `${CHECK_KINDS[it.kind]}: ${it.what} (${it.detail})`;
+      p.style.left = Math.max(10, Math.min(innerWidth - 10, r.left)) + "px";
+      p.style.top = Math.max(10, r.top) + "px";
+      p.onclick = (e) => { e.stopPropagation(); state.check.focus = it; select(it.el); };
+    });
+  }
+  async function runCheck() {
+    if (state.check && state.check.running) return;
+    state.showCheck = true;
+    state.showHistory = false;
+    state.check = { running: true, issues: [], hidden: (state.check && state.check.hidden) || new Set() };
+    if (state.selected) select(null); // the findings list shows with nothing selected
+    else render();
+    try {
+      state.check.issues = await checkScreen();
+    } catch (error) {
+      toast("The check stopped: " + error.message);
+    }
+    state.check.running = false;
+    state.check.at = here();
+    render();
+  }
+  function checkView() {
+    const c = state.check;
+    const box = document.createElement("div");
+    if (!c || c.running) {
+      box.append(lbl("Checking this screen…"));
+      return [section("Check this screen", box)];
+    }
+    const counts = {};
+    for (const i of c.issues) counts[i.kind] = (counts[i.kind] || 0) + 1;
+    const head = document.createElement("div");
+    head.className = "ck-head";
+    head.append(Object.assign(document.createElement("b"), { textContent: c.issues.length ? `${c.issues.length} to look at` : "Nothing found ✓" }));
+    const again = Object.assign(document.createElement("button"), { className: "btn ghost", textContent: "Check again", title: "After changes, or on another screen" });
+    again.addEventListener("click", runCheck);
+    head.append(again);
+    box.append(head);
+    // Kinds as filters: click one to hide its pins and rows.
+    const kinds = document.createElement("div");
+    kinds.className = "crumbs";
+    for (const [k, label] of Object.entries(CHECK_KINDS)) {
+      if (!counts[k]) continue;
+      const b = Object.assign(document.createElement("button"), { textContent: `${label} ${counts[k]}`, title: "Show or hide these" });
+      if (c.hidden.has(k)) b.style.opacity = ".45";
+      b.addEventListener("click", () => { c.hidden.has(k) ? c.hidden.delete(k) : c.hidden.add(k); render(); });
+      kinds.append(b);
+    }
+    box.append(kinds);
+    if (c.at && c.at !== here()) box.append(lbl("This was another screen: check again for this one."));
+    const fixable = c.issues.filter((i) => (i.kind === "label" || i.kind === "contrast") && !c.hidden.has(i.kind) && i.el.isConnected);
+    if (fixable.length) {
+      const fix = Object.assign(document.createElement("button"), { className: "btn primary ck-fix", textContent: `Fix ${fixable.length} with Claude`, title: "Claude fixes the contrast and label findings in the source (Undo apply reverts it)" });
+      fix.addEventListener("click", () => {
+        const lines = fixable.map((i) => {
+          const d = describe(i.el);
+          return `- ${CHECK_KINDS[i.kind]}: ${nameOf(i.el)} ${i.what}, ${i.detail}. Selector: ${d.selector}${d.react && d.react.jsxSource ? `, JSX at ${d.react.jsxSource}` : ""}`;
+        });
+        ask("edit", null, `Fix these accessibility findings from a check of the screen ${here()}, keeping the design's look (for contrast, adjust the colour as little as needed, preferring the project's tokens; for labels, add real text, alt or aria-label that says what it is):\n${lines.join("\n")}`);
+      });
+      box.append(fix);
+    }
+    const rows = document.createElement("div");
+    rows.className = "ck-list";
+    c.issues.forEach((it, n) => {
+      if (c.hidden.has(it.kind)) return;
+      const row = document.createElement("div");
+      row.className = "ck-row" + (c.focus === it ? " on" : "") + (it.el.isConnected ? "" : " gone");
+      const dot = Object.assign(document.createElement("span"), { className: "ck-n " + (it.severe ? "ck-bad" : "ck-warn"), textContent: String(n + 1) });
+      const text = document.createElement("div");
+      text.className = "ck-text";
+      text.append(Object.assign(document.createElement("b"), { textContent: `${CHECK_KINDS[it.kind]} · ${it.what}` }), Object.assign(document.createElement("span"), { textContent: `${nameOf(it.el)} · ${it.detail}` }));
+      row.append(dot, text);
+      if (it.kind === "token") {
+        const use = Object.assign(document.createElement("button"), { className: "btn ghost", textContent: "Use tokens", title: "Set these values to the tokens (nearest ones change the value)" });
+        use.addEventListener("click", (e) => {
+          e.stopPropagation();
+          state.dragStamp = ++stampCounter;
+          for (const o of it.offs) for (const p of o.props) setStyle(it.el, p, `var(${o.token})`, true);
+          state.dragStamp = 0;
+          c.issues = c.issues.filter((x) => x !== it);
+          render();
+          toast("Using tokens: send to write it to the source");
+        });
+        row.append(use);
+      }
+      row.addEventListener("click", () => {
+        if (!it.el.isConnected) return toast("That element isn't on the page any more: check again");
+        c.focus = it;
+        it.el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        state.showCheck = true;
+        select(it.el);
+      });
+      rows.append(row);
+    });
+    box.append(rows);
+    return [section("Check this screen", box)];
   }
 
   // Changes that cannot show, with why: the panel warns as you edit, and Claude gets them too.
@@ -3545,13 +3881,43 @@
     };
     walk(el, ":scope", 0);
     const t = designTokens();
+    const markup = elementMarkup(el);
     const jsx = describe(el).react;
     return {
       width: innerWidth,
       nodes,
       tokens: [...t.colors.slice(0, 40), ...t.lengths.slice(0, 30)].map((x) => `${x.name}: ${x.value}`),
       files: jsx && jsx.jsxSource ? [jsx.jsxSource.replace(/:\d+$/, "")] : [],
+      ...(markup ? { html: markup } : {}),
     };
+  }
+  // The element's markup for layout variations: the kit's own attributes out, long values and icons shortened.
+  function elementMarkup(el) {
+    const clone = el.cloneNode(true);
+    for (const n of [clone, ...clone.querySelectorAll("*")]) {
+      for (const a of [...n.attributes]) {
+        if (/^data-(uit|ui-tweak)/.test(a.name)) n.removeAttribute(a.name);
+        else if (a.value.length > 300) n.setAttribute(a.name, a.value.slice(0, 120) + "…");
+      }
+      if (n.tagName && n.tagName.toLowerCase() === "svg" && n.innerHTML.length > 400) n.innerHTML = "<!-- icon -->";
+    }
+    const html = clone.outerHTML;
+    return html.length <= 12000 ? html : null;
+  }
+  // A layout variation's markup as a node, with anything that could run taken out (the mod cleans it too).
+  function safeMarkup(html, doc = document) {
+    const parsed = new DOMParser().parseFromString("<body>" + html, "text/html");
+    for (const n of parsed.querySelectorAll("script, style, iframe, object, embed, link, meta, base, form, noscript, template")) n.remove();
+    for (const n of parsed.body.querySelectorAll("*")) {
+      for (const a of [...n.attributes]) if (/^on/i.test(a.name) || (/^(href|src|action|formaction|xlink:href)$/i.test(a.name) && /^\s*javascript:/i.test(a.value))) n.removeAttribute(a.name);
+    }
+    const first = parsed.body.firstElementChild;
+    return first ? doc.importNode(first, true) : null;
+  }
+  // Using a layout variation: it changes the markup, so Claude builds it in the component.
+  function buildLayoutAsk(v, el) {
+    const changes = (v.changes || []).map((c) => `${c.target} { ${c.prop}: ${c.value} }`).join("; ");
+    return `Rebuild this element to match the layout variation “${v.name}”${v.why ? ` (${v.why})` : ""}. Make it real in the component: keep its data, props, handlers and existing components (don't hardcode content that comes from data), and match this target markup from a live preview:\n${v.html}${changes ? `\nPlus these styles: ${changes}` : ""}`;
   }
 
   // The screen exactly as it is now, as a static page, for the studio's Explore board: screens reached by
@@ -3691,18 +4057,29 @@
     const root = a.selector && document.querySelector(a.selector);
     if (!root) return toast("That element isn't on this screen any more");
     const undo = [];
+    let base = root, added = null;
+    if (v.html) {
+      // The app's element is hidden, not replaced, so the framework that owns it never notices.
+      added = safeMarkup(v.html);
+      if (!added) return toast("That layout couldn't be shown");
+      undo.push([root, "display", root.style.getPropertyValue("display"), root.style.getPropertyPriority("display")]);
+      root.style.setProperty("display", "none", "important");
+      root.after(added);
+      base = added;
+    }
     for (const c of v.changes) {
       let node = null;
-      try { node = c.target === ":scope" ? root : root.querySelector(c.target); } catch {}
+      try { node = c.target === ":scope" ? base : base.querySelector(c.target); } catch {}
       if (!node) continue;
       undo.push([node, c.prop, node.style.getPropertyValue(c.prop), node.style.getPropertyPriority(c.prop)]);
       node.style.setProperty(c.prop, c.value, "important");
     }
-    state.variantPreview = { id: a.id, name: v.name, undo };
+    state.variantPreview = { id: a.id, name: v.name, undo, added };
   }
   function clearVariantPreview() {
     const p = state.variantPreview;
     if (!p) return;
+    if (p.added) p.added.remove();
     for (const [node, prop, value, priority] of p.undo.reverse()) value ? node.style.setProperty(prop, value, priority) : node.style.removeProperty(prop);
     state.variantPreview = null;
   }
@@ -3711,6 +4088,7 @@
     clearVariantPreview();
     const root = a.selector && document.querySelector(a.selector);
     if (!root) return toast("That element isn't on this screen any more");
+    if (v.html) return ask("edit", root, buildLayoutAsk(v, root));
     state.dragStamp = ++stampCounter;
     let n = 0;
     for (const c of v.changes) {
@@ -3755,8 +4133,8 @@
           row.className = "variant" + (state.variantPreview && state.variantPreview.id === a.id && state.variantPreview.name === v.name ? " on" : "");
           const t = document.createElement("div");
           t.className = "v-text";
-          t.append(Object.assign(document.createElement("b"), { textContent: v.name }), Object.assign(document.createElement("span"), { textContent: v.why }));
-          const use = Object.assign(document.createElement("button"), { textContent: "Use" });
+          t.append(Object.assign(document.createElement("b"), { textContent: v.html ? `${v.name} · layout` : v.name }), Object.assign(document.createElement("span"), { textContent: v.why }));
+          const use = Object.assign(document.createElement("button"), { textContent: v.html ? "Build" : "Use", title: v.html ? "A new layout: Claude builds it in the component" : "Turn it into tweaks, ready to send" });
           use.addEventListener("click", (e) => {
             e.stopPropagation();
             useVariant(a, v);
@@ -3919,6 +4297,7 @@
     });
     for (const [key, b] of Object.entries(BASICS)) add(`Insert ${b.label.toLowerCase()}`, "click to place", () => armInsert({ label: b.label.toLowerCase(), basic: key }));
     add("History", "🕘", () => { state.showHistory = true; render(); });
+    add("Check this screen", "✓", runCheck);
     add("Undo", "⌘Z", undoPreview);
     add("Redo", "⌘⇧Z", redoPreview);
     add("Send to Claude", "", () => { const b = [...panel.querySelectorAll(".foot button")].find((x) => /Send/.test(x.textContent)); b && b.click(); });
@@ -4068,9 +4447,19 @@
     hist.title = "History: this session's edits (rewind to any step) and what was applied to the source";
     hist.addEventListener("click", () => {
       state.showHistory = !state.showHistory;
+      if (state.showHistory) state.showCheck = false;
       render();
     });
-    bar.append(title, undo, redo, hist, ins, system, pick, pop, close);
+    const chk = document.createElement("button");
+    chk.className = "icon" + (state.showCheck ? " on" : "");
+    chk.textContent = "✓";
+    chk.title = "Check this screen: contrast, tap targets, labels and off-token values, pinned on the page";
+    chk.addEventListener("click", () => {
+      if (state.showCheck) { state.showCheck = false; render(); } else runCheck();
+    });
+    bar.append(title, undo, redo, hist, chk, ins, system, pick, pop, close);
+    // A narrow panel has no room for the title: drop it rather than show "T…".
+    requestAnimationFrame(() => { if (title.isConnected && title.scrollWidth > title.clientWidth + 1) title.style.visibility = "hidden"; });
     panel.append(bar);
 
     const scroll = document.createElement("div");
@@ -4080,6 +4469,8 @@
 
     if (state.showHistory) {
       scroll.append(...historyView());
+    } else if (state.showCheck && (!el || !el.isConnected)) {
+      scroll.append(...checkView());
     } else if (!el || !el.isConnected) {
       const empty = document.createElement("div");
       empty.className = "empty";
@@ -4089,6 +4480,14 @@
       scroll.append(askSection(null));
     } else {
       if (state.showInsert) scroll.append(insertSection());
+      if (state.showCheck && state.check && !state.check.running) {
+        const back = Object.assign(document.createElement("button"), { className: "ck-back", textContent: `‹ Check: ${state.check.issues.length} to look at` });
+        const f = state.check.focus;
+        if (f && f.el === el) back.textContent += ` · ${CHECK_KINDS[f.kind]}: ${f.what}`;
+        back.title = "Back to the list (Esc)";
+        back.addEventListener("click", () => select(null));
+        scroll.append(back);
+      }
       const info = describe(el);
       const cs = getComputedStyle(el);
       const head = document.createElement("div");
@@ -4912,7 +5311,7 @@
     if (STUDIO) return; // docked: the panel stays; Exit (⇱ or ✕) leaves the studio
     if (!open && state.popup) return dock(false);
     state.isOpen = open;
-    if (!open) state.hovered = null;
+    if (!open) { state.hovered = null; state.showCheck = false; }
     render();
   }
 
@@ -5769,7 +6168,9 @@
     send: () => send([...state.tweaks.values()].filter((t) => !t.batchId)),
     compare,
     // The studio's Explore board: put a variation on the real screen as ordinary tweaks.
-    useVariant: (selector, changes, name) => useVariant({ selector }, { name, changes }),
+    useVariant: (selector, changes, name, html, why) => useVariant({ selector }, { name, changes, html, why }),
+    // For the studio's board: the same cleaning the page uses before showing a layout variation.
+    safeMarkup,
     // Picking on or off (off: clicks reach the app, as when the studio's comparison is set to Interact).
     get isPicking() { return state.isPicking; },
     setPicking: (on) => { state.isPicking = !!on; if (!on) { state.hovered = null; } render(); },
@@ -5777,6 +6178,11 @@
     get showComments() { return state.showComments; },
     setComments: (on) => setComments(!!on),
     comment: (selector) => startComment(document.querySelector(selector)),
+    // Check this screen (the studio's toolbar runs it); resolves to the findings.
+    check: async () => { if (!state.isOpen) toggle(true); await runCheck(); return (state.check.issues || []).map((i) => ({ kind: i.kind, severe: i.severe, what: i.what, detail: i.detail, element: nameOf(i.el) })); },
+    // The studio's light / dark preview: "light", "dark", or null for the system's.
+    setScheme,
+    get scheme() { return forcedScheme; },
     // Hides outlines and the launcher (for snapshots).
     hideOverlay: (on) => (host.style.visibility = on ? "hidden" : ""),
     // Average and worst times (ms) of the overlay's background work, for checking it stays light.

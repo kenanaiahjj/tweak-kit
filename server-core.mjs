@@ -378,6 +378,13 @@ export function studioPage(appPath) {
   .ex-card .ex-actions { display: flex; gap: 6px; flex-wrap: wrap; }
   .ex-card .ex-actions button.on { background: rgba(255,255,255,.14); color: #fff; }
   .ex-edit { display: grid; gap: 4px; max-width: 360px; }
+  .ex-edit .ex-html { width: 100%; min-height: 90px; resize: vertical; border: 0; border-radius: 8px; background: rgba(255,255,255,.05); color: var(--text); padding: 8px; font: 11px/1.45 var(--mono); outline: none; }
+  .ex-edit .ex-html:focus { box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+  .ex-card .ex-name .ex-kind { padding: 1px 6px; border-radius: 5px; background: rgba(132,204,22,.16); color: #a3e635; font-size: 10.5px; font-weight: 600; }
+  .ex-mode { display: inline-flex; padding: 2px; border-radius: 9px; background: rgba(255,255,255,.05); }
+  .ex-head .ex-mode button { height: 28px; padding: 0 10px; background: transparent; }
+  .ex-head .ex-mode button.on { background: rgba(255,255,255,.12); color: #fff; }
+  .ex-head .ex-mode button:not(.on):hover { color: #fff; }
   .ex-edit[hidden] { display: none; }
   .ex-edit-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.2fr) 24px; gap: 4px; align-items: center; font: 11px var(--mono); color: var(--dim); }
   .ex-edit-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -446,6 +453,9 @@ export function studioPage(appPath) {
   .toolbar .guides-toggle.on { background: rgba(13,153,255,.16); color: #6cb8ff; }
   .vs-modes { display: inline-flex; gap: 0; padding: 2px; border-radius: 8px; background: rgba(255,255,255,.05); flex: none; }
   .vs-modes[hidden], .vs-mirror[hidden] { display: none; }
+  .scheme-seg { display: inline-flex; padding: 2px; border-radius: 8px; background: rgba(255,255,255,.05); flex: none; }
+  .toolbar .scheme-seg button { height: 26px; padding: 0 9px; border-radius: 6px; }
+  .toolbar .scheme-seg button.on { background: rgba(255,255,255,.12); color: #fff; }
   .toolbar .vs-modes button { height: 26px; padding: 0 10px; border-radius: 6px; }
   .toolbar .vs-modes button.on { background: rgba(255,255,255,.12); color: #fff; }
   .waiting { padding: 24px 18px; color: var(--dim); line-height: 1.5; text-align: center; }
@@ -591,6 +601,7 @@ export function studioPage(appPath) {
       </span>
       <span class="tb-group">
         <button class="guides-toggle" title="Layout guides over the screen: columns and a baseline grid">Guides</button>
+        <span class="scheme-seg" title="Show the screens light or dark, whatever your system is set to"><button data-scheme="" title="As your system is set">Auto</button><button data-scheme="light" title="Light">☀︎</button><button data-scheme="dark" title="Dark">☾</button></span>
         <!-- Capture (📷 and Review) is on hold: hidden until CAPTURE is turned on below. -->
         <button class="shot" hidden title="Copy a picture of the screen to the clipboard (both versions when comparing). Shift-click also saves a PNG">📷</button>
         <button class="review-toggle" hidden title="Make a review page: every screen captured (side by side with the other version when comparing), which ones changed, and a note; open it or publish it with Claude">Review</button>
@@ -1506,6 +1517,18 @@ export function studioPage(appPath) {
   addEventListener("pointerdown", (e) => { const pop = $(".ex-pop:not(.cm-pop)"); if (!pop.hidden && !e.target.closest(".ex-pop, .ex-toggle")) pop.hidden = true; });
   drawExToggle();
 
+  // ---------- light / dark ----------
+  // Every screen shown light or dark (each frame's panel does the work; new frames read the choice as they load).
+  const SCHEME_KEY = "ui-tweaks:studio-scheme";
+  const scheme = () => { try { return localStorage.getItem(SCHEME_KEY) || ""; } catch { return ""; } };
+  function drawScheme() { for (const b of document.querySelectorAll(".scheme-seg button")) b.classList.toggle("on", b.dataset.scheme === scheme()); }
+  for (const b of document.querySelectorAll(".scheme-seg button")) b.addEventListener("click", () => {
+    try { b.dataset.scheme ? localStorage.setItem(SCHEME_KEY, b.dataset.scheme) : localStorage.removeItem(SCHEME_KEY); } catch {}
+    for (const f of frames.values()) { try { f.iframe.contentWindow.__uiTweaks.setScheme(b.dataset.scheme || null); } catch {} }
+    drawScheme();
+  });
+  drawScheme();
+
   // ---------- comments ----------
   // 💬 shows the pins on the screen and lists open comments on every screen; a row goes to its screen.
   const cm = { list: [] };
@@ -1557,7 +1580,7 @@ export function studioPage(appPath) {
   function exRun(id) { return ex.asks.find((a) => a.id === id); }
   async function exAsk(instruction) {
     const r = ex.req;
-    const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "variations", instruction, refs: (r.refs || []).map((x) => x.path), element: r.element, page: r.page, context: r.context, count: 2 }) });
+    const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "variations", instruction, mode: r.mode, refs: (r.refs || []).map((x) => x.path), element: r.element, page: r.page, context: r.context, count: 2 }) });
     const out = await res.json();
     if (!res.ok) throw new Error(out.error || res.statusText);
     ex.asks.push({ id: out.ask.id, instruction, status: "waiting" });
@@ -1586,7 +1609,16 @@ export function studioPage(appPath) {
   }
   // A live copy of the screen showing the element with the given changes on it, cropped to the element.
   // With full, the whole screen is shown (scaled to fit the board), not cropped to the element.
-  function exPreview(view, changes, full) {
+  // A layout variation's markup as a node of the frame's document, with anything that could run taken out.
+  function exMarkup(doc, html) {
+    const parsed = new DOMParser().parseFromString("<body>" + html, "text/html");
+    for (const n of parsed.querySelectorAll("script, style, iframe, object, embed, link, meta, base, form, noscript, template")) n.remove();
+    for (const n of parsed.body.querySelectorAll("*")) for (const a of [...n.attributes]) if (/^on/i.test(a.name) || (/^(href|src|action|formaction|xlink:href)$/i.test(a.name) && /^\\s*javascript:/i.test(a.value))) n.removeAttribute(a.name);
+    return parsed.body.firstElementChild ? doc.importNode(parsed.body.firstElementChild, true) : null;
+  }
+  function exPreview(view, v, full) {
+    const changes = (v && v.changes) || [];
+    const html = v && v.html;
     const r = ex.req;
     const [w, h] = r.size;
     const frame = document.createElement("iframe");
@@ -1606,8 +1638,18 @@ export function studioPage(appPath) {
       }
       if (!el) return msg(r.snapshot ? "The snapshot of this screen is gone; explore the element again." : "This element isn't on a fresh load of the screen (it was reached by clicking around). Explore it again to show it as it is now.");
       // Styles go on the element as it is now, and again whenever the app re-renders it into a new one.
+      // A layout variation goes in beside the element, which is hidden (so an app that owns it never notices).
+      let added = null;
       const put = () => {
-        el = doc.querySelector(r.snapshot ? "[data-uit-target]" : r.selector) || el;
+        if (html && !(added && added.isConnected)) {
+          const orig = doc.querySelector(r.snapshot ? "[data-uit-target]" : r.selector) || el;
+          added = orig && exMarkup(doc, html);
+          if (added) {
+            orig.style.setProperty("display", "none", "important");
+            orig.after(added);
+          }
+        }
+        el = added || doc.querySelector(r.snapshot ? "[data-uit-target]" : r.selector) || el;
         for (const c of changes || []) {
           let node = null;
           try { node = c.target === ":scope" ? el : el.querySelector(c.target); } catch {}
@@ -1615,7 +1657,7 @@ export function studioPage(appPath) {
         }
       };
       put();
-      const watch = new frame.contentWindow.MutationObserver(() => { if (doc.querySelector(r.snapshot ? "[data-uit-target]" : r.selector) !== el) put(); });
+      const watch = new frame.contentWindow.MutationObserver(() => { if (html ? !(added && added.isConnected) : doc.querySelector(r.snapshot ? "[data-uit-target]" : r.selector) !== el) put(); });
       watch.observe(doc.body, { childList: true, subtree: true });
       setTimeout(() => watch.disconnect(), 8000);
       // Let it lay out and settle: entrance animations finish (endless ones are left running), fonts load.
@@ -1683,13 +1725,15 @@ export function studioPage(appPath) {
     if (kind === "variant" && ex.req.used === v.name) card.classList.add("used");
     // The card works on its own copy of the changes, so Edit can adjust them before they're used.
     let cur = { ...v, changes: JSON.parse(JSON.stringify(v.changes || [])) };
-    card.innerHTML = '<div class="ex-name">' + esc(v.name) + '</div><div class="ex-view"></div>' + (v.why ? '<div class="ex-why">' + esc(v.why) + "</div>" : "") + '<div class="ex-edit" hidden></div><div class="ex-actions"></div>';
-    const redraw = () => { const view = card.querySelector(".ex-view"); view.innerHTML = ""; exPreview(view, cur.changes); };
+    card.innerHTML = '<div class="ex-name"><span class="ex-title"></span>' + (v.html ? '<span class="ex-kind" title="A rebuilt layout: using it asks Claude to build it in the component">Layout</span>' : "") + '</div><div class="ex-view"></div>' + (v.why ? '<div class="ex-why">' + esc(v.why) + "</div>" : "") + '<div class="ex-edit" hidden></div><div class="ex-actions"></div>';
+    const title = card.querySelector(".ex-title");
+    title.textContent = v.name;
+    const redraw = () => { const view = card.querySelector(".ex-view"); view.innerHTML = ""; exPreview(view, cur); };
     redraw();
     const actions = card.querySelector(".ex-actions");
     const btn = (text, title, run, cls) => { const b = Object.assign(document.createElement("button"), { textContent: text, title }); if (cls) b.className = cls; b.addEventListener("click", run); actions.append(b); return b; };
     if (kind !== "original") {
-      btn("Use on screen", "Put this on the real screen as tweaks (send them, or they apply in instant mode)", () => exUse(cur), "use");
+      btn(v.html ? "Build it" : "Use on screen", v.html ? "A new layout: Claude builds it in the component (Undo apply reverts it)" : "Put this on the real screen as tweaks (send them, or they apply in instant mode)", () => exUse(cur), "use");
       const edit = card.querySelector(".ex-edit");
       const editBtn = btn("Edit", "Adjust this variation's values before using it", () => {
         edit.hidden = !edit.hidden;
@@ -1698,6 +1742,22 @@ export function studioPage(appPath) {
       });
       const drawEdit = () => {
         edit.innerHTML = "";
+        if (cur.html) {
+          // A layout variation's markup, editable: the card redraws when you leave the box (or ⌘Enter).
+          const area = Object.assign(document.createElement("textarea"), { className: "ex-html", value: cur.html, spellcheck: false, rows: 6 });
+          const commit = () => {
+            if (area.value.trim() === cur.html) return;
+            if (area.value.length > 20000) return note("That markup is too long to build (20,000 characters at most).");
+            cur.html = area.value.trim();
+            if (!/ \\(edited\\)$/.test(cur.name)) cur.name = v.name + " (edited)";
+            title.textContent = cur.name;
+            redraw();
+            drawEdit();
+          };
+          area.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) commit(); });
+          area.addEventListener("change", commit);
+          edit.append(area);
+        }
         cur.changes.forEach((c, i) => {
           const row = document.createElement("label");
           row.className = "ex-edit-row";
@@ -1708,7 +1768,7 @@ export function studioPage(appPath) {
             if (input.value.trim() === c.value) return;
             cur.changes[i] = { ...c, value: input.value.trim() };
             if (!/ \\(edited\\)$/.test(cur.name)) cur.name = v.name + " (edited)";
-            card.querySelector(".ex-name").textContent = cur.name;
+            title.textContent = cur.name;
             redraw();
             drawEdit();
           };
@@ -1722,7 +1782,7 @@ export function studioPage(appPath) {
           }
           row.append(input);
           const x = Object.assign(document.createElement("button"), { textContent: "✕", title: "Drop this change" });
-          x.addEventListener("click", (e) => { e.preventDefault(); cur.changes.splice(i, 1); if (!/ \\(edited\\)$/.test(cur.name)) cur.name = v.name + " (edited)"; card.querySelector(".ex-name").textContent = cur.name; redraw(); drawEdit(); });
+          x.addEventListener("click", (e) => { e.preventDefault(); cur.changes.splice(i, 1); if (!/ \\(edited\\)$/.test(cur.name)) cur.name = v.name + " (edited)"; title.textContent = cur.name; redraw(); drawEdit(); });
           row.append(x);
           edit.append(row);
         });
@@ -1732,7 +1792,7 @@ export function studioPage(appPath) {
             const a = { id: "edit-" + Date.now().toString(36), instruction: "", status: "done", variants: [cur] };
             ex.asks.push(a);
             cur = { ...v, changes: JSON.parse(JSON.stringify(v.changes || [])) };
-            card.querySelector(".ex-name").textContent = v.name;
+            title.textContent = v.name;
             redraw();
             edit.hidden = true;
             editBtn.classList.remove("on");
@@ -1746,7 +1806,7 @@ export function studioPage(appPath) {
     btn("On screen", "See it on the whole screen", () => exFull(cur));
     btn(kind === "original" ? "More variations" : "More like this", kind === "original" ? "Ask Claude for more (two, unless the direction says how many)" : "More that push this one further", () => {
       const dir = $(".ex-dir").value.trim();
-      const text = kind === "original" ? dir : "Variations on “" + cur.name + "” (" + (v.why || "") + "). Push that idea further in different ways" + (dir ? ", " + dir : "") + ". Start from its changes and return full change sets: " + JSON.stringify(cur.changes);
+      const text = kind === "original" ? dir : "Variations on “" + cur.name + "” (" + (v.why || "") + "). Push that idea further in different ways" + (dir ? ", " + dir : "") + (cur.html ? ". Start from its layout and return full variations (html and changes): " + JSON.stringify({ html: cur.html, changes: cur.changes }) : ". Start from its changes and return full change sets: " + JSON.stringify(cur.changes));
       exAsk(text).catch((e) => note("Couldn't ask Claude: " + e.message));
     });
     return card;
@@ -1757,27 +1817,30 @@ export function studioPage(appPath) {
     box.querySelector(".ex-full")?.remove();
     const full = document.createElement("div");
     full.className = "ex-full";
-    full.innerHTML = '<div class="ex-full-head"><b></b><span>The element is outlined</span><button class="use">Use on screen</button><button class="ex-full-close">Back to variations</button></div><div class="ex-view"></div>';
+    full.innerHTML = '<div class="ex-full-head"><b></b><span>The element is outlined</span><button class="use">' + (v.html ? "Build it" : "Use on screen") + '</button><button class="ex-full-close">Back to variations</button></div><div class="ex-view"></div>';
     full.querySelector("b").textContent = v.name;
-    full.querySelector(".use").hidden = !v.changes || !v.changes.length;
+    full.querySelector(".use").hidden = !v.html && (!v.changes || !v.changes.length);
     full.querySelector(".use").addEventListener("click", () => exUse(v));
     full.querySelector(".ex-full-close").addEventListener("click", () => full.remove());
     full.addEventListener("click", (e) => { if (e.target === full) full.remove(); });
     box.append(full);
-    exPreview(full.querySelector(".ex-view"), v.changes, true);
+    exPreview(full.querySelector(".ex-view"), v, true);
   }
   function drawExplore() {
     const box = $(".explore");
     if (!ex.req) { box.hidden = true; box.innerHTML = ""; return; }
     const grid = box.querySelector(".ex-grid");
     if (!grid) {
-      box.innerHTML = '<div class="ex-head"><h3>Explore</h3><span class="ex-el"></span><input class="ex-dir" placeholder="Direction for more, e.g. “bolder, more compact”" /><span class="ex-refs"></span><button class="ex-ref-add" title="Add a reference image for the next variations (or drop one here)">＋ Reference</button><input type="file" class="ex-ref-file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden /><button class="ex-more">More variations</button><button class="ex-close" title="Back to the screen (Esc)">Close</button></div><div class="ex-grid"></div>';
+      box.innerHTML = '<div class="ex-head"><h3>Explore</h3><span class="ex-el"></span><input class="ex-dir" placeholder="Direction for more, e.g. “bolder, more compact”" /><span class="ex-mode" title="What the next variations may change"><button data-mode="">Any</button><button data-mode="styles">Styles</button><button data-mode="layout">Layout</button></span><span class="ex-refs"></span><button class="ex-ref-add" title="Add a reference image for the next variations (or drop one here)">＋ Reference</button><input type="file" class="ex-ref-file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden /><button class="ex-more">More variations</button><button class="ex-close" title="Back to the screen (Esc)">Close</button></div><div class="ex-grid"></div>';
       box.querySelector(".ex-el").textContent = ex.req.label;
       box.querySelector(".ex-el").title = ex.req.selector;
       box.querySelector(".ex-dir").value = ex.req.instruction || "";
       box.querySelector(".ex-dir").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") box.querySelector(".ex-more").click(); if (e.key === "Escape") closeExplore(); });
       box.querySelector(".ex-more").addEventListener("click", () => exAsk(box.querySelector(".ex-dir").value.trim()).catch((e) => note("Couldn't ask Claude: " + e.message)));
       box.querySelector(".ex-close").addEventListener("click", closeExplore);
+      const drawMode = () => { for (const b of box.querySelectorAll(".ex-mode button")) b.classList.toggle("on", (ex.req.mode || "") === b.dataset.mode); };
+      for (const b of box.querySelectorAll(".ex-mode button")) b.addEventListener("click", () => { ex.req.mode = b.dataset.mode || undefined; saveExploration(); drawMode(); });
+      drawMode();
       // References for the next requests: the ones from the panel, plus any added here.
       const drawRefs = () => {
         box.querySelector(".ex-refs").innerHTML = (ex.req.refs || []).map((r, i) => '<span class="ex-ref" title="' + esc(r.name || "Reference") + '"><img src="' + esc(r.url) + '" alt="" /><button data-i="' + i + '" title="Remove">✕</button></span>').join("");
@@ -1817,11 +1880,11 @@ export function studioPage(appPath) {
   function exUse(v) {
     const f = frames.get(focusedId());
     try {
-      f.iframe.contentWindow.__uiTweaks.useVariant(ex.req.selector, v.changes, v.name);
+      f.iframe.contentWindow.__uiTweaks.useVariant(ex.req.selector, v.changes, v.name, v.html, v.why);
       ex.req.used = v.name;
       saveExploration();
       closeExplore();
-      note("Using “" + v.name + "”. The other variations are kept: ✦ Explorations brings them back.");
+      note(v.html ? "Claude is building “" + v.name + "” in the component; Undo apply reverts it. The other variations are kept in ✦ Explorations." : "Using “" + v.name + "”. The other variations are kept: ✦ Explorations brings them back.");
     } catch { note("Couldn't reach the screen's panel; reload it and try again."); }
   }
   function closeExplore() {

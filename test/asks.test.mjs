@@ -23,3 +23,10 @@ test("asks: queued, then running and done as the mod rewrites the result file in
   await assert.rejects(addAsk(root, { kind: "edit", instruction: " " }), /Say what to change/);
   await assert.rejects(addAsk(root, { kind: "nope" }), /kind/);
 });
+
+test("asks: variations carry styles-only or layout-only, nothing else", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "uitk-ask-"));
+  assert.equal((await addAsk(root, { kind: "variations", mode: "layout" })).mode, "layout");
+  assert.equal((await addAsk(root, { kind: "variations", mode: "weird" })).mode, undefined);
+  assert.equal((await addAsk(root, { kind: "edit", instruction: "x", mode: "layout" })).mode, undefined);
+});

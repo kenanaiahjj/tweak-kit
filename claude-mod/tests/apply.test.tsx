@@ -228,6 +228,12 @@ test('answer parsing and prompts', () => {
   expect(withRefs).toContain('impeccable (/h/.claude/skills/impeccable)')
   expect(withRefs).toContain('only the JSON')
   expect(askPrompt({ id: 'b', kind: 'edit', instruction: 'tidy it' }, '/p')).not.toContain('Design skill')
+  // Layout variations: rebuilt markup, cleaned of anything that could run.
+  const [layout] = cleanVariants([{ name: 'Row', html: '<div class="card" onclick="x()"><img src="a.png" onerror="steal()"><script>bad()</script><a href="javascript:go()">x</a><p>Hi</p></div>' }])
+  expect(layout.html).toBe('<div class="card"><img src="a.png"><a >x</a><p>Hi</p></div>')
+  expect(cleanVariants([{ name: 'Junk', html: 'just text' }])).toEqual([])
+  expect(askPrompt({ id: 'c', kind: 'variations', instruction: '', mode: 'layout' }, '/p')).toContain('Kinds: layout variations only')
+  expect(askPrompt({ id: 'd', kind: 'variations', instruction: '' }, '/p')).toContain('make at least one a layout variation')
 })
 
 const fileAt = (files: Record<string, string>, rel: string) => Object.entries(files).find(([k]) => k === rel || k.endsWith('/' + rel))?.[1] ?? '{}'

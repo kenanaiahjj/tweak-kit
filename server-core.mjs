@@ -305,6 +305,14 @@ export function studioPage(appPath) {
   .ex-card .ex-actions button.use { background: #fff; color: #212121; font-weight: 600; }
   .ex-card .ex-actions button.use:hover { background: #e4e4e4; }
   .ex-card.pending { width: 260px; }
+  .ex-card.used { border-color: rgba(142,230,168,.45); }
+  .ex-card.used .ex-name::after { content: "Used"; font: 600 10.5px system-ui, sans-serif; color: #8ee6a8; background: rgba(142,230,168,.14); padding: 2px 7px; border-radius: 999px; }
+  .ex-pop { position: fixed; z-index: 20; width: 300px; max-height: 60vh; overflow: auto; padding: 6px; background: #212121; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,.5); display: grid; gap: 2px; }
+  .ex-pop[hidden] { display: none; }
+  .ex-pop button { display: grid; gap: 2px; text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; font: 500 12.5px system-ui, -apple-system, sans-serif; }
+  .ex-pop button:hover { background: rgba(255,255,255,.08); }
+  .ex-pop button span { color: var(--dim); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ex-pop .ex-forget { color: var(--dim); font-size: 11.5px; text-align: center; }
   .ex-card.pending .ex-view { height: 140px; display: grid; place-items: center; color: var(--dim); font-size: 12px; }
   .ex-card.pending .ex-view::after { content: ""; width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255,255,255,.15); border-top-color: #fff; animation: ex-spin .8s linear infinite; }
   @keyframes ex-spin { to { transform: rotate(360deg); } }
@@ -492,6 +500,7 @@ export function studioPage(appPath) {
         <button class="review-toggle" hidden title="Make a review page: every screen captured (side by side with the other version when comparing), which ones changed, and a note; open it or publish it with Claude">Review</button>
       </span>
       <span class="tb-group">
+        <button class="ex-toggle" hidden title="Your explorations: reopen the variations Claude made for an element">✦ Explorations</button>
         <button class="vs-toggle" title="Compare with another branch or commit, side by side">⑂ Versions</button>
         <span class="vs-modes" hidden><button data-mode="inspect" title="Click elements to tweak them">Inspect</button><button data-mode="interact" title="Use both apps: clicks go to the app, not the panel">Interact</button></span>
         <button class="vs-mirror" hidden title="Repeat your clicks and typing on the other version, so both walk through the same flow">⇆ Mirror clicks</button>
@@ -517,6 +526,7 @@ export function studioPage(appPath) {
 <div class="overview-pop" hidden></div>
 <div class="guides-pop" hidden></div>
 <div class="rv-pop" hidden></div>
+<div class="ex-pop" hidden></div>
 <div class="rv-progress" hidden></div>
 <div class="vs-pop" hidden></div>
 <script>
@@ -795,12 +805,16 @@ export function studioPage(appPath) {
     // The panel's Explore: open the board for an element, with its first variations request.
     explore(req) {
       const a = current();
-      clearTimeout(ex.timer);
-      ex.req = { ...req, size: a ? size(a) : [393, 852] };
-      ex.asks = req.askId ? [{ id: req.askId, instruction: req.instruction || "", status: "waiting" }] : [];
-      $(".explore").innerHTML = "";
-      drawExplore();
-      pollExplore();
+      const fresh = { id: req.askId, instruction: req.instruction || "", status: "waiting" };
+      // The same element on the same screen again: carry on in its exploration, with the new batch added.
+      const earlier = loadExplorations().find((x) => x.selector === req.selector && x.url === req.url);
+      if (earlier) {
+        openExploration({ ...earlier, context: req.context || earlier.context, element: req.element || earlier.element, size: a ? size(a) : earlier.size, asks: [...(earlier.asks || []), ...(req.askId ? [fresh] : [])] });
+      } else {
+        const { askId, ...rest } = req;
+        openExploration({ ...rest, sid: "x" + Date.now().toString(36), size: a ? size(a) : [393, 852], asks: askId ? [fresh] : [] });
+      }
+      saveExploration();
     },
     // The command palette lists and opens screens.
     screens() {
@@ -1343,7 +1357,51 @@ export function studioPage(appPath) {
   // An element on a board of its own, with variations from Claude: each card is a live copy of the screen
   // (a hidden frame of the app at the same URL), the variation's styles put on the element, cropped to it.
   // Use on screen hands the variation to the panel as ordinary tweaks; More like this asks for more from it.
+  // Explorations are kept (in this browser) so you can come back to the variations after using one:
+  // the element, its screen, each batch of variations Claude made, and which one you used.
+  const EX_KEY = "ui-tweaks:explorations";
   const ex = { req: null, asks: [], cards: [], timer: 0 };
+  const loadExplorations = () => { try { return JSON.parse(localStorage.getItem(EX_KEY) || "[]"); } catch { return []; } };
+  function saveExploration() {
+    if (!ex.req) return;
+    const keep = { ...ex.req, at: Date.now(), asks: ex.asks.map(({ id, instruction, status, variants, error }) => ({ id, instruction, status, variants, error })) };
+    const list = [keep, ...loadExplorations().filter((x) => x.sid !== ex.req.sid)].slice(0, 15);
+    try { localStorage.setItem(EX_KEY, JSON.stringify(list)); } catch {}
+    drawExToggle();
+  }
+  function drawExToggle() {
+    const n = loadExplorations().length;
+    const b = $(".ex-toggle");
+    b.hidden = !n;
+    b.textContent = "✦ Explorations" + (n ? " " + n : "");
+  }
+  function openExploration(saved) {
+    clearTimeout(ex.timer);
+    ex.req = { ...saved };
+    delete ex.req.asks;
+    ex.asks = (saved.asks || []).map((a) => ({ ...a, drawn: null, placeholder: null }));
+    $(".explore").innerHTML = "";
+    drawExplore();
+    pollExplore();
+  }
+  $(".ex-toggle").addEventListener("click", (e) => {
+    const pop = $(".ex-pop");
+    pop.hidden = !pop.hidden;
+    if (pop.hidden) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 308)) + "px";
+    pop.style.top = r.bottom + 6 + "px";
+    const list = loadExplorations();
+    const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " d ago"; };
+    pop.innerHTML = list.map((x, i) => {
+      const n = (x.asks || []).reduce((t, a) => t + ((a.variants || []).length), 0);
+      return '<button data-i="' + i + '">' + esc(x.label || x.selector) + "<span>" + esc((x.url || "") + " · " + n + " variation" + (n === 1 ? "" : "s") + (x.used ? " · used “" + x.used + "”" : "") + " · " + ago(x.at)) + "</span></button>";
+    }).join("") + '<button class="ex-forget">Forget these</button>';
+    for (const b of pop.querySelectorAll("button[data-i]")) b.addEventListener("click", () => { pop.hidden = true; openExploration(list[Number(b.dataset.i)]); });
+    pop.querySelector(".ex-forget").addEventListener("click", () => { try { localStorage.removeItem(EX_KEY); } catch {} pop.hidden = true; drawExToggle(); });
+  });
+  addEventListener("pointerdown", (e) => { const pop = $(".ex-pop"); if (!pop.hidden && !e.target.closest(".ex-pop, .ex-toggle")) pop.hidden = true; });
+  drawExToggle();
   const EX_PAD = 24, EX_MAX = 380;
   function exRun(id) { return ex.asks.find((a) => a.id === id); }
   async function exAsk(instruction) {
@@ -1352,6 +1410,7 @@ export function studioPage(appPath) {
     const out = await res.json();
     if (!res.ok) throw new Error(out.error || res.statusText);
     ex.asks.push({ id: out.ask.id, instruction, status: "waiting" });
+    saveExploration();
     drawExplore();
     pollExplore();
   }
@@ -1366,8 +1425,11 @@ export function studioPage(appPath) {
       for (const a of open) {
         const s = asks.find((x) => x.id === a.id);
         if (s && s.status !== a.status) { Object.assign(a, { status: s.status, variants: s.variants || [], error: s.error }); changed = true; }
+        // Gone from the queue without an answer (dismissed, or pruned long ago): stop waiting for it.
+        if (!s && a.status !== "waiting" && a.status !== "running") continue;
+        if (!s && Date.now() - (a.since || (a.since = Date.now())) > 15000) { Object.assign(a, { status: "failed", error: "That request isn't in the queue any more." }); changed = true; }
       }
-      if (changed) drawExplore();
+      if (changed) { drawExplore(); saveExploration(); }
     } catch {}
     ex.timer = setTimeout(pollExplore, 1200);
   }
@@ -1451,6 +1513,7 @@ export function studioPage(appPath) {
       card.innerHTML = '<div class="ex-name">No variations</div><div class="ex-why">' + esc(a.error || "It didn't work out; try again.") + "</div>";
       return card;
     }
+    if (kind === "variant" && ex.req.used === v.name) card.classList.add("used");
     card.innerHTML = '<div class="ex-name">' + esc(v.name) + '</div><div class="ex-view"></div>' + (v.why ? '<div class="ex-why">' + esc(v.why) + "</div>" : "") + '<div class="ex-actions"></div>';
     exPreview(card.querySelector(".ex-view"), v.changes);
     const actions = card.querySelector(".ex-actions");
@@ -1498,7 +1561,10 @@ export function studioPage(appPath) {
     const f = frames.get(focusedId());
     try {
       f.iframe.contentWindow.__uiTweaks.useVariant(ex.req.selector, v.changes, v.name);
+      ex.req.used = v.name;
+      saveExploration();
       closeExplore();
+      note("Using “" + v.name + "”. The other variations are kept: ✦ Explorations brings them back.");
     } catch { note("Couldn't reach the screen's panel; reload it and try again."); }
   }
   function closeExplore() {

@@ -204,6 +204,7 @@ Select an element, optionally type a direction in **Ask Claude** ("bolder", "mor
 
 - **More like this** on a card asks for three more that push that one further; **More variations** on the original (or the box at the top, with a new direction) asks for three more from scratch. New cards appear as they come in; a spinning card means Claude is still sketching.
 - **Use on screen** puts that variation on the real screen as ordinary tweaks and closes the board: send them as usual (or they apply right away in instant mode), and undo works as for any tweak.
+- **Nothing is thrown away.** Explorations are kept in your browser: Use on screen closes the board, and **✦ Explorations** in the toolbar lists them (element, screen, how many variations, which one you used) to reopen with every card, the used one marked **Used**. Exploring the same element on the same screen again adds to its board. **Forget these** clears the list.
 - **Close** (or Esc) goes back to the screen. Variations are styles only (colour, spacing, type, shape, shadows), not new elements.
 
 ### Selecting

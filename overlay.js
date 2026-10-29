@@ -30,6 +30,8 @@
       return null;
     }
   })();
+  // In the studio, start in its Inspect / Interact mode.
+  try { if (STUDIO && STUDIO.__studio && STUDIO.__studio.mode && STUDIO.__studio.mode() === "interact") queueMicrotask(() => { state.isPicking = false; }); } catch {}
   // With several devices in the studio, each frame runs an overlay; the one whose panel is docked owns it.
   const IS_PRIMARY = (() => {
     try {
@@ -3718,7 +3720,8 @@
     add("Redo", "⌘⇧Z", redoPreview);
     add("Send to Claude", "", () => { const b = [...panel.querySelectorAll(".foot button")].find((x) => /Send/.test(x.textContent)); b && b.click(); });
     add("Reset all previews", "", () => resetAll());
-    add(state.isPicking ? "Stop picking" : "Start picking", "V", () => { state.isPicking = !state.isPicking; render(); });
+    add("Inspect: click to select", "V", () => setPickMode(true));
+    add("Interact: use the app", "C", () => setPickMode(false));
     add("Design system (tokens)", "", () => { const url = API + "/system"; if (STUDIO) STUDIO.location.href = url; else if (!window.open(url, "_blank")) location.href = url; });
     try {
       for (const sc of (STUDIO && STUDIO.__studio && STUDIO.__studio.screens && STUDIO.__studio.screens()) || []) if (!sc.shown) add(`Go to screen: ${sc.name}`, "screen", () => STUDIO.__studio.show(sc.id));
@@ -3804,11 +3807,8 @@
     const pick = document.createElement("button");
     pick.className = "icon" + (state.isPicking ? " on" : "");
     pick.textContent = "⌖";
-    pick.title = "Pick elements (V). Turn off to use the page normally.";
-    pick.addEventListener("click", () => {
-      state.isPicking = !state.isPicking;
-      render();
-    });
+    pick.title = state.isPicking ? "Inspect (V): clicks select elements. Press C, or click, to interact with the app" : "Interact (C): clicks reach the app. Press V, or click, to inspect";
+    pick.addEventListener("click", () => setPickMode(!state.isPicking));
     const close = document.createElement("button");
     close.className = "icon";
     close.textContent = "✕";
@@ -5328,10 +5328,20 @@
     if (e.key === "Escape") {
       if (state.selected) select(null);
       else toggle(false);
-    } else if (e.key.toLowerCase() === "v" && !e.metaKey && !e.ctrlKey) {
-      state.isPicking = !state.isPicking;
-      render();
+    } else if (!e.metaKey && !e.ctrlKey && !e.altKey && (e.key.toLowerCase() === "v" || e.key.toLowerCase() === "c")) {
+      // V: Inspect (clicks pick elements). C, beside it: Interact (clicks reach the app).
+      e.preventDefault();
+      setPickMode(e.key.toLowerCase() === "v");
     }
+  }
+  // Inspect or Interact. In the studio the studio holds the mode (its toolbar switch, these keys and the
+  // ⌖ button all agree, and it outlasts reloads); on a page the panel holds it.
+  function setPickMode(on) {
+    if (STUDIO && STUDIO.__studio && STUDIO.__studio.setMode) return STUDIO.__studio.setMode(on ? "inspect" : "interact");
+    state.isPicking = on;
+    if (!on) state.hovered = null;
+    render();
+    toast(on ? "Inspect: click to select (C to interact)" : "Interact: use the page (V to inspect)");
   }
   document.addEventListener("keydown", onKey, true);
 

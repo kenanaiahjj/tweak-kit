@@ -1679,6 +1679,16 @@
     .cm-bubble textarea { resize: vertical; min-height: 60px; border: 0; border-radius: 8px; background: var(--bg2); color: var(--text); padding: 8px; font: inherit; outline: none; }
     .cm-bubble textarea:focus { box-shadow: inset 0 0 0 1px var(--line-hover); }
     .cm-bubble .cm-row { display: flex; gap: 6px; justify-content: flex-end; }
+    .ask-skills { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 6px 0 2px; }
+    .ask-skills > span { color: var(--dim); font-size: 11px; margin-right: 2px; }
+    .ask-skills button { height: 22px; padding: 0 8px; border: 0; border-radius: 6px; background: var(--bg2); color: var(--label); font-size: 11px; font-weight: 500; cursor: pointer; }
+    .ask-skills button:hover { background: var(--hover); color: var(--text); }
+    .ask-skills button.on { background: var(--accent); color: #fff; }
+    .img-box { display: grid; gap: 8px; }
+    .img-thumb { height: 96px; border-radius: 8px; background: repeating-conic-gradient(#2a2a2a 0 25%, #222 0 50%) 0 0 / 12px 12px; background-size: contain; background-repeat: no-repeat; background-position: center; box-shadow: inset 0 0 0 1px var(--line); }
+    .img-thumb.dropping { box-shadow: inset 0 0 0 2px var(--accent); }
+    .img-meta { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 11px; min-width: 0; }
+    .img-meta span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .sp-handle.r { width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; background: #fff; border-color: #f24e9e; cursor: nwse-resize; }
     .multi-box { position: fixed; pointer-events: none; outline: 2px solid var(--accent); outline-offset: 0; background: rgba(13,153,255,.06); }
     button.btn.ghost.on { background: #3d2f66; border-color: #7b61ff; color: #fff; }
@@ -2017,7 +2027,7 @@
     const isMeasuring = drawMeasures();
     const hoverBox = $(".hover-box");
     hoverBox.classList.toggle("measuring", isMeasuring);
-    if (state.isOpen && (state.isPicking || isMeasuring) && state.hovered && state.hovered !== state.selected) place(hoverBox, state.hovered.getBoundingClientRect());
+    if (state.isOpen && (state.isPicking || state.peek || isMeasuring) && state.hovered && state.hovered !== state.selected) place(hoverBox, state.hovered.getBoundingClientRect());
     else hoverBox.classList.add("hidden");
 
     const el = state.isOpen && ownsPanel() ? state.selected : null;
@@ -2294,7 +2304,7 @@
   // ---------- check this screen ----------
   // One pass over what's on screen: text contrast, tap targets, missing labels and hand-written values a
   // token could hold. Each finding is pinned on the page and listed in the panel; a click selects it.
-  const CHECK_KINDS = { contrast: "Contrast", tap: "Tap targets", label: "Labels", token: "Off-token values" };
+  const CHECK_KINDS = { layout: "Layout", contrast: "Contrast", tap: "Tap targets", label: "Labels", token: "Off-token values" };
   const shownEl = (el) => {
     if (!el.getClientRects().length) return false;
     const cs = getComputedStyle(el);
@@ -2317,10 +2327,62 @@
     const cls = d.classes.find((c) => !/--t[0-9a-z]{4}$/.test(c));
     return (cls ? `${d.tag}.${cls}` : d.tag) + (d.text ? ` “${d.text.slice(0, 24)}${d.text.length > 24 ? "…" : ""}”` : "");
   };
-  async function checkScreen() {
+  // Layout problems: content past the screen's edges (it scrolls sideways or is cut off), text cut off
+  // without an ellipsis, and text running over other text.
+  function layoutIssues(shown) {
+    const issues = [];
+    const W = document.documentElement.clientWidth;
+    const insideScroller = (el) => {
+      for (let p = el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+        if (/hidden|clip|auto|scroll/.test(getComputedStyle(p).overflowX)) return true;
+      }
+      return false;
+    };
+    const wide = [];
+    for (const el of shown) {
+      const r = el.getBoundingClientRect();
+      if ((r.right <= W + 1 && r.left >= -1) || getComputedStyle(el).position === "fixed") continue;
+      if (wide.some((w) => w.contains(el)) || insideScroller(el)) continue;
+      wide.push(el);
+      issues.push({ kind: "layout", severe: true, el, what: `${Math.round(r.right > W ? r.right - W : -r.left)}px past the ${r.right > W ? "right" : "left"} edge`, detail: document.documentElement.scrollWidth > W + 1 ? "the screen scrolls sideways" : "cut off at the screen's edge" });
+      if (wide.length >= 8) break;
+    }
+    const texts = [];
+    for (const el of shown) {
+      if (!ownText(el) || el.closest("svg")) continue;
+      const cs = getComputedStyle(el);
+      const cutX = /hidden|clip/.test(cs.overflowX) && el.scrollWidth > el.clientWidth + 1 && cs.textOverflow !== "ellipsis";
+      const cutY = /hidden|clip/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 1 && !(cs.webkitLineClamp && cs.webkitLineClamp !== "none");
+      if (cutX || cutY) issues.push({ kind: "layout", severe: true, el, what: "text cut off", detail: cutX ? "too wide for its box, with no ellipsis" : "too tall for its box" });
+      for (const n of el.childNodes) {
+        if (n.nodeType !== 3 || !n.textContent.trim() || texts.length >= 250) continue;
+        const range = document.createRange();
+        range.selectNodeContents(n);
+        const r = range.getBoundingClientRect();
+        if (r.width && r.height) texts.push({ el, r });
+      }
+    }
+    // Text over text: two runs of text whose boxes cover a fair part of each other.
+    const overlapped = new Set();
+    for (let i = 0; i < texts.length; i++) {
+      for (let j = i + 1; j < texts.length; j++) {
+        const a = texts[i], b = texts[j];
+        if (a.el === b.el || a.el.contains(b.el) || b.el.contains(a.el) || overlapped.has(a.el) || overlapped.has(b.el)) continue;
+        const w = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left), h = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
+        if (w <= 2 || h <= 2) continue;
+        if (w * h < 0.25 * Math.min(a.r.width * a.r.height, b.r.width * b.r.height)) continue;
+        overlapped.add(a.el);
+        issues.push({ kind: "layout", severe: true, el: a.el, what: "text overlaps text", detail: `runs into ${nameOf(b.el)}` });
+      }
+    }
+    return issues;
+  }
+  async function checkScreen({ layoutOnly = false } = {}) {
     const issues = [];
     const all = [...document.body.querySelectorAll("*")].filter((n) => !isOwn(n) && !/^(script|style|template|noscript|link|meta|br|head|title)$/i.test(n.tagName)).slice(0, 2500);
     const shown = all.filter(shownEl);
+    issues.push(...layoutIssues(shown));
+    if (layoutOnly) return issues;
     const phone = innerWidth < 768;
     for (const el of shown) {
       if (ownText(el) && !el.closest("svg")) {
@@ -2407,15 +2469,15 @@
     }
     box.append(kinds);
     if (c.at && c.at !== here()) box.append(lbl("This was another screen: check again for this one."));
-    const fixable = c.issues.filter((i) => (i.kind === "label" || i.kind === "contrast") && !c.hidden.has(i.kind) && i.el.isConnected);
+    const fixable = c.issues.filter((i) => (i.kind === "label" || i.kind === "contrast" || i.kind === "layout") && !c.hidden.has(i.kind) && i.el.isConnected);
     if (fixable.length) {
-      const fix = Object.assign(document.createElement("button"), { className: "btn primary ck-fix", textContent: `Fix ${fixable.length} with Claude`, title: "Claude fixes the contrast and label findings in the source (Undo apply reverts it)" });
+      const fix = Object.assign(document.createElement("button"), { className: "btn primary ck-fix", textContent: `Fix ${fixable.length} with Claude`, title: "Claude fixes the layout, contrast and label findings in the source (Undo apply reverts it)" });
       fix.addEventListener("click", () => {
         const lines = fixable.map((i) => {
           const d = describe(i.el);
           return `- ${CHECK_KINDS[i.kind]}: ${nameOf(i.el)} ${i.what}, ${i.detail}. Selector: ${d.selector}${d.react && d.react.jsxSource ? `, JSX at ${d.react.jsxSource}` : ""}`;
         });
-        ask("edit", null, `Fix these accessibility findings from a check of the screen ${here()}, keeping the design's look (for contrast, adjust the colour as little as needed, preferring the project's tokens; for labels, add real text, alt or aria-label that says what it is):\n${lines.join("\n")}`);
+        ask("edit", null, `Fix these findings from a check of the screen ${here()} at ${innerWidth}px wide, keeping the design's look (for layout, make it fit the width without hiding content; for contrast, adjust the colour as little as needed, preferring the project's tokens; for labels, add real text, alt or aria-label that says what it is):\n${lines.join("\n")}`);
       });
       box.append(fix);
     }
@@ -2788,6 +2850,207 @@
     }
     box.append(wrap, row, list);
     return box;
+  }
+
+  // ---------- images ----------
+  // Replace an <img>'s picture or a background image: the file is saved into the project (public/images/),
+  // the page shows it at once, and the source gets the new path on Send (a plain src="…" is written directly).
+  async function uploadImage(file) {
+    if (!/^image\/(png|jpeg|webp|gif|svg\+xml|avif)$/.test(file.type)) throw new Error("that isn't a PNG, JPEG, WebP, AVIF, GIF or SVG image");
+    const res = await fetch(API + "/assets?name=" + encodeURIComponent(file.name || "image"), { method: "POST", headers: { "Content-Type": file.type }, body: file });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error || res.statusText);
+    return out;
+  }
+  async function replaceImage(el, file) {
+    try {
+      const { url, path: saved } = await uploadImage(file);
+      if (el.tagName === "IMG") {
+        const t = state.tweaks.get(keyOf(el));
+        const from = (t && t.props && t.props.src && t.props.src.from) || el.dataset.uitSrc || el.getAttribute("src") || "";
+        const jsx = describe(el).react;
+        setProp(el, { name: "img", usedAt: jsx && jsx.jsxSource }, "src", from, url);
+      } else setStyle(el, "background-image", `url("${url}")`);
+      toast(`Saved ${saved}; send to write it to the source`);
+    } catch (error) {
+      toast("Image not replaced: " + error.message);
+    }
+  }
+  // The page shows an <img>'s new picture while its src change waits to be sent (and the old one after undo).
+  function syncImagePreviews() {
+    for (const t of state.tweaks.values()) {
+      const el = t.el;
+      if (!el || el.tagName !== "IMG" || !el.isConnected) continue;
+      const want = t.props && t.props.src && t.props.src.to;
+      if (want) {
+        if (el.dataset.uitSrc === undefined) { el.dataset.uitSrc = el.getAttribute("src") || ""; el.dataset.uitSrcset = el.getAttribute("srcset") || ""; }
+        if (el.getAttribute("src") !== want) { el.removeAttribute("srcset"); el.setAttribute("src", want); }
+        el.dataset.uitSrcTo = want;
+      }
+    }
+    for (const el of document.querySelectorAll("img[data-uit-src]")) {
+      const t = state.tweaks.get(keyOf(el));
+      if (t && t.props && t.props.src) continue;
+      // Put the old picture back only while the preview is still what it shows: after an apply (or anything the
+      // app set since) the page's own src is the right one.
+      if (el.getAttribute("src") === el.dataset.uitSrcTo) {
+        el.setAttribute("src", el.dataset.uitSrc);
+        if (el.dataset.uitSrcset) el.setAttribute("srcset", el.dataset.uitSrcset);
+      }
+      delete el.dataset.uitSrc;
+      delete el.dataset.uitSrcset;
+      delete el.dataset.uitSrcTo;
+    }
+  }
+  function imageSection(el) {
+    const bg = /url\(/.test(computed(el, "background-image")) ? computed(el, "background-image") : null;
+    if (el.tagName !== "IMG" && !bg) return null;
+    const box = document.createElement("div");
+    box.className = "img-box";
+    const thumb = document.createElement("div");
+    thumb.className = "img-thumb";
+    const src = el.tagName === "IMG" ? el.currentSrc || el.src : (/url\(["']?([^"')]+)/.exec(bg) || [])[1];
+    if (src) thumb.style.backgroundImage = `url("${String(src).replace(/"/g, "%22")}")`;
+    thumb.title = "Drop an image here to replace it";
+    const file = Object.assign(document.createElement("input"), { type: "file", accept: "image/png,image/jpeg,image/webp,image/avif,image/gif,image/svg+xml", hidden: true });
+    file.addEventListener("change", () => { if (file.files[0]) replaceImage(el, file.files[0]); file.value = ""; });
+    const pick = Object.assign(document.createElement("button"), { className: "btn ghost", textContent: "Replace…", title: "Pick an image file (or drop one on the picture)" });
+    pick.addEventListener("click", () => file.click());
+    thumb.addEventListener("dragover", (e) => { if ([...e.dataTransfer.items].some((i) => i.kind === "file")) { e.preventDefault(); thumb.classList.add("dropping"); } });
+    thumb.addEventListener("dragleave", () => thumb.classList.remove("dropping"));
+    thumb.addEventListener("drop", (e) => { e.preventDefault(); thumb.classList.remove("dropping"); const f = e.dataTransfer.files[0]; if (f) replaceImage(el, f); });
+    const meta = document.createElement("div");
+    meta.className = "img-meta";
+    const shown = el.tagName === "IMG" ? `${el.naturalWidth || "?"}×${el.naturalHeight || "?"}` : "background";
+    meta.append(Object.assign(document.createElement("span"), { textContent: shown }), Object.assign(document.createElement("span"), { textContent: String(src || "").split("/").pop().slice(0, 40), title: String(src || "") }), pick, file);
+    box.append(thumb, meta);
+    if (el.tagName === "IMG") {
+      // Alt text lives on the same tag; missing alt is what the screen check flags.
+      const alt = Object.assign(document.createElement("input"), { value: el.getAttribute("alt") || "", placeholder: "Alt text (empty if it's decoration)", spellcheck: true });
+      alt.addEventListener("keydown", (e) => e.stopPropagation());
+      alt.addEventListener("change", () => {
+        const jsx = describe(el).react;
+        setProp(el, { name: "img", usedAt: jsx && jsx.jsxSource }, "alt", el.getAttribute("alt") || "", alt.value);
+        el.setAttribute("alt", alt.value);
+      });
+      box.append(lbl("Alt text"), alt);
+    }
+    return section("Image", box);
+  }
+
+  // ---------- motion ----------
+  // Transitions and animations: duration, easing (named curves), delay; Replay restarts animations and
+  // plays the hover transition, so a change can be judged in motion.
+  const EASINGS = [
+    ["Smooth out", "cubic-bezier(0.23, 1, 0.32, 1)", "Fast start, long gentle stop: most things entering or reacting"],
+    ["Snappy", "cubic-bezier(0.2, 0, 0, 1)", "Decisive: buttons, toggles, small UI"],
+    ["In-out", "cubic-bezier(0.77, 0, 0.175, 1)", "Moving between two places on screen"],
+    ["Overshoot", "cubic-bezier(0.34, 1.56, 0.64, 1)", "A little bounce: playful, use sparingly"],
+    ["ease-out", "ease-out", ""], ["ease-in-out", "ease-in-out", ""], ["ease", "ease", ""], ["linear", "linear", "Only for constant motion (spinners, marquees)"],
+  ];
+  const firstOf = (v) => splitTopLevel(String(v || ""))[0] || "";
+  const toMs = (v) => { const t = String(v).trim(); const n = parseFloat(t); return isNaN(n) ? 0 : t.endsWith("ms") ? n : n * 1000; };
+  function msField(el, prop, label) {
+    const wrap = document.createElement("div");
+    wrap.className = "field";
+    const t = state.tweaks.get(keyOf(el));
+    if (t && t.changes[changeKey(prop)]) wrap.classList.add("changed");
+    const lab = Object.assign(document.createElement("label"), { textContent: label, title: prop });
+    const input = Object.assign(document.createElement("input"), { spellcheck: false });
+    const shown = () => String(Math.round(toMs(firstOf(computed(el, prop)))));
+    input.value = shown();
+    wireText(input, shown, (v) => { const n = parseFloat(v); if (!isNaN(n) && n >= 0) setStyle(el, prop, Math.round(n) + "ms"); renderPanel(); });
+    input.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      e.preventDefault();
+      const n = Math.max(0, (parseFloat(input.value) || 0) + (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 100 : 10));
+      input.value = String(n);
+      setStyle(el, prop, n + "ms", true);
+    });
+    input.title = "Milliseconds (↑/↓ by 10, Shift by 100)";
+    wrap.append(lab, input);
+    return wrap;
+  }
+  function easingField(el, prop) {
+    const wrap = document.createElement("div");
+    wrap.className = "field";
+    const t = state.tweaks.get(keyOf(el));
+    if (t && t.changes[changeKey(prop)]) wrap.classList.add("changed");
+    const lab = Object.assign(document.createElement("label"), { textContent: "Easing", title: prop });
+    const select = document.createElement("select");
+    const current = firstOf(computed(el, prop)).replace(/\s+/g, " ");
+    const norm = (v) => v.replace(/\s+/g, "").replace(/0\./g, ".");
+    let known = false;
+    for (const [name, value, hint] of EASINGS) {
+      const opt = Object.assign(document.createElement("option"), { value, textContent: name, title: hint });
+      if (norm(value) === norm(current)) { opt.selected = true; known = true; }
+      select.append(opt);
+    }
+    if (!known) select.prepend(Object.assign(document.createElement("option"), { value: current, textContent: current, selected: true }));
+    select.addEventListener("change", () => setStyle(el, prop, select.value));
+    wrap.append(lab, select);
+    return wrap;
+  }
+  function replayMotion(el) {
+    // Animations start over; the hover transition plays there and back.
+    for (const a of el.getAnimations ? el.getAnimations({ subtree: true }) : []) { try { a.cancel(); a.play(); } catch {} }
+    const had = el.getAttribute("data-ui-tweak-force");
+    if (!had && !state.editState && state.selected === el) {
+      // The hover rules, forced on for a moment (the same sheet the Hover state uses while editing).
+      el.setAttribute("data-ui-tweak-force", "hover");
+      state.editState = "hover";
+      updateStateSheet();
+      state.editState = "";
+      const back = Math.min(2000, Math.max(250, toMs(firstOf(computed(el, "transition-duration"))) + toMs(firstOf(computed(el, "transition-delay"))) + 250));
+      setTimeout(() => {
+        if (el.getAttribute("data-ui-tweak-force") === "hover" && state.editState !== "hover") el.removeAttribute("data-ui-tweak-force");
+        updateStateSheet();
+      }, back);
+    }
+  }
+  function motionSection(el) {
+    const box = document.createElement("div");
+    const hasTransition = toMs(firstOf(computed(el, "transition-duration"))) > 0;
+    const animName = firstOf(computed(el, "animation-name"));
+    const hasAnimation = animName && animName !== "none";
+    if (hasTransition) {
+      const props = Object.assign(document.createElement("input"), { value: computed(el, "transition-property"), spellcheck: false, title: "Which properties animate (list them: \"all\" animates layout too, which is slow)" });
+      wireText(props, () => computed(el, "transition-property"), (v) => { setStyle(el, "transition-property", v.trim() || "all"); renderPanel(); });
+      box.append(lbl("Transition"), props, grid("grid2", msField(el, "transition-duration", "Dur"), msField(el, "transition-delay", "Delay")), easingField(el, "transition-timing-function"));
+    }
+    if (hasAnimation) {
+      box.append(lbl(`Animation · ${animName}`), grid("grid2", msField(el, "animation-duration", "Dur"), msField(el, "animation-delay", "Delay")), easingField(el, "animation-timing-function"));
+    }
+    const row = document.createElement("div");
+    row.className = "crumbs";
+    row.style.marginTop = "6px";
+    if (hasTransition || hasAnimation) {
+      const replay = Object.assign(document.createElement("button"), { textContent: "▶ Replay", title: "Restart its animations and play the hover transition there and back" });
+      replay.addEventListener("click", () => replayMotion(el));
+      row.append(replay);
+    } else {
+      box.append(lbl("No transition or animation"));
+      const add = Object.assign(document.createElement("button"), { textContent: "＋ Add transition", title: "Colour, background, shadow, transform and opacity changes ease over 200ms" });
+      add.addEventListener("click", () => {
+        state.dragStamp = ++stampCounter;
+        setStyle(el, "transition-property", "color, background-color, border-color, box-shadow, transform, opacity", true);
+        setStyle(el, "transition-duration", "200ms", true);
+        setStyle(el, "transition-timing-function", "cubic-bezier(0.23, 1, 0.32, 1)", true);
+        state.dragStamp = 0;
+        renderPanel();
+      });
+      row.append(add);
+    }
+    box.append(row);
+    // A long or slow-start curve on small UI feels laggy: say so.
+    const dur = Math.max(toMs(firstOf(computed(el, "transition-duration"))), hasAnimation ? toMs(firstOf(computed(el, "animation-duration"))) : 0);
+    const ease = firstOf(computed(el, hasTransition ? "transition-timing-function" : "animation-timing-function"));
+    const tips = [];
+    if (dur > 400 && el.matches(INTERACTIVE)) tips.push(`${Math.round(dur)}ms is long for a control: 150–250ms feels responsive`);
+    if (/^(ease-in|cubic-bezier\(0?\.[4-9])/.test(ease) && hasTransition) tips.push("A slow start (ease-in) makes UI feel sluggish: ease-out reacts at once");
+    if (/\ball\b/.test(computed(el, "transition-property")) && hasTransition) tips.push("\"all\" also animates layout changes: list the properties instead");
+    for (const t of tips) box.append(Object.assign(document.createElement("div"), { className: "el-meta", textContent: "⚑ " + t }));
+    return section("Motion", box);
   }
 
   function selectField(el, prop, label, options) {
@@ -3864,10 +4127,10 @@
   // ---------- Ask Claude ----------
   // The element's subtree with the styles that shape it, for the variations agent.
   const CONTEXT_PROPS = ["display", "flex-direction", "gap", "justify-content", "align-items", "padding", "margin", "width", "height", "font-family", "font-size", "font-weight", "line-height", "letter-spacing", "color", "background-color", "background-image", "border", "border-radius", "box-shadow", "opacity", "text-align"];
-  function subtreeContext(el) {
+  function subtreeContext(el, { screen = false } = {}) {
     const nodes = [];
     const walk = (n, target, depth) => {
-      if (nodes.length >= 24 || n === host) return;
+      if (nodes.length >= (screen ? 60 : 24) || n === host) return;
       const cs = getComputedStyle(n);
       const styles = {};
       for (const p of CONTEXT_PROPS) {
@@ -3876,12 +4139,12 @@
       }
       const own = [...n.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent.trim()).join(" ").trim();
       nodes.push({ target, tag: n.tagName.toLowerCase(), classes: [...n.classList].slice(0, 4), text: own.slice(0, 40) || undefined, styles });
-      if (depth >= 3) return;
+      if (depth >= (screen ? 5 : 3)) return;
       [...n.children].forEach((c, i) => c.getClientRects().length && walk(c, `${target} > :nth-child(${i + 1})`, depth + 1));
     };
     walk(el, ":scope", 0);
     const t = designTokens();
-    const markup = elementMarkup(el);
+    const markup = elementMarkup(el, screen ? 40000 : 12000);
     const jsx = describe(el).react;
     return {
       width: innerWidth,
@@ -3892,7 +4155,7 @@
     };
   }
   // The element's markup for layout variations: the kit's own attributes out, long values and icons shortened.
-  function elementMarkup(el) {
+  function elementMarkup(el, max = 12000) {
     const clone = el.cloneNode(true);
     for (const n of [clone, ...clone.querySelectorAll("*")]) {
       for (const a of [...n.attributes]) {
@@ -3902,7 +4165,7 @@
       if (n.tagName && n.tagName.toLowerCase() === "svg" && n.innerHTML.length > 400) n.innerHTML = "<!-- icon -->";
     }
     const html = clone.outerHTML;
-    return html.length <= 12000 ? html : null;
+    return html.length <= max ? html : null;
   }
   // A layout variation's markup as a node, with anything that could run taken out (the mod cleans it too).
   function safeMarkup(html, doc = document) {
@@ -3949,10 +4212,25 @@
     return "<!doctype html>\n" + clone.outerHTML;
   }
 
-  async function ask(kind, el, instruction) {
+  // The element that is the screen: from the body down, while one child covers most of the viewport.
+  function screenRoot() {
+    const area = (n) => { const r = n.getBoundingClientRect(); return Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0)) * Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0)); };
+    const full = innerWidth * innerHeight;
+    let n = document.body, best = null;
+    for (let depth = 0; depth < 8 && n; depth++) {
+      const kids = [...n.children].filter((c) => !isOwn(c) && !/^(script|style|link|template|noscript)$/i.test(c.tagName) && shownEl(c)).map((c) => [c, area(c)]).sort((a, b) => b[1] - a[1]);
+      if (!kids.length || kids[0][1] < full * 0.6) break;
+      // Two big children (a sidebar and a main area): this element is the screen.
+      if (kids[1] && kids[1][1] > full * 0.25) break;
+      n = kids[0][0];
+      best = n;
+    }
+    return best;
+  }
+  async function ask(kind, el, instruction, opts = {}) {
     try {
       const refs = (state.askRefs || []).map((r) => r.path);
-      const body = { kind, instruction, refs, element: el ? describe(el) : null, page: { url: here(), path: location.pathname }, context: kind === "variations" && el ? subtreeContext(el) : null, count: 2 };
+      const body = { kind, instruction, refs, element: el ? describe(el) : null, page: { url: here(), path: location.pathname }, context: kind === "variations" && el ? subtreeContext(el, opts) : null, count: 2, ...(opts.screen ? { scope: "screen" } : {}), ...(state.askSkills && state.askSkills.length ? { skills: state.askSkills } : {}) };
       const res = await fetch(API + "/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const out = await res.json();
       if (!res.ok) throw new Error(out.error || res.statusText);
@@ -3966,7 +4244,7 @@
           const snap = await fetch(API + "/snapshots", { method: "POST", headers: { "Content-Type": "text/html" }, body: snapshotHtml(el) });
           if (snap.ok) snapshot = (await snap.json()).url;
         } catch {}
-        STUDIO.__studio.explore({ askId: out.ask.id, instruction, snapshot, refs: state.askRefs || [], selector: body.element.selector, label: (d.react && d.react.components && d.react.components[0] ? d.react.components[0].name + " · " : "") + (d.classes[0] ? "." + d.classes[0] : d.tag), element: body.element, page: body.page, context: body.context, url: here() });
+        STUDIO.__studio.explore({ askId: out.ask.id, instruction, snapshot, refs: state.askRefs || [], skills: body.skills, scope: body.scope, selector: body.element.selector, label: opts.screen ? "Whole screen" : (d.react && d.react.components && d.react.components[0] ? d.react.components[0].name + " · " : "") + (d.classes[0] ? "." + d.classes[0] : d.tag), element: body.element, page: body.page, context: body.context, url: here() });
       } else {
         state.asks = [...(state.asks || []), { id: out.ask.id, kind, instruction, status: "waiting", page: here(), selector: body.element && body.element.selector }];
       }
@@ -3976,6 +4254,37 @@
     } catch (error) {
       toast("Couldn't reach the tweaks server (" + error.message + ")");
     }
+  }
+
+  // ---------- design skills ----------
+  // What "Do it" and Explore work from: the design skills installed in Claude Code (impeccable, Emil
+  // Kowalski's, ones from the ui-skills registry…). Auto lets Claude pick the one that fits; or pick up to 3.
+  const SKILLS_KEY = "ui-tweaks:ask-skills";
+  try { state.askSkills = JSON.parse(localStorage.getItem(SKILLS_KEY) || "[]"); } catch { state.askSkills = []; }
+  function skillPicker() {
+    const row = document.createElement("div");
+    row.className = "ask-skills";
+    const skills = state.designSkills || [];
+    if (!skills.length) return row;
+    const chosen = (state.askSkills || []).filter((n) => skills.some((s) => s.name === n));
+    const chip = (label, title, on, run) => {
+      const b = Object.assign(document.createElement("button"), { textContent: label, title });
+      if (on) b.classList.add("on");
+      b.addEventListener("click", run);
+      row.append(b);
+    };
+    row.append(Object.assign(document.createElement("span"), { textContent: "Skills", title: "Design skills Claude works from for Do it and Explore" }));
+    const save = (list) => { state.askSkills = list; try { localStorage.setItem(SKILLS_KEY, JSON.stringify(list)); } catch {} renderPanel(); };
+    chip("Auto", "Claude picks the installed skill that fits each request", !chosen.length, () => save([]));
+    for (const s of skills) {
+      const on = chosen.includes(s.name);
+      chip(s.label, `${s.name}: ${s.lens}${on ? "" : chosen.length >= 3 ? " (3 at most: unpick one first)" : ""}`, on, () => {
+        if (on) save(chosen.filter((n) => n !== s.name));
+        else if (chosen.length < 3) save([...chosen, s.name]);
+        else toast("Three skills at most: unpick one first");
+      });
+    }
+    return row;
   }
 
   function askSection(el) {
@@ -4041,12 +4350,17 @@
         ? "Put this element on a board and explore variations from Claude: see them side by side, ask for more like one, and use one on the screen. The text above, if any, sets the direction"
         : "Claude proposes a couple of looks for this element (styles only; say how many in the box for more); preview them and pick one. The text above, if any, sets the direction",
     });
-    vary.disabled = !el;
-    vary.addEventListener("click", () => el && ask("variations", el, input.value.trim()));
+    // With nothing selected, the whole screen is explored: its layout and hierarchy, not one element.
+    if (!el) vary.title = "Explore the whole screen: Claude proposes other layouts for it, side by side. The text above, if any, sets the direction";
+    vary.addEventListener("click", () => {
+      const target = el || screenRoot();
+      if (!target) return toast("Nothing on this screen to explore");
+      ask("variations", target, input.value.trim(), { screen: !el });
+    });
     actions.append(go, vary);
     const list = document.createElement("div");
     list.className = "ask-list";
-    box.append(input, refs, actions, list);
+    box.append(input, refs, skillPicker(), actions, list);
     renderAskList(list);
     return section("Ask Claude", box);
   }
@@ -4474,7 +4788,7 @@
     } else if (!el || !el.isConnected) {
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.innerHTML = (state.isPicking ? "" : `<b>Interact</b> is on: the app works as usual. Press <b>V</b> (or Inspect) to pick elements.<br/><br/>`) + `<b>Click any element</b> to tweak it.<br/>Drag it to reorder or move it, drag its handles to resize. ⌘-drag places it freely.<br/>Drag a field's label to scrub its value; Shift for ×10.<br/>Double-click text to edit it.<br/><br/>When you're happy, press <b>Send to Claude</b>. Claude edits the real source to match.`;
+      empty.innerHTML = (state.isPicking ? "" : `<b>Interact</b> is on: the app works as usual. <b>${IS_MAC ? "⌘" : "Ctrl"}-click</b> picks one element; <b>V</b> (or Inspect) picks with every click.<br/><br/>`) + `<b>Click any element</b> to tweak it.<br/>Drag it to reorder or move it, drag its handles to resize. ⌘-drag places it freely.<br/>Drag a field's label to scrub its value; Shift for ×10.<br/>Double-click text to edit it.<br/><br/>When you're happy, press <b>Send to Claude</b>. Claude edits the real source to match.`;
       if (state.showInsert) scroll.append(insertSection());
       scroll.append(empty);
       scroll.append(askSection(null));
@@ -4524,6 +4838,7 @@
         ["Tailwind", "Copy its styles as Tailwind classes", (n) => copyCode(n, "tailwind")],
         ["JSX", "Copy its JSX as written in the source", (n) => copyCode(n, "jsx")],
         ["Comment", "Pin a comment to this element (M)", (n) => startComment(n)],
+        ["Make component", "Claude turns this into a reusable component, uses it here and replaces copies of it in the source (Undo apply reverts it)", (n) => makeComponent(n)],
       ]) {
         const b = document.createElement("button");
         b.textContent = label;
@@ -4646,6 +4961,8 @@
         ));
       }
 
+      const image = imageSection(el);
+      if (image) scroll.append(image);
       scroll.append(section("Fill & border",
         ...fillControls(el),
         lbl("Corner radius"),
@@ -4662,6 +4979,7 @@
       shadowInput.addEventListener("change", () => setStyle(el, "box-shadow", shadowInput.value.trim()));
       shadowInput.addEventListener("keydown", (e) => e.stopPropagation());
       scroll.append(section("Shadow", shadowInput));
+      scroll.append(motionSection(el));
 
       const tweak = state.tweaks.get(keyOf(el));
       const note = document.createElement("textarea");
@@ -5150,6 +5468,12 @@
     try {
       const res = await fetch(API + "/status", { cache: "no-store" });
       const { pendingIds, pendingTweaks = [], version, lastApply = null, update = null, asks = [], running = null, listener = null } = await res.json();
+      const skillsNow = JSON.stringify((listener && listener.skills) || []);
+      if (listener && listener.skills && skillsNow !== JSON.stringify(state.designSkills || [])) {
+        state.designSkills = listener.skills;
+        if (STUDIO && STUDIO.__studio && STUDIO.__studio.designSkills) STUDIO.__studio.designSkills(listener.skills);
+        if (state.isOpen && !state.selected) renderPanel();
+      }
       // Nobody to apply what's waiting: no Claude Code session with the mod has checked in for 30s.
       const waitingOnClaude = pendingTweaks.some((p) => !p.skipped) || asks.some((a) => a.status === "waiting");
       const unheard = waitingOnClaude && !running && (!listener || listener.ago > 30000);
@@ -5288,6 +5612,7 @@
     const count = launch.querySelector(".count");
     count.textContent = String(state.tweaks.size);
     count.classList.toggle("hidden", state.tweaks.size === 0);
+    syncImagePreviews();
     if (state.isOpen) renderPanel();
   }
 
@@ -5630,6 +5955,23 @@
     render();
   }
   // Every instance of the same component, or else every element with the same tag and classes.
+  // ---------- make a component ----------
+  // Claude turns the selected element into a reusable component (in the project's own style), uses it here,
+  // and replaces copies of the same markup elsewhere in the source.
+  function makeComponent(el) {
+    const inst = componentInstance(el);
+    if (inst && inst.usedAt) return toast(`This is already <${inst.name}>: edit that component, or select something inside it`);
+    const d = describe(el);
+    const guess = (d.classes.find((c) => !/--t[0-9a-z]{4}$/.test(c)) || d.tag).replace(/[-_]+(\w)/g, (_, c) => c.toUpperCase()).replace(/^\w/, (c) => c.toUpperCase());
+    const name = (prompt("Name for the new component", guess) || "").trim();
+    if (!name) return;
+    if (!/^[A-Z][A-Za-z0-9]*$/.test(name)) return toast("A component name starts with a capital letter, letters and digits only");
+    const sig = (n) => n.tagName + "|" + [...n.classList].filter((c) => !/--t[0-9a-z]{4}$/.test(c)).sort().join(" ");
+    const twins = [...document.body.querySelectorAll(el.tagName)].filter((n) => n !== el && !isOwn(n) && sig(n) === sig(el) && n.getClientRects().length).length;
+    const instruction = `Make a reusable component named ${name} from this element (${d.selector}${d.react && d.react.jsxSource ? `, JSX at ${d.react.jsxSource}` : ""}). Put it in its own file next to the project's other components, following their conventions (file naming, styling approach, exports, types). Turn what differs between uses (text, images, links, handlers, variants) into props with sensible names and defaults; keep its look exactly the same. Replace this usage with <${name} …/>, and also replace copies of the same markup elsewhere in the source${twins ? ` (this screen has ${twins} other element${twins === 1 ? "" : "s"} that look the same)` : ""}, keeping each one's content. Don't change anything else.`;
+    ask("edit", el, instruction);
+  }
+
   function selectMatching(el) {
     const inst = componentInstance(el);
     const sig = (n) => n.tagName + "|" + [...n.classList].sort().join(" ");
@@ -5925,15 +6267,34 @@
     return t && t.nodeType === 1 && t !== document.documentElement && t !== document.body ? t : null;
   };
 
+  // In Interact, ⌘-click (Ctrl-click) picks the element under the pointer without leaving Interact;
+  // holding ⌘ outlines what it would pick.
+  const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  const peeking = (e) => state.isOpen && !state.isPicking && (IS_MAC ? e.metaKey : e.ctrlKey) && !e.altKey && !state.placing;
   document.addEventListener("pointermove", (e) => {
-    if (!picking()) return;
+    if (!picking()) {
+      const was = state.peek;
+      state.peek = peeking(e);
+      if (state.peek) state.hovered = target(e);
+      else if (was) state.hovered = null;
+      return;
+    }
     state.hovered = target(e);
     if (state.placing) showDrop(dropTarget(placingOver(state.hovered, e), e.clientX, e.clientY, e.shiftKey));
   }, true);
 
   for (const type of ["pointerdown", "mousedown", "mouseup", "click", "pointerup"]) {
     document.addEventListener(type, (e) => {
-      if (!picking()) return;
+      if (!picking()) {
+        if (!peeking(e)) return;
+        const t = target(e);
+        if (!t) return;
+        // Nothing reaches the app: no click, no link opening in a new tab.
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (type === "click") select(t);
+        return;
+      }
       const t = target(e);
       if (!t) return;
       if (t.isContentEditable && t.dataset.uiTweaksEditing) return;
@@ -6090,6 +6451,7 @@
 
   // Alt held: measure from the selection to what the pointer is over. \ released: back to the previews.
   function onKeyUp(e) {
+    if ((e.key === "Meta" || e.key === "Control") && state.peek) { state.peek = false; state.hovered = null; }
     if (e.key === "\\") compare(false);
     if (e.key === "Alt") state.measuring = false;
   }
@@ -6178,6 +6540,8 @@
     get showComments() { return state.showComments; },
     setComments: (on) => setComments(!!on),
     comment: (selector) => startComment(document.querySelector(selector)),
+    // The findings without the panel (the studio's check of every screen), as plain data.
+    checkData: async (opts = {}) => (await checkScreen(opts)).map((i) => ({ kind: i.kind, severe: !!i.severe, what: i.what, detail: i.detail, element: nameOf(i.el), selector: (() => { try { return cssPath(i.el); } catch { return ""; } })() })),
     // Check this screen (the studio's toolbar runs it); resolves to the findings.
     check: async () => { if (!state.isOpen) toggle(true); await runCheck(); return (state.check.issues || []).map((i) => ({ kind: i.kind, severe: i.severe, what: i.what, detail: i.detail, element: nameOf(i.el) })); },
     // The studio's light / dark preview: "light", "dark", or null for the system's.

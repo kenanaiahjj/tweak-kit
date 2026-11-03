@@ -36,6 +36,10 @@ export async function addAsk(root, body) {
     count: Math.min(4, Math.max(1, Number(body.count) || 2)),
     // For variations: style changes only, rebuilt layouts only, or either.
     ...(kind === "variations" && ["styles", "layout"].includes(body.mode) ? { mode: body.mode } : {}),
+    // Variations of the whole screen (nothing was selected), not one element.
+    ...(kind === "variations" && body.scope === "screen" ? { scope: "screen" } : {}),
+    // Design skills to work from (names; the mod finds them among the installed ones), at most 3.
+    ...(Array.isArray(body.skills) && body.skills.length ? { skills: body.skills.filter((n) => /^[a-z0-9][a-z0-9-]{0,60}$/.test(String(n))).slice(0, 3) } : {}),
     ...(kind === "publish" ? { file: body.file, title: String(body.title || "Design review").slice(0, 120) } : {}),
     // Reference images attached in the panel (files the dev server saved in .ui-tweaks/refs).
     ...(Array.isArray(body.refs) && body.refs.length ? { refs: body.refs.filter((r) => /^\.ui-tweaks\/refs\/r[a-z0-9]+\.(png|jpg|webp|gif)$/.test(String(r))).slice(0, 6) } : {}),

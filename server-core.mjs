@@ -211,7 +211,7 @@ function readRaw(req, limit) {
     let size = 0;
     req.on("data", (c) => {
       size += c.length;
-      if (size > limit) reject(Object.assign(new Error("That file is too big (10 MB at most)"), { status: 413 }));
+      if (size > limit) reject(Object.assign(new Error(`That file is too big (${Math.round(limit / 1_000_000)} MB at most)`), { status: 413 }));
       else chunks.push(c);
     });
     req.on("end", () => resolve(Buffer.concat(chunks)));
@@ -381,6 +381,12 @@ export function studioPage(appPath) {
   .ex-edit .ex-html { width: 100%; min-height: 90px; resize: vertical; border: 0; border-radius: 8px; background: rgba(255,255,255,.05); color: var(--text); padding: 8px; font: 11px/1.45 var(--mono); outline: none; }
   .ex-edit .ex-html:focus { box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
   .ex-card .ex-name .ex-kind { padding: 1px 6px; border-radius: 5px; background: rgba(132,204,22,.16); color: #a3e635; font-size: 10.5px; font-weight: 600; }
+  .ex-skills { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .ex-skills[hidden] { display: none; }
+  .ex-skills > span { color: var(--dim); font-size: 11.5px; margin: 0 2px 0 4px; }
+  .ex-head .ex-skills button { height: 26px; padding: 0 9px; font-size: 11.5px; }
+  .ex-head .ex-skills button.on { background: rgba(255,255,255,.14); color: #fff; }
+  .ex-card .ex-name .ex-skill { padding: 1px 6px; border-radius: 5px; background: rgba(147,197,253,.14); color: #93c5fd; font-size: 10.5px; font-weight: 600; }
   .ex-mode { display: inline-flex; padding: 2px; border-radius: 9px; background: rgba(255,255,255,.05); }
   .ex-head .ex-mode button { height: 28px; padding: 0 10px; background: transparent; }
   .ex-head .ex-mode button.on { background: rgba(255,255,255,.12); color: #fff; }
@@ -413,6 +419,21 @@ export function studioPage(appPath) {
   .ex-pop button { display: grid; gap: 2px; text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; font: 500 12.5px system-ui, -apple-system, sans-serif; }
   .ex-pop button:hover { background: rgba(255,255,255,.08); }
   .ex-pop button span { color: var(--dim); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ck-all { position: fixed; z-index: 30; right: 16px; top: 64px; width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 96px); display: flex; flex-direction: column; background: #212121; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 48px rgba(0,0,0,.55); }
+  .ck-all[hidden] { display: none; }
+  .ck-all-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .ck-all-head h3 { margin: 0; font-size: 13px; color: #fff; }
+  .ck-all-sum { flex: 1; color: var(--dim); font-size: 12px; }
+  .ck-all-head button { height: 28px; padding: 0 10px; border: 0; border-radius: 8px; background: rgba(255,255,255,.06); color: var(--label); font: 500 12px system-ui, -apple-system, sans-serif; cursor: pointer; }
+  .ck-all-list { overflow: auto; padding: 6px; display: grid; gap: 2px; }
+  .ck-all-row { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; cursor: pointer; font: 12px system-ui, -apple-system, sans-serif; }
+  .ck-all-row:hover { background: rgba(255,255,255,.06); }
+  .ck-all-n { width: 22px; height: 22px; border-radius: 11px; display: grid; place-items: center; font-weight: 700; font-size: 11px; color: #fff; background: #3a3a3a; }
+  .ck-all-n.bad { background: #e5484d; } .ck-all-n.warn { background: #d97706; } .ck-all-n.ok { background: #2f7d4f; }
+  .ck-all-name { display: grid; min-width: 0; }
+  .ck-all-name b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ck-all-name span, .ck-all-kinds { color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ck-all-wait { padding: 10px; color: var(--dim); font-size: 12px; }
   .cm-pop .cm-empty { padding: 10px; color: var(--dim); font-size: 12px; line-height: 1.45; }
   .toolbar .cm-toggle.on { background: rgba(255,178,32,.16); color: #ffb020; }
   .ex-pop .ex-forget { color: var(--dim); font-size: 11.5px; text-align: center; }
@@ -608,6 +629,7 @@ export function studioPage(appPath) {
       </span>
       <span class="tb-group">
         <button class="cm-toggle" title="Comments pinned to elements (M on a screen: pin one to the selected element)">💬</button>
+        <button class="ck-all-toggle" title="Check every screen: layout (also at 320px wide), contrast, tap targets, labels and off-token values, with the worst screens first">✓ All screens</button>
         <button class="ex-toggle" hidden title="Your explorations: reopen the variations Claude made for an element">✦ Explorations</button>
         <button class="vs-toggle" title="Compare with another branch or commit, side by side">⑂ Versions</button>
         <span class="vs-modes"><button data-mode="interact" title="Interact (C): use the app; clicks go to it, not the panel">Interact</button><button data-mode="inspect" title="Inspect (V): click elements to select and tweak them">Inspect</button></span>
@@ -636,6 +658,7 @@ export function studioPage(appPath) {
 <div class="rv-pop" hidden></div>
 <div class="ex-pop" hidden></div>
 <div class="ex-pop cm-pop" hidden></div>
+<div class="ck-all" hidden></div>
 <div class="rv-progress" hidden></div>
 <div class="vs-pop" hidden></div>
 <script>
@@ -912,6 +935,8 @@ export function studioPage(appPath) {
       void r;
     },
     hand: setHand,
+    // The design skills installed in Claude Code (a screen's panel passes them on), for the board's picker.
+    designSkills(list) { exSkills = list || []; if (ex.req) drawExSkills(); },
     // A screen's panel turned its comment pins on or off, or changed a comment.
     commentsChanged: () => loadCm(),
     // The panel's Explore: open the board for an element, with its first variations request.
@@ -1492,6 +1517,10 @@ export function studioPage(appPath) {
   }
   function openExploration(saved) {
     clearTimeout(ex.timer);
+    // The installed design skills, for the board's picker (also kept fresh while variations are on the way).
+    fetch("/__ui-tweaks/status", { cache: "no-store" }).then((r) => r.json()).then(({ listener }) => {
+      if (listener && listener.skills) { exSkills = listener.skills; drawExSkills(); }
+    }).catch(() => {});
     ex.req = { ...saved };
     delete ex.req.asks;
     ex.asks = (saved.asks || []).map((a) => ({ ...a, drawn: null, placeholder: null }));
@@ -1517,6 +1546,98 @@ export function studioPage(appPath) {
   });
   addEventListener("pointerdown", (e) => { const pop = $(".ex-pop:not(.cm-pop)"); if (!pop.hidden && !e.target.closest(".ex-pop, .ex-toggle")) pop.hidden = true; });
   drawExToggle();
+
+  // ---------- check every screen ----------
+  // Each screen loads in a hidden frame of its own size (and again at 320px wide, for layout only); its panel
+  // runs the same check as ✓ in the panel. The report lists screens with the most failures first.
+  const ckAll = { running: false, cancel: false, results: [] };
+  const CK_KINDS = { layout: "Layout", contrast: "Contrast", tap: "Tap targets", label: "Labels", token: "Off-token" };
+  function loadHidden(url, w, h) {
+    return new Promise((resolve) => {
+      const frame = document.createElement("iframe");
+      frame.name = "uit-check";
+      frame.tabIndex = -1;
+      frame.setAttribute("aria-hidden", "true");
+      frame.style.cssText = "position:fixed;left:-20000px;top:0;border:0;width:" + w + "px;height:" + h + "px";
+      let done = false;
+      const finish = (v) => { if (!done) { done = true; resolve(v); } };
+      frame.addEventListener("load", async () => {
+        // Wait for the app and its panel, then for it to settle (data, fonts, entrance animations).
+        for (let i = 0; i < 50; i++) { try { if (frame.contentWindow.__uiTweaks) break; } catch {} await sleep(100); }
+        await sleep(1200);
+        finish(frame);
+      });
+      setTimeout(() => finish(frame), 15000);
+      document.body.append(frame);
+      frame.src = url;
+    });
+  }
+  function drawCkAll() {
+    const box = $(".ck-all");
+    const done = ckAll.results;
+    const total = canvas.artboards.length;
+    const sev = (r) => r.issues.filter((i) => i.severe).length;
+    const rows = done.slice().sort((a, b) => sev(b) - sev(a) || b.issues.length - a.issues.length);
+    box.innerHTML = '<div class="ck-all-head"><h3>Check every screen</h3><span class="ck-all-sum"></span><button class="ck-all-again" hidden>Check again</button><button class="ck-all-close">Close</button></div><div class="ck-all-list"></div>';
+    box.querySelector(".ck-all-sum").textContent = ckAll.running ? "Checking " + (done.length + 1) + " of " + total + "…" : (ckAll.cancelled ? "Stopped after " + done.length + " of " + total + " · " : done.length + " screens · ") + done.reduce((t, r) => t + sev(r), 0) + " failing · " + done.reduce((t, r) => t + r.issues.length - sev(r), 0) + " to look at";
+    box.querySelector(".ck-all-again").hidden = ckAll.running;
+    box.querySelector(".ck-all-again").addEventListener("click", checkAll);
+    box.querySelector(".ck-all-close").textContent = ckAll.running ? "Stop" : "Close";
+    box.querySelector(".ck-all-close").addEventListener("click", () => { if (ckAll.running) ckAll.cancel = true; else box.hidden = true; });
+    const list = box.querySelector(".ck-all-list");
+    for (const r of rows) {
+      const kinds = {};
+      for (const i of r.issues) kinds[i.kind] = (kinds[i.kind] || 0) + 1;
+      const row = document.createElement("button");
+      row.className = "ck-all-row";
+      row.innerHTML = '<span class="ck-all-n ' + (sev(r) ? "bad" : r.issues.length ? "warn" : "ok") + '">' + (sev(r) || r.issues.length || "✓") + '</span><span class="ck-all-name"><b></b><span></span></span><span class="ck-all-kinds"></span>';
+      row.querySelector("b").textContent = r.name;
+      row.querySelector(".ck-all-name span").textContent = r.issues.slice(0, 3).map((i) => i.element + ": " + i.what + (i.at ? " (" + i.at + ")" : "")).join(" · ") || "Nothing found";
+      row.querySelector(".ck-all-kinds").textContent = Object.entries(kinds).map(([k, n]) => CK_KINDS[k] + " " + n).join(" · ");
+      row.title = "Open this screen and its findings";
+      row.addEventListener("click", () => {
+        box.hidden = true;
+        if (r.id !== focusedId()) setMode("focus", r.id);
+        // Its findings, pinned on the screen, once its panel is up.
+        const show = (n = 0) => { const f = frames.get(r.id); let t = null; try { t = f && f.iframe.contentWindow.__uiTweaks; } catch {} if (t && t.check) t.check(); else if (n < 40) setTimeout(() => show(n + 1), 200); };
+        setTimeout(show, 600);
+      });
+      list.append(row);
+    }
+    if (ckAll.running) list.append(Object.assign(document.createElement("div"), { className: "ck-all-wait", textContent: "Each screen loads on its own (it doesn't change the one you're on)…" }));
+  }
+  async function checkAll() {
+    if (ckAll.running) return;
+    Object.assign(ckAll, { running: true, cancel: false, cancelled: false, results: [] });
+    $(".ck-all").hidden = false;
+    drawCkAll();
+    for (const a of canvas.artboards) {
+      if (ckAll.cancel) break;
+      const [w, h] = size(a);
+      const issues = [];
+      for (const width of w > 360 ? [w, 320] : [w]) {
+        const frame = await loadHidden(a.url, width, h);
+        // A screen that never answers (its app stuck loading) is skipped after 15s.
+        try { for (const i of await Promise.race([frame.contentWindow.__uiTweaks.checkData({ layoutOnly: width !== w }), sleep(15000).then(() => [])])) issues.push(width !== w ? { ...i, at: width + "px" } : i); } catch {}
+        frame.remove();
+        if (ckAll.cancel) break;
+      }
+      // The same finding at both widths counts once.
+      const seen = new Set();
+      ckAll.results.push({ id: a.id, name: a.name || a.url, issues: issues.filter((i) => { const k = i.kind + i.selector + i.what; return !seen.has(k) && seen.add(k); }) });
+      drawCkAll();
+    }
+    ckAll.cancelled = ckAll.cancel;
+    ckAll.running = false;
+    drawCkAll();
+  }
+  $(".ck-all-toggle").addEventListener("click", () => {
+    const box = $(".ck-all");
+    if (!box.hidden && !ckAll.running) { box.hidden = true; return; }
+    if (ckAll.running) { box.hidden = false; return; }
+    if (ckAll.results.length && box.hidden) { box.hidden = false; drawCkAll(); return; }
+    checkAll();
+  });
 
   // ---------- light / dark ----------
   // Every screen shown light or dark (each frame's panel does the work; new frames read the choice as they load).
@@ -1578,10 +1699,28 @@ export function studioPage(appPath) {
   loadCm();
   setInterval(() => { if (!document.hidden) loadCm(); }, 15000);
   const EX_PAD = 24, EX_MAX = 380;
+  let exSkills = [];
+  const skillLabel = (name) => (exSkills.find((s) => s.name === name) || {}).label || name;
+  // Which design skills the next batch works from: Auto (Claude picks) or up to three.
+  function drawExSkills() {
+    const row = $(".explore .ex-skills");
+    if (!row) return;
+    row.innerHTML = "";
+    row.hidden = !exSkills.length;
+    const chosen = (ex.req.skills || []).filter((n) => exSkills.some((s) => s.name === n));
+    const chip = (label, title, on, run) => { const b = Object.assign(document.createElement("button"), { textContent: label, title }); if (on) b.classList.add("on"); b.addEventListener("click", run); row.append(b); };
+    row.append(Object.assign(document.createElement("span"), { textContent: "Skills" }));
+    const save = (list) => { ex.req.skills = list; saveExploration(); drawExSkills(); };
+    chip("Auto", "Claude picks the installed design skill that fits", !chosen.length, () => save([]));
+    for (const s of exSkills) {
+      const on = chosen.includes(s.name);
+      chip(s.label, s.name + ": " + s.lens, on, () => on ? save(chosen.filter((n) => n !== s.name)) : chosen.length < 3 ? save([...chosen, s.name]) : note("Three skills at most: unpick one first"));
+    }
+  }
   function exRun(id) { return ex.asks.find((a) => a.id === id); }
   async function exAsk(instruction) {
     const r = ex.req;
-    const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "variations", instruction, mode: r.mode, refs: (r.refs || []).map((x) => x.path), element: r.element, page: r.page, context: r.context, count: 2 }) });
+    const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "variations", instruction, mode: r.mode, scope: r.scope, skills: r.skills, refs: (r.refs || []).map((x) => x.path), element: r.element, page: r.page, context: r.context, count: 2 }) });
     const out = await res.json();
     if (!res.ok) throw new Error(out.error || res.statusText);
     ex.asks.push({ id: out.ask.id, instruction, status: "waiting" });
@@ -1595,7 +1734,8 @@ export function studioPage(appPath) {
     const open = ex.asks.filter((a) => a.status !== "done" && a.status !== "failed");
     if (!open.length) return;
     try {
-      const { asks = [] } = await fetch("/__ui-tweaks/status", { cache: "no-store" }).then((r) => r.json());
+      const { asks = [], listener = null } = await fetch("/__ui-tweaks/status", { cache: "no-store" }).then((r) => r.json());
+      if (listener && listener.skills && JSON.stringify(listener.skills) !== JSON.stringify(exSkills)) { exSkills = listener.skills; drawExSkills(); }
       let changed = false;
       for (const a of open) {
         const s = asks.find((x) => x.id === a.id);
@@ -1726,7 +1866,7 @@ export function studioPage(appPath) {
     if (kind === "variant" && ex.req.used === v.name) card.classList.add("used");
     // The card works on its own copy of the changes, so Edit can adjust them before they're used.
     let cur = { ...v, changes: JSON.parse(JSON.stringify(v.changes || [])) };
-    card.innerHTML = '<div class="ex-name"><span class="ex-title"></span>' + (v.html ? '<span class="ex-kind" title="A rebuilt layout: using it asks Claude to build it in the component">Layout</span>' : "") + '</div><div class="ex-view"></div>' + (v.why ? '<div class="ex-why">' + esc(v.why) + "</div>" : "") + '<div class="ex-edit" hidden></div><div class="ex-actions"></div>';
+    card.innerHTML = '<div class="ex-name"><span class="ex-title"></span>' + (v.html ? '<span class="ex-kind" title="A rebuilt layout: using it asks Claude to build it in the component">Layout</span>' : "") + (v.skill ? '<span class="ex-skill" title="The design skill this variation applies">' + esc(skillLabel(v.skill)) + "</span>" : "") + '</div><div class="ex-view"></div>' + (v.why ? '<div class="ex-why">' + esc(v.why) + "</div>" : "") + '<div class="ex-edit" hidden></div><div class="ex-actions"></div>';
     const title = card.querySelector(".ex-title");
     title.textContent = v.name;
     const redraw = () => { const view = card.querySelector(".ex-view"); view.innerHTML = ""; exPreview(view, cur); };
@@ -1832,7 +1972,7 @@ export function studioPage(appPath) {
     if (!ex.req) { box.hidden = true; box.innerHTML = ""; return; }
     const grid = box.querySelector(".ex-grid");
     if (!grid) {
-      box.innerHTML = '<div class="ex-head"><h3>Explore</h3><span class="ex-el"></span><input class="ex-dir" placeholder="Direction for more, e.g. “bolder, more compact”" /><span class="ex-mode" title="What the next variations may change"><button data-mode="">Any</button><button data-mode="styles">Styles</button><button data-mode="layout">Layout</button></span><span class="ex-refs"></span><button class="ex-ref-add" title="Add a reference image for the next variations (or drop one here)">＋ Reference</button><input type="file" class="ex-ref-file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden /><button class="ex-more">More variations</button><button class="ex-close" title="Back to the screen (Esc)">Close</button></div><div class="ex-grid"></div>';
+      box.innerHTML = '<div class="ex-head"><h3>Explore</h3><span class="ex-el"></span><input class="ex-dir" placeholder="Direction for more, e.g. “bolder, more compact”" /><span class="ex-mode" title="What the next variations may change"><button data-mode="">Any</button><button data-mode="styles">Styles</button><button data-mode="layout">Layout</button></span><span class="ex-skills" hidden></span><span class="ex-refs"></span><button class="ex-ref-add" title="Add a reference image for the next variations (or drop one here)">＋ Reference</button><input type="file" class="ex-ref-file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden /><button class="ex-more">More variations</button><button class="ex-close" title="Back to the screen (Esc)">Close</button></div><div class="ex-grid"></div>';
       box.querySelector(".ex-el").textContent = ex.req.label;
       box.querySelector(".ex-el").title = ex.req.selector;
       box.querySelector(".ex-dir").value = ex.req.instruction || "";
@@ -1842,6 +1982,7 @@ export function studioPage(appPath) {
       const drawMode = () => { for (const b of box.querySelectorAll(".ex-mode button")) b.classList.toggle("on", (ex.req.mode || "") === b.dataset.mode); };
       for (const b of box.querySelectorAll(".ex-mode button")) b.addEventListener("click", () => { ex.req.mode = b.dataset.mode || undefined; saveExploration(); drawMode(); });
       drawMode();
+      drawExSkills();
       // References for the next requests: the ones from the panel, plus any added here.
       const drawRefs = () => {
         box.querySelector(".ex-refs").innerHTML = (ex.req.refs || []).map((r, i) => '<span class="ex-ref" title="' + esc(r.name || "Reference") + '"><img src="' + esc(r.url) + '" alt="" /><button data-i="' + i + '" title="Remove">✕</button></span>').join("");
@@ -2159,7 +2300,8 @@ export function studioPage(appPath) {
       return m && m.path ? { path: m.path, tag: el.tagName, text } : null;
     };
     win.addEventListener("click", (e) => {
-      if (!mirroring() || !e.isTrusted || !(e.target instanceof win.Element)) return;
+      // ⌘-click picks an element in Interact: not a click to repeat on the other side.
+      if (!mirroring() || !e.isTrusted || e.metaKey || e.ctrlKey || !(e.target instanceof win.Element)) return;
       const el = e.target.closest("button, a, [role=button], [role=tab], [role=link], label, summary, input, select, textarea, [onclick], [tabindex]") || e.target;
       const d = describe(el);
       if (d) mirror({ click: d });
@@ -2376,8 +2518,10 @@ async function readRunning(root) {
 // When a Claude Code session with the mod last said it's watching this project: { ago } in ms, or null.
 async function readListener(root) {
   try {
-    const { at } = JSON.parse(await fs.readFile(path.join(tweaksDir(root), "listener.json"), "utf8"));
-    return typeof at === "number" ? { ago: Math.max(0, Date.now() - at) } : null;
+    const { at, skills } = JSON.parse(await fs.readFile(path.join(tweaksDir(root), "listener.json"), "utf8"));
+    // The design skills the person's Claude Code has installed (the mod lists them), for the panel's picker.
+    const list = Array.isArray(skills) ? skills.filter((x) => x && /^[a-z0-9][a-z0-9-]{0,60}$/.test(String(x.name))).map((x) => ({ name: x.name, label: String(x.label || x.name).slice(0, 40), lens: String(x.lens || "").slice(0, 160) })) : [];
+    return typeof at === "number" ? { ago: Math.max(0, Date.now() - at), skills: list } : null;
   } catch {
     return null;
   }
@@ -2452,6 +2596,25 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
         return send(res, 200, { ...summary, scope: width > 0 ? scopeFor(summary, width) : null });
       }
       // Reference images for Ask Claude and Explore (the agents look at them): .ui-tweaks/refs/, last 60 kept.
+      // A new image for an <img> or a background: saved into the project where the app serves files from
+      // (public/images/ when there's a public/ folder or a package.json, else images/ beside index.html).
+      if (url.pathname === `${PREFIX}/assets` && req.method === "POST") {
+        const ext = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif", "image/svg+xml": "svg", "image/avif": "avif" }[String(req.headers["content-type"] || "").split(";")[0]];
+        if (!ext) return send(res, 400, { error: "Add a PNG, JPEG, WebP, AVIF, GIF or SVG image" });
+        try {
+          const bytes = await readRaw(req, 15_000_000);
+          const usesPublic = await fs.stat(path.join(root, "public")).then(() => true, () => fs.stat(path.join(root, "package.json")).then(() => true, () => false));
+          const rel = usesPublic ? "public/images" : "images";
+          const base = String(url.searchParams.get("name") || "image").replace(/\.[a-z0-9]+$/i, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "image";
+          const hash = createHash("sha1").update(bytes).digest("hex").slice(0, 6);
+          const file = `${base}-${hash}.${ext}`;
+          await fs.mkdir(path.join(root, rel), { recursive: true });
+          await fs.writeFile(path.join(root, rel, file), bytes);
+          return send(res, 200, { path: `${rel}/${file}`, url: `/images/${file}` });
+        } catch (error) {
+          return send(res, error.status || 500, { error: error.message });
+        }
+      }
       if (url.pathname === `${PREFIX}/refs` && req.method === "POST") {
         const ext = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" }[String(req.headers["content-type"] || "").split(";")[0]];
         if (!ext) return send(res, 400, { error: "Add a PNG, JPEG, WebP or GIF image" });

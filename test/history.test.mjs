@@ -60,3 +60,26 @@ test("comments: add, resolve, delete; kept in git", async () => {
   list = await changeComments(root, "DELETE", {}, list[0].id);
   assert.equal(list.length, 0);
 });
+
+test("assets: an image is saved where the app serves it, named from the file and its contents", async () => {
+  const http = await import("node:http");
+  const { createTweaksHandler } = await import("../server-core.mjs");
+  const root = await project();
+  await fs.writeFile(path.join(root, "package.json"), "{}");
+  const handler = createTweaksHandler({ root, getVersion: () => "t" });
+  const server = http.createServer((req, res) => handler(req, res, () => { res.statusCode = 404; res.end(); }));
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://localhost:${server.address().port}/__ui-tweaks/assets`;
+  try {
+    const png = Buffer.from("89504e470d0a1a0a0000", "hex");
+    const out = await fetch(base + "?name=Hero%20Photo.PNG", { method: "POST", headers: { "Content-Type": "image/png" }, body: png }).then((r) => r.json());
+    assert.match(out.path, /^public\/images\/hero-photo-[0-9a-f]{6}\.png$/);
+    assert.equal(out.url, "/images/" + out.path.split("/").pop());
+    assert.deepEqual(await fs.readFile(path.join(root, out.path)), png);
+    const bad = await fetch(base, { method: "POST", headers: { "Content-Type": "text/html" }, body: "<script>" });
+    assert.equal(bad.status, 400);
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+});

@@ -162,7 +162,7 @@ For each tweak, edit the source so the element renders each \`to\` value, sits w
 - move { where: "before"|"after", anchor, parent, order, sameList } means: in the JSX, put this element directly before/after the anchor element (anchor.react.jsxSource), inside the same parent. order lists all the siblings in their final order (self marks this one). Move the whole JSX element, including its children and any condition wrapping it. sameList: both come from one array .map(): reorder the array's items if they are literal in the source, else skip.
 - remove: true means delete this element's JSX (with its children), plus a condition that only wraps it and imports or variables left unused. One item of a .map(): remove that item from the array if it is literal in the source, else skip.
 - insert { kind, where, anchor, parent } adds new JSX: put it before/after anchor (anchor.react.jsxSource), or as the first/last child of parent when where is "start"/"end". kind "copy": a copy of the element described by insert.of (copy its JSX at of.react.jsxSource, children included). kind "component": an instance of insert.component.name, written like its existing usage at insert.component.usedAt (same import, props). kind "element": a plain insert.tag with insert.text; give it a class and add a CSS rule next to its neighbours' rules. This tweak's changes, if any, are the new element's styles: put them in that rule.
-- props { name: { from, to } } changes props of the component instance whose usage is at component.usedAt: edit those props in that JSX (add one that is missing; remove one when to is null).
+- props { name: { from, to } } changes props of the component instance whose usage is at component.usedAt: edit those props in that JSX (add one that is missing; remove one when to is null). With component.name "img" it's a plain <img> tag: props.src.to is a new image the kit saved in the project (under public/images/ or images/, served at that path); point the image at it the way the project refers to its images (the path as a string, or an import), and props.alt is its alt text.
 - Follow the note when it is a clear change to this element (new copy, a value); a note may be the whole tweak.
 - A change with a "state" ("hover", "active", "focus-visible"; its key is "<prop>:<state>") belongs in that state's rule, e.g. .btn:hover. Edit the one in authoredIn when it is a state rule, else add it right after the element's own rule.
 - scope { kind: "viewport", width, query? } means: only around that screen width. When scope.query is set (e.g. "(max-width: 430px)"), use exactly that @media query, placed after the base rule it overrides. Otherwise put the change in a media query that holds at that width, reusing a breakpoint the file already uses.
@@ -196,7 +196,7 @@ You may Read the source files named in the request to understand the component. 
 Answer with exactly one line of JSON and nothing after it:
 {"variants":[{"name":"<2-4 words>","why":"<one sentence>","changes":[{"target":":scope","prop":"padding","value":"16px 20px"}]},{"name":"<2-4 words>","why":"<one sentence>","html":"<div class=\\"card\\">…</div>","changes":[]}]}`
 
-type Ask = { id: string; kind: 'edit' | 'variations' | 'publish'; instruction: string; file?: string; title?: string; refs?: string[]; mode?: 'any' | 'styles' | 'layout'; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
+type Ask = { id: string; kind: 'edit' | 'variations' | 'publish'; instruction: string; file?: string; title?: string; refs?: string[]; mode?: 'any' | 'styles' | 'layout'; scope?: 'screen'; skills?: string[]; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
 type AskOutcome = { status: 'running' | 'done' | 'failed'; startedAt?: number; summary?: string; needs?: string; files?: string[]; variants?: unknown[]; error?: string }
 
 /** The last line of an answer that parses as a JSON object. */
@@ -223,34 +223,35 @@ export function cleanMarkup(html: unknown): string | undefined {
     .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
     .replace(/(href|src|action|formaction|xlink:href)\s*=\s*("|')\s*javascript:[^"']*\2/gi, '')
     .trim()
-  return /^<[a-z]/i.test(out) && out.length <= 20000 ? out : undefined
+  return /^<[a-z]/i.test(out) && out.length <= 60000 ? out : undefined
 }
 
-export function cleanVariants(raw: unknown, max = 4): { name: string; why: string; changes: { target: string; prop: string; value: string }[]; html?: string }[] {
+export function cleanVariants(raw: unknown, max = 4): { name: string; why: string; changes: { target: string; prop: string; value: string }[]; html?: string; skill?: string }[] {
   if (!Array.isArray(raw)) return []
   return raw
     .map(v => {
-      const o = (v ?? {}) as { name?: unknown; why?: unknown; changes?: unknown; html?: unknown }
+      const o = (v ?? {}) as { name?: unknown; why?: unknown; changes?: unknown; html?: unknown; skill?: unknown }
       const changes = (Array.isArray(o.changes) ? o.changes : [])
         .map(c => c as { target?: unknown; prop?: unknown; value?: unknown })
         .filter(c => typeof c.prop === 'string' && /^-?[a-z][a-z-]*$/.test(c.prop) && typeof c.value === 'string' && !/[;{}]/.test(c.value))
         .map(c => ({ target: typeof c.target === 'string' && c.target.trim() ? c.target.trim() : ':scope', prop: c.prop as string, value: (c.value as string).trim() }))
         .slice(0, 20)
       const html = cleanMarkup(o.html)
-      return { name: String(o.name ?? 'Variation').slice(0, 40), why: String(o.why ?? '').slice(0, 200), changes, ...(html ? { html } : {}) }
+      const skill = typeof o.skill === 'string' && /^[a-z0-9][a-z0-9-]{0,60}$/.test(o.skill) ? o.skill : undefined
+      return { name: String(o.name ?? 'Variation').slice(0, 40), why: String(o.why ?? '').slice(0, 240), changes, ...(html ? { html } : {}), ...(skill ? { skill } : {}) }
     })
     .filter(v => v.changes.length > 0 || v.html)
     .slice(0, max)
 }
 
-export function askPrompt(ask: Ask, root: string | null, skills: DesignSkill[] = []): string {
+export function askPrompt(ask: Ask, root: string | null, skills: DesignSkill[] = [], chosen: string[] = ask.skills ?? []): string {
   const where = root ? `The project is ${root}; file paths are relative to it.` : ''
   // Images the person attached in the panel, as direction: the agent looks at each one first.
   const refs = (ask.refs ?? []).filter(r => /^\.ui-tweaks\/refs\/[\w.-]+$/.test(r)).map(r => (root ? `${root}/${r}` : r))
   const refNote = refs.length
     ? `Reference images from the person (look at each with Read before designing, and take their look, mood, colour and type cues; don't copy their content): ${refs.join(', ')}`
     : ''
-  const skillNote = skills.length ? designSkillNote(skills, ask.kind) : ''
+  const skillNote = skills.length && ask.kind !== 'publish' ? designSkillNote(skills, ask.kind, chosen) : ''
   if (ask.kind === 'edit') {
     return [`Design request: ${ask.instruction}`, `Screen: ${ask.page?.url ?? '?'}`, `Selected element: ${JSON.stringify(ask.element ?? {})}`, refNote, skillNote, where].filter(Boolean).join('\n')
   }
@@ -258,6 +259,7 @@ export function askPrompt(ask: Ask, root: string | null, skills: DesignSkill[] =
     // Two by default; the person's direction can ask for another number ("give me 4", "just one").
     `Propose ${ask.count ?? 2} variation${(ask.count ?? 2) === 1 ? '' : 's'}, unless the direction asks for a different number (then that many, at most 4).${ask.instruction ? ` Direction: ${ask.instruction}` : ''}`,
     `Kinds: ${ask.mode === 'styles' ? 'style variations only' : ask.mode === 'layout' ? 'layout variations only (each one rebuilds the markup)' : 'style or layout, whichever serves the direction; unless it is clearly about colour or type alone, make at least one a layout variation'}.`,
+    ask.scope === 'screen' ? 'The element is the whole screen: rethink its layout and hierarchy as a whole (sections, grouping, order, density), not one control.' : '',
     `Screen: ${ask.page?.url ?? '?'}`,
     `Element: ${JSON.stringify(ask.element ?? {})}`,
     `Subtree, tokens and width: ${JSON.stringify(ask.context ?? {})}`,
@@ -268,16 +270,39 @@ export function askPrompt(ask: Ask, root: string | null, skills: DesignSkill[] =
 }
 
 // ---------- design skills ----------
-// A design skill the person has installed (impeccable by default) gives the designer and variations
-// agents its taste and craft standards. They only read it: no scripts, and variations still return JSON.
-export type DesignSkill = { name: string; dir: string }
-export const DESIGN_SKILLS = ['impeccable']
+// The design skills the person has installed (from ~/.claude/skills or ~/.agents/skills, e.g. ones from the
+// ui-skills registry) are what the designer and variations agents work from: the person picks them in the panel,
+// or the agent picks the one that fits. Their files are copied into .ui-tweaks/skills/ so the agents read them
+// inside the project. The agents only read them: no scripts, and variations still return JSON.
+export type DesignSkill = { name: string; dir: string; label: string; lens: string }
+export const DESIGN_CATALOG: { name: string; label: string; lens: string }[] = [
+  { name: 'impeccable', label: 'Impeccable', lens: 'craft standards, with playbooks to go bolder, quieter (distill), more colourful, or rework layout and type' },
+  { name: 'emil-design-eng', label: 'Emil Kowalski', lens: 'polish and restraint: the invisible details, component craft, purposeful motion' },
+  { name: 'make-interfaces-feel-better', label: 'Feels better', lens: 'design-engineering details: shadows, borders, radius, type, hover and press states' },
+  { name: 'interface-design', label: 'Interface design', lens: 'product UI: hierarchy, density, layout, tokens and states' },
+  { name: 'taste-skill', label: 'Taste', lens: 'anti-slop: a distinct, non-templated visual direction' },
+  { name: 'apple-design', label: 'Apple', lens: 'fluid, physical, materials and depth, typography' },
+  { name: 'vercel-labs-web-design-guidelines', label: 'Web guidelines', lens: "Vercel's web interface guidelines" },
+  { name: 'oklch-skill', label: 'OKLCH colour', lens: 'colour palettes, contrast and gamut in OKLCH' },
+  { name: 'mobile-native', label: 'Mobile native', lens: 'making a web app feel native on a phone' },
+]
+export const DESIGN_SKILLS = DESIGN_CATALOG.map(s => s.name)
+const SKILL_COPY = '.ui-tweaks/skills'
 
-export function designSkillNote(skills: DesignSkill[], kind: Ask['kind']): string {
-  const list = skills.map(s => `${s.name} (${s.dir})`).join(', ')
+export function designSkillNote(skills: DesignSkill[], kind: Ask['kind'], chosen: string[] = []): string {
+  const where = (s: DesignSkill) => `${SKILL_COPY}/${s.name}/SKILL.md`
+  const picked = skills.filter(s => chosen.includes(s.name))
+  const json = kind === 'edit' ? '' : " Don't run their scripts or edit files: your answer is still only the JSON."
+  if (picked.length) {
+    const list = picked.map(s => `${s.label} (${s.name}: ${s.lens}) at ${where(s)}`).join('; ')
+    return kind === 'edit'
+      ? `Design skills chosen by the person: ${list}. Read each SKILL.md first (and the references it points to that fit this change), and make the change the way they say: every visual decision should trace to them. Keep the app's identity; don't run their scripts.`
+      : `Design skills chosen by the person: ${list}. Read each SKILL.md first, and the references it points to that fit the direction. Spread the variations across them, each applying one: set "skill" to its name, and make "why" name the principle from it you applied. Don't invent taste of your own: every choice should trace to the skill.${json}`
+  }
+  const list = skills.map(s => `${s.name} (${s.label}: ${s.lens}) at ${where(s)}`).join('; ')
   return kind === 'edit'
-    ? `Design skill: ${list} is loaded. Hold this change to its craft standards (read its reference/craft-floor.md before editing, and the playbook that fits the request); this is a refinement, so keep the app's identity. Don't run its scripts.`
-    : `Design skill: ${list} is loaded. Use its judgment for these variations: read its reference/craft-floor.md, and whichever of reference/bolder.md, colorize.md, distill.md, layout.md or typeset.md fits the direction, then make each variation something a strong designer would ship, distinct and polished, in the app's own world (refinement, not a new brand). Don't run its scripts or edit files: your answer is still only the JSON.`
+    ? `Installed design skills: ${list}. Pick the one that fits this change best (two at most), read its SKILL.md and the references it points to that fit, and follow it; keep the app's identity; don't run its scripts.`
+    : `Installed design skills: ${list}. Pick the one that fits this element and direction best (two at most, for two clearly different angles), read its SKILL.md and the references it points to that fit, and ground every variation in it: set "skill" to its name, and make "why" name the principle you applied. Don't invent taste of your own: every choice should trace to the skill.${json}`
 }
 
 let designSkills: DesignSkill[] | null = null
@@ -285,16 +310,45 @@ async function findDesignSkills($: EngineInterface): Promise<DesignSkill[]> {
   if (designSkills !== null) return designSkills
   const home = await $.env.get('HOME').catch(() => undefined)
   const found: DesignSkill[] = []
-  for (const name of DESIGN_SKILLS) {
-    for (const dir of [home && `${home}/.claude/skills/${name}`, home && `${home}/.agents/skills/${name}`].filter(Boolean) as string[]) {
-      if (await $.fs.read(`${dir}/SKILL.md`).then(() => true, () => false)) {
-        found.push({ name, dir })
+  for (const s of DESIGN_CATALOG) {
+    const dirs = [projectRoot && `${projectRoot}/.claude/skills/${s.name}`, home && `${home}/.claude/skills/${s.name}`, home && `${home}/.agents/skills/${s.name}`].filter(Boolean) as string[]
+    for (const dir of dirs) {
+      if (await $.fs.exists(`${dir}/SKILL.md`).catch(() => false)) {
+        found.push({ ...s, dir })
         break
       }
     }
   }
   designSkills = found
   return found
+}
+
+// A skill's Markdown files (SKILL.md and its references), copied into .ui-tweaks/skills/<name>/.
+async function copySkill($: EngineInterface, skill: DesignSkill) {
+  let files = 0, bytes = 0
+  const walk = async (dir: string, rel: string, depth: number): Promise<void> => {
+    if (depth > 3 || files >= 80) return
+    const entries = await $.fs.list(dir).catch(() => [])
+    for (const e of entries) {
+      if (files >= 80 || bytes > 800_000 || e.name.startsWith('.')) continue
+      const from = `${dir}/${e.name}`, to = rel ? `${rel}/${e.name}` : e.name
+      if (/\.md$/i.test(e.name)) {
+        const text = await $.fs.read(from).catch(() => null)
+        if (text === null) continue
+        files++
+        bytes += text.length
+        await $.fs.write(inProject(`${SKILL_COPY}/${skill.name}/${to}`), text).catch(() => {})
+      } else if (e.kind === 'dir' || e.isLink) await walk(from, to, depth + 1)
+    }
+  }
+  await walk(skill.dir, '', 0)
+}
+async function prepareSkills($: EngineInterface, ask: Ask): Promise<{ skills: DesignSkill[]; chosen: string[] }> {
+  const skills = await findDesignSkills($)
+  const chosen = (ask.skills ?? []).filter(n => skills.some(s => s.name === n)).slice(0, 3)
+  // The person's picks, or (for the agent to choose from) every installed one's files.
+  for (const s of skills) if (!chosen.length || chosen.includes(s.name)) await copySkill($, s)
+  return { skills, chosen }
 }
 
 async function readAsksFile($: EngineInterface): Promise<Ask[]> {
@@ -367,14 +421,15 @@ async function startNextAsk($: EngineInterface) {
       if (text !== null) snapshots.set(file, text)
     }
   }
+  const { skills, chosen } = await prepareSkills($, next)
   const startedAt = await $.clock.now()
   await writeOutcome($, next.id, { status: 'running', startedAt })
-  await update($, askRun, () => ({ id: next.id, kind: next.kind, startedAt, instruction: next.instruction }))
+  await update($, askRun, () => ({ id: next.id, kind: next.kind as 'edit' | 'variations', startedAt, instruction: next.instruction }))
   const started = await $.agent.spawn({
     subagentType: next.kind === 'edit' ? DESIGNER : VARIATOR,
     model: 'sonnet',
     description: next.kind === 'edit' ? 'Design change' : 'Design variations',
-    prompt: askPrompt(next, projectRoot, await findDesignSkills($)),
+    prompt: askPrompt(next, projectRoot, skills, chosen),
     ...(projectRoot ? { cwd: projectRoot } : {}),
   })
   if ('deny' in started) {
@@ -540,7 +595,9 @@ async function heartbeat($: EngineInterface) {
   const now = await $.clock.now()
   if (now - heardAt < 10000) return
   heardAt = now
-  await $.fs.write(inProject(LISTENER), JSON.stringify({ at: now, session: me })).catch(() => {})
+  // The installed design skills ride along, so the panel can offer them.
+  const skills = (await findDesignSkills($)).map(({ name, label, lens }) => ({ name, label, lens }))
+  await $.fs.write(inProject(LISTENER), JSON.stringify({ at: now, session: me, skills })).catch(() => {})
 }
 
 async function refresh($: EngineInterface) {
@@ -857,7 +914,7 @@ async function startStudio($: EngineInterface, root: string): Promise<string | n
 }
 
 async function showInBrowser($: EngineInterface, url: string): Promise<string> {
-  const surfaces = await $.session.surfaces().catch(() => [] as const)
+  const surfaces: readonly string[] = await $.session.surfaces().catch(() => [])
   if (surfaces.includes('desktop')) {
     // After the command returns: a command can't submit a turn while it holds this one.
     $.clock.after(50, () => void $.prompt.submit({ text: `Open ${url} in your browser pane (preview_start with that url). That's all: it's the UI tweaks studio, don't do anything else with it.` }))
@@ -908,14 +965,13 @@ async function openStudio($: EngineInterface, arg: string): Promise<string> {
 let applierRegistered = false
 async function registerApplier($: EngineInterface) {
   applierRegistered = true
-  const skills = (await findDesignSkills($)).map(s => s.name)
+  // Design skills aren't preloaded: each request names the ones to read (picked, or the agent's pick).
   await $.agent.register({
     name: 'designer',
     description: 'Makes a design change asked for in the ui-tweaks panel, in the source',
     prompt: DESIGNER_PROMPT,
     model: 'sonnet',
     tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
-    ...(skills.length ? { skills } : {}),
     maxTurns: 40,
   })
   await $.agent.register({
@@ -924,7 +980,6 @@ async function registerApplier($: EngineInterface) {
     prompt: VARIATIONS_PROMPT,
     model: 'sonnet',
     tools: ['Read', 'Grep', 'Glob'],
-    ...(skills.length ? { skills } : {}),
     omitClaudeMd: true,
     maxTurns: 20,
   })

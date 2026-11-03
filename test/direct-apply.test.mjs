@@ -343,3 +343,23 @@ test("a state no rule sets yet gets a :state rule on the element's own class, ne
   assert.match(css, new RegExp(`\\.${cls}:hover \\{\\n  background-color: #eee;\\n\\}`));
   assert.doesNotMatch(css, /\.card \{ padding: 12px 20px; color: #00f/); // the base rule is untouched
 });
+
+test("a new image on an <img> rewrites its plain src string; anything else goes to Haiku", async () => {
+  const root = await project();
+  await writeFile(path.join(root, "src/App.tsx"), 'export const A = () => (\n  <img className="hero" src="/images/old.png" alt="" />\n);\n');
+  const el = { tag: "img", classes: ["hero"], react: { jsxSource: "src/App.tsx:2" } };
+  const out = await applyDirect(root, { tweaks: [{ id: "t-0", element: el, changes: {}, props: { src: { from: "/images/old.png", to: "/images/new-ab12cd.png" } }, component: { name: "img" } }] });
+  assert.equal(out.remaining.length, 0);
+  assert.deepEqual(out.applied[0].props, ["src"]);
+  assert.match(out.files[0].after, /src="\/images\/new-ab12cd\.png"/);
+  await writeFile(path.join(root, "src/App.tsx"), 'import logo from "./logo.png";\nexport const A = () => (\n  <img className="hero" src={logo} alt="" />\n);\n');
+  const later = await applyDirect(root, { tweaks: [{ id: "t-1", element: { ...el, react: { jsxSource: "src/App.tsx:3" } }, changes: {}, props: { src: { from: "/src/logo.png", to: "/images/new.png" } } }] });
+  assert.equal(later.remaining.length, 1);
+  assert.match(later.remaining[0].directSkip, /isn't a plain string/);
+});
+
+test("planAttrEdit refuses an empty src and a new value that would break the JSX", async () => {
+  const { planAttrEdit } = await import("../direct-apply.mjs");
+  assert.match(planAttrEdit('<img src="" />', 1, "src", "/x.png", "/images/n.png").error, /empty/);
+  assert.match(planAttrEdit('<img src="/a.png" />', 1, "src", "/a.png", '/b" onerror="x').error, /can't go in a JSX string/);
+});

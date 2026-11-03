@@ -222,15 +222,29 @@ test('answer parsing and prompts', () => {
   expect(lastJson('{bad\nno json')).toBe(null)
   expect(cleanVariants([{ name: 'A', changes: [] }, 'x', { name: 'B', changes: [{ prop: 'gap', value: '8px' }] }])).toEqual([{ name: 'B', why: '', changes: [{ target: ':scope', prop: 'gap', value: '8px' }] }])
   expect(askPrompt({ id: 'a', kind: 'variations', instruction: 'calmer', count: 2 }, '/p')).toContain('Propose 2 variations, unless the direction asks for a different number (then that many, at most 4). Direction: calmer')
-  const withRefs = askPrompt({ id: 'a', kind: 'variations', instruction: '', refs: ['.ui-tweaks/refs/r1.png', '../secret.png'] }, '/p', [{ name: 'impeccable', dir: '/h/.claude/skills/impeccable' }])
+  const skills = [
+    { name: 'impeccable', dir: '/h/.claude/skills/impeccable', label: 'Impeccable', lens: 'craft' },
+    { name: 'emil-design-eng', dir: '/h/.agents/skills/emil-design-eng', label: 'Emil Kowalski', lens: 'polish' },
+  ]
+  const withRefs = askPrompt({ id: 'a', kind: 'variations', instruction: '', refs: ['.ui-tweaks/refs/r1.png', '../secret.png'] }, '/p', skills)
   expect(withRefs).toContain('/p/.ui-tweaks/refs/r1.png')
   expect(withRefs).not.toContain('secret.png')
-  expect(withRefs).toContain('impeccable (/h/.claude/skills/impeccable)')
+  // No pick: the agent chooses among the installed ones, read from the project's copy.
+  expect(withRefs).toContain('Installed design skills: impeccable (Impeccable: craft) at .ui-tweaks/skills/impeccable/SKILL.md')
+  expect(withRefs).toContain('Pick the one that fits')
   expect(withRefs).toContain('only the JSON')
+  // Picked in the panel: only those, spread across the variations, each one naming its skill.
+  const picked = askPrompt({ id: 'a2', kind: 'variations', instruction: '', skills: ['emil-design-eng', 'unknown'] }, '/p', skills)
+  expect(picked).toContain('Design skills chosen by the person: Emil Kowalski (emil-design-eng: polish) at .ui-tweaks/skills/emil-design-eng/SKILL.md')
+  expect(picked).not.toContain('impeccable')
+  expect(picked).toContain('set "skill" to its name')
+  expect(askPrompt({ id: 's', kind: 'variations', instruction: '', scope: 'screen' }, '/p')).toContain('The element is the whole screen')
+  expect(cleanVariants([{ name: 'A', skill: 'emil-design-eng', changes: [{ prop: 'gap', value: '8px' }] }])[0]?.skill).toBe('emil-design-eng')
   expect(askPrompt({ id: 'b', kind: 'edit', instruction: 'tidy it' }, '/p')).not.toContain('Design skill')
+  expect(askPrompt({ id: 'b2', kind: 'edit', instruction: 'tidy it', skills: ['impeccable'] }, '/p', skills)).toContain('Design skills chosen by the person: Impeccable')
   // Layout variations: rebuilt markup, cleaned of anything that could run.
   const [layout] = cleanVariants([{ name: 'Row', html: '<div class="card" onclick="x()"><img src="a.png" onerror="steal()"><script>bad()</script><a href="javascript:go()">x</a><p>Hi</p></div>' }])
-  expect(layout.html).toBe('<div class="card"><img src="a.png"><a >x</a><p>Hi</p></div>')
+  expect(layout?.html).toBe('<div class="card"><img src="a.png"><a >x</a><p>Hi</p></div>')
   expect(cleanVariants([{ name: 'Junk', html: 'just text' }])).toEqual([])
   expect(askPrompt({ id: 'c', kind: 'variations', instruction: '', mode: 'layout' }, '/p')).toContain('Kinds: layout variations only')
   expect(askPrompt({ id: 'd', kind: 'variations', instruction: '' }, '/p')).toContain('make at least one a layout variation')

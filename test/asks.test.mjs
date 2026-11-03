@@ -30,3 +30,11 @@ test("asks: variations carry styles-only or layout-only, nothing else", async ()
   assert.equal((await addAsk(root, { kind: "variations", mode: "weird" })).mode, undefined);
   assert.equal((await addAsk(root, { kind: "edit", instruction: "x", mode: "layout" })).mode, undefined);
 });
+
+test("asks: whole-screen variations and up to three design skills by name", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "uitk-ask-"));
+  const a = await addAsk(root, { kind: "variations", scope: "screen", skills: ["impeccable", "emil-design-eng", "../etc", "taste-skill", "apple-design"] });
+  assert.equal(a.scope, "screen");
+  assert.deepEqual(a.skills, ["impeccable", "emil-design-eng", "taste-skill"]);
+  assert.equal((await addAsk(root, { kind: "variations", scope: "page" })).scope, undefined);
+});

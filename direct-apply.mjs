@@ -443,6 +443,24 @@ function planTextEdit(text, line, from, to) {
   return { edits: [{ start, end: start + needle.length, value: to.trim() }] };
 }
 
+/** Sets an attribute written as a plain string (src="a.png" or src={"a.png"}) on the JSX tag that starts on `line`. */
+export function planAttrEdit(text, line, name, from, to) {
+  const lines = text.split("\n");
+  const lineStart = lines.slice(0, Math.max(0, line - 1)).join("\n").length + (line > 1 ? 1 : 0);
+  const lt = text.indexOf("<", lineStart);
+  if (lt < 0 || lt - lineStart > 200) return { error: "no JSX tag at the JSX line" };
+  const gt = text.indexOf(">", lt);
+  const tag = text.slice(lt, gt < 0 ? undefined : gt + 1);
+  const m = new RegExp(`\\s${name}\\s*=\\s*(?:(["'])([^"'{}]*)\\1|\\{\\s*(["'\`])([^"'\`{}]*)\\3\\s*\\})`).exec(tag);
+  if (!m) return { error: `${name} isn't a plain string on that tag` };
+  const value = m[2] ?? m[4];
+  if (!value) return { error: `${name} is empty in the source` };
+  if (/["'`{}<>\\]/.test(to)) return { error: `the new ${name} has characters that can't go in a JSX string` };
+  if (value !== from && !(from.startsWith("/") && from.endsWith(value)) && !from.endsWith("/" + value.replace(/^\.?\//, ""))) return { error: `${name} in the source (${value}) isn't what the page shows` };
+  const start = lt + m.index + m[0].indexOf(value, m[0].indexOf("=") + 1);
+  return { edits: [{ start, end: start + value.length, value: to }] };
+}
+
 // ---------- entry point ----------
 
 /**
@@ -477,7 +495,7 @@ export async function applyDirect(root, batch) {
   };
   const applied = []; // { id, props, text, files }
   const remaining = []; // tweaks (with only what is left) + directSkip
-  for (const tweak of batch.tweaks) {
+  for (let tweak of batch.tweaks) {
     const jsxLoc = /^(.*):(\d+)$/.exec((tweak.element && tweak.element.react && tweak.element.react.jsxSource) || "");
     const tw = {}; // prop key -> true: written as a Tailwind utility on the element's className
     const changes = Object.entries(tweak.changes || {});
@@ -647,6 +665,16 @@ export async function applyDirect(root, batch) {
       }
     }
 
+    // A new image on an <img>: the src string on its JSX tag, when it's written as one.
+    let propsDone = false, propsReason = null;
+    const propNames = Object.keys(tweak.props || {});
+    if (propNames.length === 1 && propNames[0] === "src" && jsxLoc && tweak.element && tweak.element.tag === "img" && !whole) {
+      const abs = path.resolve(root, jsxLoc[1]);
+      const plan = planAttrEdit(await read(abs).catch(() => ""), Number(jsxLoc[2]), "src", String(tweak.props.src.from || ""), String(tweak.props.src.to || ""));
+      if (plan.error) propsReason = plan.error;
+      else { plans.set(abs, [...(plans.get(abs) || []), ...plan.edits]); propsDone = true; }
+    }
+
     // Apply to the in-memory copies; overlapping edits send the whole tweak to Haiku.
     const next = new Map();
     let overlap = false;
@@ -660,14 +688,15 @@ export async function applyDirect(root, batch) {
       continue;
     }
     for (const [abs, out] of next) contents.set(abs, out);
-    const doneProps = changes.map(([k]) => k).filter((k) => !blocked[k]);
+    const doneProps = [...changes.map(([k]) => k).filter((k) => !blocked[k]), ...(propsDone ? ["src"] : [])];
     const textDone = !!tweak.text && !textReason;
     if (doneProps.length || textDone) applied.push({ id: tweak.id, props: doneProps, text: textDone, files: [...next.keys()].map((f) => path.relative(root, f)) });
 
     const left = Object.fromEntries(changes.filter(([k]) => blocked[k]));
     // Moving or removing JSX is Haiku's: it needs to read the component.
-    const structural = tweak.move ? "moving JSX needs Haiku" : tweak.remove ? "removing JSX needs Haiku" : tweak.insert ? "inserting JSX needs Haiku" : tweak.props ? "changing component props needs Haiku" : null;
+    const structural = tweak.move ? "moving JSX needs Haiku" : tweak.remove ? "removing JSX needs Haiku" : tweak.insert ? "inserting JSX needs Haiku" : tweak.props && !propsDone ? propsReason || "changing component props needs Haiku" : null;
     if (Object.keys(left).length || (tweak.text && !textDone) || (tweak.note && !doneProps.length) || structural) {
+      if (propsDone) tweak = { ...tweak, props: undefined };
       const reasons = [...new Set([...Object.values(blocked), ...(textReason ? [textReason] : []), ...(structural ? [structural] : [])])];
       remaining.push({
         ...tweak,

@@ -610,7 +610,7 @@ export function studioPage(appPath) {
         <button class="cm-toggle" title="Comments pinned to elements (M on a screen: pin one to the selected element)">💬</button>
         <button class="ex-toggle" hidden title="Your explorations: reopen the variations Claude made for an element">✦ Explorations</button>
         <button class="vs-toggle" title="Compare with another branch or commit, side by side">⑂ Versions</button>
-        <span class="vs-modes"><button data-mode="inspect" title="Inspect (V): click elements to select and tweak them">Inspect</button><button data-mode="interact" title="Interact (C): use the app; clicks go to it, not the panel">Interact</button></span>
+        <span class="vs-modes"><button data-mode="interact" title="Interact (C): use the app; clicks go to it, not the panel">Interact</button><button data-mode="inspect" title="Inspect (V): click elements to select and tweak them">Inspect</button></span>
         <button class="vs-mirror" hidden title="Repeat your clicks and typing on the other version, so both walk through the same flow">⇆ Mirror clicks</button>
         <button class="vs-match" hidden title="Both sides drifted apart? Reload both at this screen's starting state (its URL, fixture and screen)">⟲ Match</button>
       </span>
@@ -682,6 +682,7 @@ export function studioPage(appPath) {
   const VIEW_KEY = "ui-tweaks:studio-view";
   let view = { grid: false, base: false, pages: false, cam: null, mode: "focus", focus: null };
   try { view = { ...view, ...JSON.parse(localStorage.getItem(VIEW_KEY) || "{}") }; } catch {}
+  view.vsMode = "interact"; // the studio opens in Interact: the app works as usual until V (or Inspect) picks elements
   view.mode = "focus"; // one screen at a time, at its real size (the canvas view is gone)
   const saveView = () => { try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch {} };
 
@@ -928,7 +929,7 @@ export function studioPage(appPath) {
       saveExploration();
     },
     // Inspect / Interact, for the panel's keys (V, C) and its ⌖ button.
-    mode: () => view.vsMode || "inspect",
+    mode: () => view.vsMode || "interact",
     setMode: (m) => setVsMode(m === "interact" ? "interact" : "inspect"),
     // The command palette lists and opens screens.
     screens() {
@@ -2176,7 +2177,7 @@ export function studioPage(appPath) {
     try { f.iframe.contentWindow.__uiTweaks.setPicking(view.vsMode !== "interact"); } catch {}
   }
   function setVsMode(mode) {
-    const changed = (view.vsMode || "inspect") !== mode;
+    const changed = (view.vsMode || "interact") !== mode;
     view.vsMode = mode;
     saveView();
     const f = frames.get(focusedId());
@@ -2188,7 +2189,7 @@ export function studioPage(appPath) {
     const on = versusOn();
     $(".vs-mirror").hidden = !on || view.vsMode !== "interact";
     $(".vs-match").hidden = !on;
-    for (const b of document.querySelectorAll(".vs-modes button")) b.classList.toggle("on", b.dataset.mode === (view.vsMode || "inspect"));
+    for (const b of document.querySelectorAll(".vs-modes button")) b.classList.toggle("on", b.dataset.mode === (view.vsMode || "interact"));
     $(".vs-mirror").classList.toggle("on", view.vsMirror !== false);
   }
   for (const b of document.querySelectorAll(".vs-modes button")) b.addEventListener("click", () => setVsMode(b.dataset.mode));

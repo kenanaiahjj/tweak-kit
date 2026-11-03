@@ -168,8 +168,8 @@
     addEventListener("load", applyScheme);
   }
 
-  // In the studio, start in its Inspect / Interact mode.
-  try { if (STUDIO && STUDIO.__studio && STUDIO.__studio.mode && STUDIO.__studio.mode() === "interact") queueMicrotask(() => { state.isPicking = false; }); } catch {}
+  // In the studio, start in its Interact / Inspect mode (it opens in Interact).
+  const STARTS_PICKING = (() => { try { return !(STUDIO && STUDIO.__studio && STUDIO.__studio.mode && STUDIO.__studio.mode() === "interact"); } catch { return true; } })();
   // With several devices in the studio, each frame runs an overlay; the one whose panel is docked owns it.
   const IS_PRIMARY = (() => {
     try {
@@ -184,7 +184,7 @@
   // ---------- state ----------
   const state = {
     isOpen: false,
-    isPicking: true,
+    isPicking: STARTS_PICKING,
     editState: "", // "", "hover", "active" or "focus-visible": which state edits apply to
     selected: null, // Element
     hovered: null,
@@ -4474,7 +4474,7 @@
     } else if (!el || !el.isConnected) {
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.innerHTML = `<b>Click any element</b> to tweak it.<br/>Drag it to reorder or move it, drag its handles to resize. ⌘-drag places it freely.<br/>Drag a field's label to scrub its value; Shift for ×10.<br/>Double-click text to edit it.<br/><br/>When you're happy, press <b>Send to Claude</b>. Claude edits the real source to match.`;
+      empty.innerHTML = (state.isPicking ? "" : `<b>Interact</b> is on: the app works as usual. Press <b>V</b> (or Inspect) to pick elements.<br/><br/>`) + `<b>Click any element</b> to tweak it.<br/>Drag it to reorder or move it, drag its handles to resize. ⌘-drag places it freely.<br/>Drag a field's label to scrub its value; Shift for ×10.<br/>Double-click text to edit it.<br/><br/>When you're happy, press <b>Send to Claude</b>. Claude edits the real source to match.`;
       if (state.showInsert) scroll.append(insertSection());
       scroll.append(empty);
       scroll.append(askSection(null));

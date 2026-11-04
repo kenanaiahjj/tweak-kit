@@ -25,6 +25,7 @@
     "diff.mjs",
     "direct-apply.mjs",
     "git.mjs",
+    "icons.mjs",
     "update.mjs",
     "versions.mjs",
     "overlay.js",

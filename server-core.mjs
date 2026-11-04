@@ -16,6 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyDirect, sourceFiles } from "./direct-apply.mjs";
 import { unifiedDiff } from "./diff.mjs";
+import { ICONS, iconSvg } from "./icons.mjs";
 import { scanBreakpoints, scopeFor } from "./breakpoints.mjs";
 import { commitFiles, filesAreClean } from "./git.mjs";
 
@@ -586,6 +587,30 @@ export function studioPage(appPath) {
   .vs-wait { background: #1c1c1c; color: var(--dim); font-size: calc(14px * var(--iz)); }
   #ui-tweaks-root { background: #212121; border-left: 1px solid var(--line); }
   .waiting { color: var(--dim); font-size: 13px; }
+
+  /* ---------- premium pass ----------
+     One icon set at one weight; square 30px icon buttons; words only where a word reads better;
+     quiet hairline separators between groups; press feedback; tabular numbers. */
+  .ic { display: block; flex: none; }
+  .toolbar [hidden] { display: none !important; }
+  .toolbar button[data-icon], .toolbar a[data-icon] { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .toolbar button[data-icon]:not(:has(.lbl)), .toolbar a[data-icon]:not(:has(.lbl)) { width: 30px; padding: 0; }
+  .toolbar button[data-icon]:has(.lbl), .toolbar a[data-icon]:has(.lbl) { padding: 0 10px 0 8px; }
+  .toolbar .lbl { font-size: 12.5px; }
+  .toolbar .count { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: rgba(255,255,255,.12); color: #fff; font: 600 10.5px/16px system-ui, -apple-system, sans-serif; text-align: center; font-variant-numeric: tabular-nums; }
+  .toolbar button:has(> .count):not(:has(.lbl)) { width: auto; padding: 0 8px 0 7px; }
+  .toolbar .cm-toggle.on .count { background: rgba(255,178,32,.25); color: #ffcf70; }
+  .toolbar button, .toolbar a.tb { color: rgba(255,255,255,.62); }
+  .toolbar button:not(:disabled):active, .toolbar a.tb:active { transform: scale(0.96); }
+  .toolbar button, .toolbar a.tb, .toolbar select { transition-property: background-color, color, transform; transition-duration: .15s; transition-timing-function: cubic-bezier(0.2, 0, 0, 1); }
+  .tb-group + .tb-group { margin-left: 6px; padding-left: 6px; box-shadow: inset 1px 0 0 rgba(255,255,255,.07); }
+  .tb-group.tb-end { box-shadow: none; }
+  .scheme-seg button[data-icon], .vs-modes button { height: 26px; }
+  .scheme-seg button[data-icon] { width: 28px; padding: 0; }
+  .toolbar .scheme-seg button.on .ic { color: #fff; }
+  .toolbar select { font-weight: 500; }
+  .focus-zoom, .zoom { font-variant-numeric: tabular-nums; }
+  .sep { display: none; }
 </style>
 </head>
 <body>
@@ -594,50 +619,50 @@ export function studioPage(appPath) {
     <div class="toolbar">
       <!-- Groups never break apart; on a narrow window the later ones wrap onto a second row. -->
       <span class="tb-group">
-        <button class="exit" title="Leave the studio">✕</button>
-        <button class="reload" title="Reload every artboard">↻</button>
+        <button class="exit" data-icon="x" title="Leave the studio">✕</button>
+        <button class="reload" data-icon="reload" title="Reload every artboard">↻</button>
         <span class="sep"></span>
         <span class="focus-tools">
-          <button class="prev" title="Previous screen (←)">‹</button>
+          <button class="prev" data-icon="chevron-left" title="Previous screen (←)">‹</button>
           <select class="focus-pick" title="Screen"></select>
-          <button class="next" title="Next screen (→)">›</button>
-          <button class="scr-add" title="New screen: a copy of this one (then edit its URL)">＋</button>
-          <button class="scr-edit" title="Rename this screen or change its URL">✎</button>
-          <button class="scr-del" title="Remove this screen">🗑</button>
-          <button class="pages-toggle" title="Routes: add a screen for a page of your app">☰</button>
-          <button class="overview" title="All screens at a glance">▦</button>
+          <button class="next" data-icon="chevron-right" title="Next screen (→)">›</button>
+          <button class="scr-add" data-icon="plus" title="New screen: a copy of this one (then edit its URL)">＋</button>
+          <button class="scr-edit" data-icon="pencil" title="Rename this screen or change its URL">✎</button>
+          <button class="scr-del" data-icon="trash" title="Remove this screen">🗑</button>
+          <button class="pages-toggle" data-icon="list" title="Screens and routes">☰</button>
+          <button class="overview" data-icon="grid" title="All screens at a glance">▦</button>
         </span>
       </span>
       <span class="tb-group focus-tools">
         <select class="focus-device" title="Device"></select>
-        <button class="focus-turn" title="Rotate">⟲</button>
+        <button class="focus-turn" data-icon="rotate" title="Rotate">⟲</button>
         <span class="ws"><input type="range" class="width-slider" min="280" max="1920" step="1" title="Width: drag to watch the layout respond (ticks are your breakpoints); pick a device to reset" /><span class="ws-ticks"></span></span>
       </span>
       <span class="tb-group focus-tools">
-        <button class="fz-out" title="Zoom out (⌘−)">−</button>
+        <button class="fz-out" data-icon="minus" title="Zoom out (⌘−)">−</button>
         <span class="zoom focus-zoom" title="Pinch or ⌘-scroll to zoom; scroll or drag to pan"></span>
-        <button class="fz-in" title="Zoom in (⌘+)">+</button>
-        <button class="fz-fit" title="Fit the screen (⇧1)">Fit</button>
+        <button class="fz-in" data-icon="plus" title="Zoom in (⌘+)">+</button>
+        <button class="fz-fit" data-icon="fit" title="Fit the screen (⇧1)">Fit</button>
         <button class="fz-100" title="Actual size (⇧0)">1:1</button>
       </span>
       <span class="tb-group">
-        <button class="guides-toggle" title="Layout guides over the screen: columns and a baseline grid">Guides</button>
-        <span class="scheme-seg" title="Show the screens light or dark, whatever your system is set to"><button data-scheme="" title="As your system is set">Auto</button><button data-scheme="light" title="Light">☀︎</button><button data-scheme="dark" title="Dark">☾</button></span>
+        <button class="guides-toggle" data-icon="guides" title="Layout guides over the screen: columns and a baseline grid">Guides</button>
+        <span class="scheme-seg" title="Show the screens light or dark, whatever your system is set to"><button data-scheme="" data-icon="contrast" title="As your system is set">Auto</button><button data-scheme="light" data-icon="sun" title="Light">☀︎</button><button data-scheme="dark" data-icon="moon" title="Dark">☾</button></span>
         <!-- Capture (📷 and Review) is on hold: hidden until CAPTURE is turned on below. -->
-        <button class="shot" hidden title="Copy a picture of the screen to the clipboard (both versions when comparing). Shift-click also saves a PNG">📷</button>
+        <button class="shot" data-icon="camera" hidden title="Copy a picture of the screen to the clipboard (both versions when comparing). Shift-click also saves a PNG">📷</button>
         <button class="review-toggle" hidden title="Make a review page: every screen captured (side by side with the other version when comparing), which ones changed, and a note; open it or publish it with Claude">Review</button>
       </span>
       <span class="tb-group">
-        <button class="cm-toggle" title="Comments pinned to elements (M on a screen: pin one to the selected element)">💬</button>
-        <button class="ck-all-toggle" title="Check every screen: layout (also at 320px wide), contrast, tap targets, labels and off-token values, with the worst screens first">✓ All screens</button>
-        <button class="ex-toggle" hidden title="Your explorations: reopen the variations Claude made for an element">✦ Explorations</button>
-        <button class="vs-toggle" title="Compare with another branch or commit, side by side">⑂ Versions</button>
+        <button class="cm-toggle" data-icon="comment" title="Comments pinned to elements (M on a screen: pin one to the selected element)">💬</button>
+        <button class="ck-all-toggle" data-icon="check-circle" data-label="Check all" title="Check every screen: layout (also at 320px wide), contrast, tap targets, labels and off-token values, with the worst screens first">✓ All screens</button>
+        <button class="ex-toggle" data-icon="sparkles" data-label="Explorations" hidden title="Your explorations: reopen the variations Claude made for an element">✦ Explorations</button>
+        <button class="vs-toggle" data-icon="branch" data-label="Versions" title="Compare with another branch or commit, side by side">⑂ Versions</button>
         <span class="vs-modes"><button data-mode="interact" title="Interact (C): use the app; clicks go to it, not the panel">Interact</button><button data-mode="inspect" title="Inspect (V): click elements to select and tweak them">Inspect</button></span>
-        <button class="vs-mirror" hidden title="Repeat your clicks and typing on the other version, so both walk through the same flow">⇆ Mirror clicks</button>
-        <button class="vs-match" hidden title="Both sides drifted apart? Reload both at this screen's starting state (its URL, fixture and screen)">⟲ Match</button>
+        <button class="vs-mirror" data-icon="mirror" data-label="Mirror clicks" hidden title="Repeat your clicks and typing on the other version, so both walk through the same flow">⇆ Mirror clicks</button>
+        <button class="vs-match" data-icon="match" data-label="Match" hidden title="Both sides drifted apart? Reload both at this screen's starting state (its URL, fixture and screen)">⟲ Match</button>
       </span>
       <span class="tb-group tb-end">
-        <a class="tb" href="/__ui-tweaks/system" title="Design system: every token in your CSS, editable">Tokens</a>
+        <a class="tb" data-icon="palette" data-label="Tokens" href="/__ui-tweaks/system" title="Design system: every token in your CSS, editable">Tokens</a>
       </span>
     </div>
     <div class="body">
@@ -662,6 +687,17 @@ export function studioPage(appPath) {
 <div class="rv-progress" hidden></div>
 <div class="vs-pop" hidden></div>
 <script>
+  // Icons (Lucide outlines): every toolbar button with data-icon gets its icon, plus data-label text if any.
+  const ICONS = ${JSON.stringify(ICONS)};
+  const iconSvg = (n) => '<svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICONS[n] || "") + "</svg>";
+  function setLabel(el, label, count) {
+    el.innerHTML = (el.dataset.icon ? iconSvg(el.dataset.icon) : "") + (label ? '<span class="lbl"></span>' : "") + (count ? '<span class="count"></span>' : "");
+    if (label) el.querySelector(".lbl").textContent = label;
+    if (count) el.querySelector(".count").textContent = count;
+    if (!el.getAttribute("aria-label")) el.setAttribute("aria-label", (el.title || label || "").split(/[.:(]/)[0].trim());
+  }
+  for (const el of document.querySelectorAll("[data-icon]")) setLabel(el, el.dataset.label || "");
+
   // Screen sizes in CSS px (portrait), and what each device draws over the page.
   const DEVICES = [
     ["iPhone", [
@@ -1357,7 +1393,7 @@ export function studioPage(appPath) {
     const g = guides();
     const parts = [g.cols ? (g.cols === "auto" ? "cols" : g.cols + " col") : "", g.base ? g.base + "px" : ""].filter(Boolean);
     const b = $(".guides-toggle");
-    b.textContent = parts.length ? "Guides · " + parts.join(" · ") : "Guides";
+    setLabel(b, parts.length ? parts.join(" · ") : "");
     b.classList.toggle("on", parts.length > 0);
   }
   function drawGuides() {
@@ -1513,7 +1549,7 @@ export function studioPage(appPath) {
     const n = loadExplorations().length;
     const b = $(".ex-toggle");
     b.hidden = !n;
-    b.textContent = "✦ Explorations" + (n ? " " + n : "");
+    setLabel(b, "Explorations", n ? String(n) : "");
   }
   function openExploration(saved) {
     clearTimeout(ex.timer);
@@ -1662,7 +1698,7 @@ export function studioPage(appPath) {
   function drawCmToggle() {
     const b = $(".cm-toggle");
     const t = shownTweaks();
-    b.textContent = "💬" + (cm.list.length ? " " + cm.list.length : "");
+    setLabel(b, "", cm.list.length ? String(cm.list.length) : "");
     b.classList.toggle("on", !!(t && t.showComments));
   }
   const urlPath = (u) => { try { const x = new URL(u || "/", location.origin); return x.pathname + x.search; } catch { return u || "/"; } };
@@ -2232,7 +2268,7 @@ export function studioPage(appPath) {
     viewport.classList.toggle("versus", on);
     vs.el.classList.toggle("hidden", !on);
     $(".vs-toggle").classList.toggle("on", on);
-    $(".vs-toggle").textContent = on ? "⑂ " + versus.ref : "⑂ Versions";
+    setLabel($(".vs-toggle"), on ? versus.ref : "Versions");
     if (drawModes.on !== on) {
       drawModes.on = on;
       drawModes();
@@ -2690,7 +2726,8 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
         return send(res, 200, studioPage(url.searchParams.get("path") || "/"), "text/html; charset=utf-8");
       }
       if (req.method === "GET" && url.pathname === `${PREFIX}/overlay.js`) {
-        return send(res, 200, await fs.readFile(OVERLAY_PATH, "utf8"), "text/javascript");
+        // The icon set goes in where the overlay asks for it (one set for the panel and the studio).
+        return send(res, 200, (await fs.readFile(OVERLAY_PATH, "utf8")).replace("/*__UIT_ICONS__*/{}", JSON.stringify(ICONS)), "text/javascript");
       }
       if (req.method === "GET" && url.pathname === `${PREFIX}/status`) {
         const pending = await readPending(root);

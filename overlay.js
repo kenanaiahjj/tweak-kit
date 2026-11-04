@@ -248,6 +248,14 @@
   };
 
   const isOwn = (node) => node && (node === host || (host && host.contains(node)));
+  // The kit's icon set (Lucide outlines), put in by the dev server; a text glyph stands in without it.
+  const ICONS = /*__UIT_ICONS__*/{};
+  function setIcon(btn, name, fallback) {
+    if (ICONS[name]) btn.innerHTML = `<svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+    else btn.textContent = fallback;
+    if (btn.title && !btn.getAttribute("aria-label")) btn.setAttribute("aria-label", btn.title.split(/[.:(]/)[0].trim());
+    return btn;
+  }
   const computed = (el, prop) => getComputedStyle(el).getPropertyValue(prop).trim();
 
   function keyOf(el) {
@@ -1679,11 +1687,21 @@
     .cm-bubble textarea { resize: vertical; min-height: 60px; border: 0; border-radius: 8px; background: var(--bg2); color: var(--text); padding: 8px; font: inherit; outline: none; }
     .cm-bubble textarea:focus { box-shadow: inset 0 0 0 1px var(--line-hover); }
     .cm-bubble .cm-row { display: flex; gap: 6px; justify-content: flex-end; }
-    .ask-skills { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 6px 0 2px; }
-    .ask-skills > span { color: var(--dim); font-size: 11px; margin-right: 2px; }
-    .ask-skills button { height: 22px; padding: 0 8px; border: 0; border-radius: 6px; background: var(--bg2); color: var(--label); font-size: 11px; font-weight: 500; cursor: pointer; }
-    .ask-skills button:hover { background: var(--hover); color: var(--text); }
-    .ask-skills button.on { background: var(--accent); color: #fff; }
+    .ask-skills { margin: 6px 0 2px; }
+    .skill-btn { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 26px; padding: 0 6px 0 9px; border: 0; border-radius: 7px; background: var(--bg2); color: var(--label); font-size: 11.5px; cursor: pointer; }
+    .skill-btn:hover, .skill-btn.open { background: var(--hover); color: var(--text); }
+    .skill-btn .sk-k { color: var(--dim); }
+    .skill-btn .sk-v { color: var(--text); font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .skill-btn .ic { width: 14px; height: 14px; opacity: .6; transition: transform .15s cubic-bezier(0.2, 0, 0, 1); }
+    .skill-btn.open .ic { transform: rotate(180deg); }
+    .skill-list { display: grid; gap: 1px; margin-top: 6px; padding: 4px; border-radius: 10px; background: var(--bg2); box-shadow: inset 0 0 0 1px var(--line); }
+    .skill-row { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; align-items: start; padding: 7px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+    .skill-row:hover { background: var(--hover); }
+    .skill-row .sk-check { width: 14px; height: 14px; margin-top: 1px; border-radius: 4px; box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.3); }
+    .skill-row.on .sk-check { background: #fff; box-shadow: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23111' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E"); background-size: 11px; background-position: center; background-repeat: no-repeat; }
+    .skill-row .sk-text { display: grid; gap: 1px; min-width: 0; }
+    .skill-row b { font-size: 12px; font-weight: 500; }
+    .skill-row .sk-text span { font-size: 11px; color: var(--dim); line-height: 1.35; }
     .img-box { display: grid; gap: 8px; }
     .img-thumb { height: 96px; border-radius: 8px; background: repeating-conic-gradient(#2a2a2a 0 25%, #222 0 50%) 0 0 / 12px 12px; background-size: contain; background-repeat: no-repeat; background-position: center; box-shadow: inset 0 0 0 1px var(--line); }
     .img-thumb.dropping { box-shadow: inset 0 0 0 2px var(--accent); }
@@ -1843,6 +1861,34 @@
     .launch { border-radius: 999px; background: #212121; border-color: var(--line); font-weight: 600; }
     .bar .title { flex: 1; }
     .bar button.icon { min-width: 28px; padding: 0 6px; }
+    /* Icons: one stroke weight, optically centred in square buttons. */
+    .ic { display: block; flex: none; }
+    button.icon:has(> .ic) { width: 28px; padding: 0; display: inline-grid; place-items: center; }
+    button.icon.on { background: var(--active); color: #fff; }
+    button.icon:disabled { cursor: default; }
+    .arrange { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+    .arrange button.icon { flex: none; width: 28px; height: 28px; padding: 0; display: inline-grid; place-items: center; background: transparent; color: var(--label); }
+    .arrange button.icon:hover { background: var(--hover); color: var(--text); }
+    .arrange button.icon.danger:hover { background: rgba(229,72,77,.16); color: #ff8a8d; }
+    .copy-as { margin-left: auto; display: inline-flex; align-items: center; gap: 1px; padding: 2px; border-radius: 8px; background: var(--bg2); }
+    .copy-as > span { padding: 0 6px 0 5px; color: var(--dim); font-size: 11px; }
+    .copy-as button { flex: none; height: 22px; padding: 0 7px; border: 0; border-radius: 6px; background: transparent; color: var(--label); font-size: 11px; cursor: pointer; }
+    .copy-as button:hover { background: var(--hover); color: var(--text); }
+    .bar-sep { width: 1px; height: 14px; background: var(--line); margin: 0 4px; flex: none; }
+    /* Press feedback on every button, interruptible. */
+    button { transition-property: background-color, color, box-shadow, opacity, transform; transition-duration: .15s; transition-timing-function: cubic-bezier(0.2, 0, 0, 1); }
+    button:not(:disabled):active { transform: scale(0.96); }
+    input, textarea, .field input, .el-meta, .zoom { font-variant-numeric: tabular-nums; }
+    h4, .el-name { text-wrap: balance; }
+    .empty, .ask-sub, .ex-why, .el-meta { text-wrap: pretty; }
+    /* Empty state: a title, one line, and the few moves that matter, left-aligned. */
+    .empty { text-align: left; padding: 18px 16px 14px; line-height: 1.45; }
+    .empty-title { font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: -.005em; }
+    .empty-sub { margin-top: 3px; font-size: 12px; color: var(--dim); }
+    .hints { display: grid; grid-template-columns: auto 1fr; gap: 7px 10px; align-items: center; margin: 14px 0 0; }
+    .hints dt, .hints dd { margin: 0; }
+    .hints dd { font-size: 12px; color: var(--label); }
+    kbd { display: inline-block; min-width: 20px; padding: 2px 6px; border-radius: 5px; background: var(--bg2); box-shadow: inset 0 0 0 1px var(--line), 0 1px 0 rgba(0,0,0,.4); color: var(--text); font: 500 11px/16px var(--mono); text-align: center; white-space: nowrap; }
     /* The primary action gets the full width under the smaller ones, as in DialKit's panels. */
     .foot { flex-wrap: wrap; }
     .foot button.btn { flex: 1 1 0; min-width: 0; }
@@ -4262,29 +4308,43 @@
   const SKILLS_KEY = "ui-tweaks:ask-skills";
   try { state.askSkills = JSON.parse(localStorage.getItem(SKILLS_KEY) || "[]"); } catch { state.askSkills = []; }
   function skillPicker() {
-    const row = document.createElement("div");
-    row.className = "ask-skills";
+    const wrap = document.createElement("div");
+    wrap.className = "ask-skills";
     const skills = state.designSkills || [];
-    if (!skills.length) return row;
+    if (!skills.length) return wrap;
     const chosen = (state.askSkills || []).filter((n) => skills.some((s) => s.name === n));
-    const chip = (label, title, on, run) => {
-      const b = Object.assign(document.createElement("button"), { textContent: label, title });
-      if (on) b.classList.add("on");
-      b.addEventListener("click", run);
-      row.append(b);
-    };
-    row.append(Object.assign(document.createElement("span"), { textContent: "Skills", title: "Design skills Claude works from for Do it and Explore" }));
+    const labelOf = (n) => (skills.find((s) => s.name === n) || {}).label || n;
     const save = (list) => { state.askSkills = list; try { localStorage.setItem(SKILLS_KEY, JSON.stringify(list)); } catch {} renderPanel(); };
-    chip("Auto", "Claude picks the installed skill that fits each request", !chosen.length, () => save([]));
+    // One quiet control: "Skills · Auto ▾"; the list opens under it.
+    const btn = Object.assign(document.createElement("button"), { className: "skill-btn" + (state.skillsOpen ? " open" : ""), title: "Design skills Claude works from for Do it and Explore" });
+    btn.innerHTML = `<span class="sk-k">Skills</span><span class="sk-v"></span>`;
+    btn.querySelector(".sk-v").textContent = chosen.length ? chosen.map(labelOf).join(", ") : "Auto";
+    btn.append(setIcon(document.createElement("span"), "chevron-down", "▾"));
+    btn.addEventListener("click", () => { state.skillsOpen = !state.skillsOpen; renderPanel(); });
+    wrap.append(btn);
+    if (!state.skillsOpen) return wrap;
+    const list = document.createElement("div");
+    list.className = "skill-list";
+    const row = (label, lens, on, run) => {
+      const r = document.createElement("button");
+      r.className = "skill-row" + (on ? " on" : "");
+      r.innerHTML = `<span class="sk-check"></span><span class="sk-text"><b></b><span></span></span>`;
+      r.querySelector("b").textContent = label;
+      r.querySelector(".sk-text span").textContent = lens;
+      r.addEventListener("click", run);
+      list.append(r);
+    };
+    row("Auto", "Claude picks the installed skill that fits each request", !chosen.length, () => save([]));
     for (const s of skills) {
       const on = chosen.includes(s.name);
-      chip(s.label, `${s.name}: ${s.lens}${on ? "" : chosen.length >= 3 ? " (3 at most: unpick one first)" : ""}`, on, () => {
+      row(s.label, s.lens, on, () => {
         if (on) save(chosen.filter((n) => n !== s.name));
         else if (chosen.length < 3) save([...chosen, s.name]);
         else toast("Three skills at most: unpick one first");
       });
     }
-    return row;
+    wrap.append(list);
+    return wrap;
   }
 
   function askSection(el) {
@@ -4702,22 +4762,22 @@
     title.textContent = "Tweaks";
     const pick = document.createElement("button");
     pick.className = "icon" + (state.isPicking ? " on" : "");
-    pick.textContent = "⌖";
     pick.title = state.isPicking ? "Inspect (V): clicks select elements. Press C, or click, to interact with the app" : "Interact (C): clicks reach the app. Press V, or click, to inspect";
+    setIcon(pick, "pointer", "⌖");
     pick.addEventListener("click", () => setPickMode(!state.isPicking));
     const close = document.createElement("button");
     close.className = "icon";
-    close.textContent = "✕";
     close.title = "Close (Alt+T). Previews stay until you reset them.";
+    setIcon(close, "x", "✕");
     close.addEventListener("click", () => (STUDIO ? leaveStudio() : toggle(false)));
     const pop = document.createElement("button");
     pop.className = "icon";
     if (STUDIO) {
-      pop.textContent = "⇱";
       pop.title = "Leave docked mode";
+      setIcon(pop, "undock", "⇱");
     } else {
-      pop.textContent = state.popup ? "⇲ Dock" : "⧉";
       pop.title = state.popup ? "Put the panel back on the page" : CAN_DOCK ? "Dock the panel beside the page (Shift: pop out into a window)" : "Pop the panel out into its own window";
+      setIcon(pop, state.popup ? "dock" : "undock", state.popup ? "⇲ Dock" : "⧉");
     }
     pop.addEventListener("click", (e) => {
       if (STUDIO || state.popup) return dock();
@@ -4726,22 +4786,22 @@
     });
     const undo = document.createElement("button");
     undo.className = "icon";
-    undo.textContent = "↶";
     undo.title = "Undo the last preview edit (⌘Z / Ctrl+Z)";
+    setIcon(undo, "undo", "↶");
     undo.disabled = state.undo.length === 0;
     undo.style.opacity = undo.disabled ? "0.35" : "1";
     undo.addEventListener("click", undoPreview);
     const redo = document.createElement("button");
     redo.className = "icon";
-    redo.textContent = "↷";
     redo.title = "Redo (⌘⇧Z / Ctrl+Y)";
+    setIcon(redo, "redo", "↷");
     redo.disabled = !(state.redo && state.redo.length);
     redo.style.opacity = redo.disabled ? "0.35" : "1";
     redo.addEventListener("click", redoPreview);
     const system = document.createElement("button");
     system.className = "icon";
-    system.textContent = "◧";
     system.title = "Design system: every token in your CSS, editable";
+    setIcon(system, "palette", "◧");
     system.addEventListener("click", () => {
       const url = API + "/system";
       if (STUDIO) STUDIO.location.href = url;
@@ -4749,16 +4809,16 @@
     });
     const ins = document.createElement("button");
     ins.className = "icon" + (state.showInsert ? " on" : "");
-    ins.textContent = "＋";
     ins.title = "Insert an element or one of this page's components";
+    setIcon(ins, "plus", "＋");
     ins.addEventListener("click", () => {
       state.showInsert = !state.showInsert;
       render();
     });
     const hist = document.createElement("button");
     hist.className = "icon" + (state.showHistory ? " on" : "");
-    hist.textContent = "🕘";
     hist.title = "History: this session's edits (rewind to any step) and what was applied to the source";
+    setIcon(hist, "history", "🕘");
     hist.addEventListener("click", () => {
       state.showHistory = !state.showHistory;
       if (state.showHistory) state.showCheck = false;
@@ -4766,12 +4826,14 @@
     });
     const chk = document.createElement("button");
     chk.className = "icon" + (state.showCheck ? " on" : "");
-    chk.textContent = "✓";
-    chk.title = "Check this screen: contrast, tap targets, labels and off-token values, pinned on the page";
+    chk.title = "Check this screen: layout, contrast, tap targets, labels and off-token values, pinned on the page";
+    setIcon(chk, "check-circle", "✓");
     chk.addEventListener("click", () => {
       if (state.showCheck) { state.showCheck = false; render(); } else runCheck();
     });
-    bar.append(title, undo, redo, hist, chk, ins, system, pick, pop, close);
+    // In the studio its toolbar already has Interact / Inspect and the way out: the bar keeps to the panel's own tools.
+    const sep = Object.assign(document.createElement("span"), { className: "bar-sep" });
+    bar.append(title, undo, redo, sep, hist, chk, ins, system, ...(STUDIO ? [] : [pick, pop, close]));
     // A narrow panel has no room for the title: drop it rather than show "T…".
     requestAnimationFrame(() => { if (title.isConnected && title.scrollWidth > title.clientWidth + 1) title.style.visibility = "hidden"; });
     panel.append(bar);
@@ -4788,7 +4850,11 @@
     } else if (!el || !el.isConnected) {
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.innerHTML = (state.isPicking ? "" : `<b>Interact</b> is on: the app works as usual. <b>${IS_MAC ? "⌘" : "Ctrl"}-click</b> picks one element; <b>V</b> (or Inspect) picks with every click.<br/><br/>`) + `<b>Click any element</b> to tweak it.<br/>Drag it to reorder or move it, drag its handles to resize. ⌘-drag places it freely.<br/>Drag a field's label to scrub its value; Shift for ×10.<br/>Double-click text to edit it.<br/><br/>When you're happy, press <b>Send to Claude</b>. Claude edits the real source to match.`;
+      const key = IS_MAC ? "⌘" : "Ctrl";
+      const hints = state.isPicking
+        ? [["Click", "Select an element to edit it"], ["Drag", "Move it, or resize it from its handles"], ["Double-click", "Edit its text"], ["C", "Use the app (Interact)"]]
+        : [[`${key}-click`, "Pick an element without leaving Interact"], ["V", "Pick with every click (Inspect)"], ["Double-click", "Edit text, once something is picked"]];
+      empty.innerHTML = `<div class="empty-title">${state.isPicking ? "Nothing selected" : "Interacting with the app"}</div><div class="empty-sub">${state.isPicking ? "Edits preview here first; Send to Claude writes them to your source." : "Clicks reach the app, so you can get to the screen you want."}</div><dl class="hints">${hints.map(([k, v]) => `<dt><kbd>${k}</kbd></dt><dd>${v}</dd>`).join("")}</dl>`;
       if (state.showInsert) scroll.append(insertSection());
       scroll.append(empty);
       scroll.append(askSection(null));
@@ -4834,9 +4900,6 @@
         ["Copy style", "Copy this element's type, fill, border, radius, shadow and padding (⌘⌥C)", copyStyle],
         ["Paste style", "Paste the copied style onto this element (⌘⌥V)", pasteStyle],
         ["Matching", "Select every instance of this component (or every element with the same tag and classes): edits apply to all", (n) => selectMatching(n)],
-        ["CSS", "Copy its styles as CSS", (n) => copyCode(n, "css")],
-        ["Tailwind", "Copy its styles as Tailwind classes", (n) => copyCode(n, "tailwind")],
-        ["JSX", "Copy its JSX as written in the source", (n) => copyCode(n, "jsx")],
         ["Comment", "Pin a comment to this element (M)", (n) => startComment(n)],
         ["Make component", "Claude turns this into a reusable component, uses it here and replaces copies of it in the source (Undo apply reverts it)", (n) => makeComponent(n)],
       ]) {
@@ -4846,20 +4909,29 @@
         b.addEventListener("click", () => run(el));
         styleTools.append(b);
       }
+      // Arrange: icon buttons (move, parent, duplicate, remove), then "Copy as" for code.
       const arrange = document.createElement("div");
       arrange.className = "arrange";
-      for (const [label, title, run, cls] of [
-        ["↑", "Move before its previous sibling (⌘↑), or drag it on the page", () => moveBy(el, -1)],
-        ["↓", "Move after its next sibling (⌘↓), or drag it on the page", () => moveBy(el, 1)],
-        ["Parent", "Select the parent (Shift+Enter). Enter selects the first child, Tab the next sibling", () => el.parentElement && el.parentElement !== document.body && select(el.parentElement)],
-        ["Duplicate", "Duplicate it (⌘D). Claude writes the copy into the source on Send", () => duplicateElement(el)],
-        ["Remove", "Remove this element (Delete). Claude deletes it from the source on Send", () => removeElement(el), "danger"],
+      for (const [icon, label, title, run, cls] of [
+        ["arrow-up", "↑", "Move before its previous sibling (⌘↑), or drag it on the page", () => moveBy(el, -1)],
+        ["arrow-down", "↓", "Move after its next sibling (⌘↓), or drag it on the page", () => moveBy(el, 1)],
+        ["parent", "Parent", "Select the parent (Shift+Enter). Enter selects the first child, Tab the next sibling", () => el.parentElement && el.parentElement !== document.body && select(el.parentElement)],
+        ["copy", "Duplicate", "Duplicate it (⌘D). Claude writes the copy into the source on Send", () => duplicateElement(el)],
+        ["trash", "Remove", "Remove this element (Delete). Claude deletes it from the source on Send", () => removeElement(el), "danger"],
       ]) {
-        const b = Object.assign(document.createElement("button"), { textContent: label, title });
-        if (cls) b.className = cls;
+        const b = setIcon(Object.assign(document.createElement("button"), { title, className: "icon" + (cls ? " " + cls : "") }), icon, label);
         b.addEventListener("click", run);
         arrange.append(b);
       }
+      const copyAs = document.createElement("span");
+      copyAs.className = "copy-as";
+      copyAs.append(Object.assign(document.createElement("span"), { textContent: "Copy as" }));
+      for (const [label, kind, title] of [["CSS", "css", "Copy its styles as CSS"], ["Tailwind", "tailwind", "Copy its styles as Tailwind classes"], ["JSX", "jsx", "Copy its JSX as written in the source"]]) {
+        const b = Object.assign(document.createElement("button"), { textContent: label, title });
+        b.addEventListener("click", () => copyCode(el, kind));
+        copyAs.append(b);
+      }
+      arrange.append(copyAs);
       head.append(name, meta, crumbs, arrange, styleTools, layersTree(el));
       const states = document.createElement("div");
       states.className = "seg";

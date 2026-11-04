@@ -760,6 +760,54 @@ export function studioPage(appPath) {
   .focus-zoom, .zoom { font-variant-numeric: tabular-nums; }
   .sep { display: none; }
 
+  /* ---------- canvas ----------
+     Cards are the screen's real size inside the zoomed world; their labels and buttons are counter-scaled
+     (--iz) so they read the same at any zoom. Screens have a hairline; variations a violet one. */
+  .cv-layer { position: absolute; left: 0; top: 0; }
+  .cv-links { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+  .cv-links path { fill: none; }
+  .cv-branch path { stroke: rgba(167,139,250,.55); }
+  .cv-flow path { stroke: rgba(255,255,255,.35); }
+  #cv-head path { fill: rgba(255,255,255,.55); }
+  .cv-flow text { fill: rgba(255,255,255,.8); font-family: system-ui, -apple-system, sans-serif; font-weight: 500; text-anchor: middle; paint-order: stroke; stroke: #171717; stroke-linejoin: round; }
+  .cv-card { position: absolute; }
+  .cv-head { position: absolute; left: 0; right: 0; bottom: 100%; display: flex; align-items: baseline; gap: calc(8px * var(--iz)); padding-bottom: calc(8px * var(--iz)); font: 500 calc(12.5px * var(--iz))/1.2 system-ui, -apple-system, sans-serif; color: rgba(255,255,255,.75); white-space: nowrap; cursor: grab; user-select: none; }
+  .cv-head:active { cursor: grabbing; }
+  .cv-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .cv-far .cv-screen .cv-meta, .cv-far .cv-meta, .cv-far .cv-actions, .cv-far .cv-flag { display: none; }
+  .cv-variant .cv-body::after { content: ""; position: absolute; inset: 0; background: rgba(167,139,250,.0); pointer-events: none; transition: background-color .2s; }
+  .cv-far .cv-variant .cv-body::after { background: rgba(167,139,250,.28); }
+  .cv-far .cv-variant .cv-body { box-shadow: 0 0 0 calc(3px * var(--iz)) #a78bfa, 0 16px 48px rgba(0,0,0,.45); }
+  .cv-flag { white-space: nowrap; }
+  .cv-meta { flex: none; color: rgba(255,255,255,.4); font-size: calc(11.5px * var(--iz)); font-variant-numeric: tabular-nums; }
+  .cv-body { position: relative; overflow: hidden; background: #fff; box-shadow: 0 0 0 calc(1px * var(--iz)) rgba(255,255,255,.12), 0 16px 48px rgba(0,0,0,.45); transition: box-shadow .15s; }
+  .cv-body iframe { border: 0; display: block; pointer-events: none; }
+  .cv-variant .cv-head .cv-meta { padding: 0 calc(6px * var(--iz)); border-radius: calc(4px * var(--iz)); background: rgba(167,139,250,.16); color: #c4b5fd; }
+  .cv-variant .cv-body { box-shadow: 0 0 0 calc(1px * var(--iz)) rgba(167,139,250,.55), 0 16px 48px rgba(0,0,0,.45); }
+  .cv-card.selected .cv-body { box-shadow: 0 0 0 calc(2px * var(--iz)) var(--accent), 0 16px 48px rgba(0,0,0,.45); }
+  .cv-card.selected .cv-head { color: #fff; }
+  .cv-pending .cv-body { background: rgba(255,255,255,.03); box-shadow: inset 0 0 0 calc(1px * var(--iz)) rgba(167,139,250,.4); }
+  .cv-wait { position: absolute; inset: 0; display: grid; place-items: center; background: #1b1b1b; color: rgba(255,255,255,.45); font: 500 calc(13px * var(--iz)) system-ui, -apple-system, sans-serif; }
+  .cv-pending .cv-wait { background: transparent; }
+  .cv-actions { position: absolute; left: 0; top: 100%; display: flex; gap: calc(6px * var(--iz)); padding-top: calc(10px * var(--iz)); white-space: nowrap; }
+  .cv-actions button { height: calc(28px * var(--iz)); padding: 0 calc(10px * var(--iz)); border: 0; border-radius: calc(8px * var(--iz)); background: rgba(255,255,255,.08); color: rgba(255,255,255,.85); font: 500 calc(12px * var(--iz)) system-ui, -apple-system, sans-serif; cursor: pointer; transition: background-color .15s; }
+  .cv-actions button:hover { background: rgba(255,255,255,.14); color: #fff; }
+  .cv-actions button.primary { background: #fff; color: #171717; font-weight: 600; }
+  .cv-bar { position: absolute; left: 12px; top: 12px; z-index: 3; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 6px 0 14px; border-radius: 12px; background: rgba(33,33,33,.92); backdrop-filter: blur(8px); box-shadow: 0 0 0 1px rgba(255,255,255,.1), 0 8px 24px rgba(0,0,0,.35); font: 12.5px system-ui, -apple-system, sans-serif; color: rgba(255,255,255,.6); }
+  .cv-bar[hidden] { display: none; }
+  .cv-bar b { color: #fff; font-weight: 600; }
+  .cv-bar .cv-count { font-variant-numeric: tabular-nums; }
+  .cv-bar button { height: 28px; padding: 0 10px; border: 0; border-radius: 8px; background: rgba(255,255,255,.08); color: #fff; font: 500 12px system-ui, -apple-system, sans-serif; cursor: pointer; }
+  .cv-bar button:hover { background: rgba(255,255,255,.14); }
+  .cv-bar .cv-legend { display: inline-flex; align-items: center; gap: 6px; padding: 0 6px 0 8px; color: rgba(255,255,255,.6); font-size: 12px; }
+  .cv-bar .cv-legend i { width: 10px; height: 10px; border-radius: 3px; box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.45); }
+  .cv-bar .cv-legend i.ex { margin-left: 8px; box-shadow: inset 0 0 0 1.5px #a78bfa; background: rgba(167,139,250,.18); }
+  .cv-tag { flex: none; padding: 0 calc(6px * var(--iz)); border-radius: calc(4px * var(--iz)); background: #a78bfa; color: #1b1530; font-weight: 600; font-size: calc(11px * var(--iz)); line-height: calc(18px * var(--iz)); align-self: center; }
+  .cv-flag { position: absolute; left: calc(8px * var(--iz)); top: calc(8px * var(--iz)); z-index: 1; padding: 0 calc(8px * var(--iz)); border-radius: calc(6px * var(--iz)); background: rgba(27,21,48,.88); color: #ddd6fe; font: 600 calc(11.5px * var(--iz))/calc(22px * var(--iz)) system-ui, -apple-system, sans-serif; box-shadow: 0 0 0 calc(1px * var(--iz)) rgba(167,139,250,.6); pointer-events: none; }
+  .cv-flag.sent { background: rgba(16,40,26,.9); color: #a7f3c4; box-shadow: 0 0 0 calc(1px * var(--iz)) rgba(110,231,160,.55); }
+  .cv-bar .cv-hint { padding: 0 8px 0 4px; color: rgba(255,255,255,.4); font-size: 12px; }
+  .canvas-toggle.on { background: rgba(255,255,255,.11); color: #fff; }
+
   /* ---------- pop-ups ----------
      One surface: #212121, a 1px hairline, 14px corners, one shadow. List menus have 6px padding (rows inside
      at 8px corners, concentric); content pop-ups 12px. Panels open 8px under the top bar and stop 12px
@@ -791,8 +839,8 @@ export function studioPage(appPath) {
   .toolbar { row-gap: 6px; padding: 8px 10px 6px; }
   .tb-break { flex-basis: 100%; height: 1px; margin: 2px -10px 0; background: rgba(255,255,255,.1); }
   .tb-break + .tb-group { margin-left: 0; padding-left: 0; box-shadow: none; }
-  .toolbar .focus-pick { width: 156px; }
-  .toolbar .focus-device { width: 148px; }
+  .toolbar .focus-pick { width: 140px; }
+  .toolbar .focus-device { width: 132px; }
   .toolbar .width-slider { width: 112px; }
   .toolbar .focus-zoom { min-width: 40px; padding: 0 2px; text-align: center; color: rgba(255,255,255,.7); font-size: 12px; }
   /* Sidebar: the screen's name gets the row; its URL is in the tooltip. */
@@ -820,6 +868,7 @@ export function studioPage(appPath) {
           <button class="scr-del" data-icon="trash" title="Remove this screen">🗑</button>
           <button class="pages-toggle" data-icon="list" title="Screens and routes">☰</button>
           <button class="overview" data-icon="grid" title="All screens at a glance">▦</button>
+          <button class="canvas-toggle" data-icon="canvas" title="Canvas: every screen as a picture with your pinned explorations beside it and the flow between screens. Double-click a screen to work on it">Canvas</button>
         </span>
       </span>
       <span class="tb-group focus-tools">
@@ -870,6 +919,7 @@ export function studioPage(appPath) {
       <div class="viewport">
         <div class="dots"></div>
         <div class="world"></div>
+        <div class="cv-bar" hidden><b>Canvas</b><span class="cv-count"></span><button class="cv-refresh" title="Take a fresh picture of every screen">Refresh pictures</button><button class="cv-fit" title="Fit everything (⇧1)">Fit</button><span class="cv-legend"><i class="code"></i>Your app (in code)<i class="ex"></i>Exploration</span><span class="cv-hint">Double-click to work on a screen</span></div>
         <div class="shield"></div>
       </div>
     </div>
@@ -944,7 +994,7 @@ export function studioPage(appPath) {
   let view = { grid: false, base: false, pages: false, cam: null, mode: "focus", focus: null };
   try { view = { ...view, ...JSON.parse(localStorage.getItem(VIEW_KEY) || "{}") }; } catch {}
   view.vsMode = "interact"; // the studio opens in Interact: the app works as usual until V (or Inspect) picks elements
-  view.mode = "focus"; // one screen at a time, at its real size (the canvas view is gone)
+  if (view.mode !== "canvas") view.mode = "focus"; // one screen at a time at its real size, or the canvas
   const saveView = () => { try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch {} };
 
   // ---------- pop-up placement ----------
@@ -1040,6 +1090,7 @@ export function studioPage(appPath) {
     return z.z;
   }
   function layoutFocus() {
+    if (!isFocus()) return; // the canvas has its own camera (polls that redraw the focus view leave it alone)
     const a = canvas.artboards.find((x) => x.id === focusedId());
     if (!a) return;
     const [w, h] = size(a);
@@ -1158,7 +1209,8 @@ export function studioPage(appPath) {
     viewport.classList.toggle("hand", on || false);
   }
   viewport.addEventListener("pointerdown", (e) => {
-    const onEmpty = e.target === viewport || e.target === world || e.target.classList.contains("shield") || e.target.classList.contains("dots");
+    const onEmpty = e.target === viewport || e.target === world || e.target.classList.contains("shield") || e.target.classList.contains("dots") || e.target.classList.contains("cv-layer");
+    if (onEmpty && isCanvas()) cvSelect(null);
     if (!onEmpty) return;
     if (!hand && !false && !isFocus()) select(null);
     const start = { x: e.clientX, y: e.clientY, cx: isFocus() ? focusPan.x : cam.x, cy: isFocus() ? focusPan.y : cam.y };
@@ -1181,13 +1233,13 @@ export function studioPage(appPath) {
     if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
     if (e.code === "Space" && !e.repeat) { e.preventDefault(); setHand(true); }
     const shown = canvas.artboards.find((x) => x.id === focusedId());
-    if ((e.metaKey || e.ctrlKey) && (e.key === "=" || e.key === "+")) { e.preventDefault(); shown && zoomFocus(zoomOf(shown) * 1.25); }
-    if ((e.metaKey || e.ctrlKey) && e.key === "-") { e.preventDefault(); shown && zoomFocus(zoomOf(shown) / 1.25); }
-    if (e.shiftKey && e.code === "Digit1") fitFocus();
-    if (e.shiftKey && e.code === "Digit0") zoomFocus(1);
+    if ((e.metaKey || e.ctrlKey) && (e.key === "=" || e.key === "+")) { e.preventDefault(); isFocus() ? shown && zoomFocus(zoomOf(shown) * 1.25) : zoomAt(cam.z * 1.25, ...center()); }
+    if ((e.metaKey || e.ctrlKey) && e.key === "-") { e.preventDefault(); isFocus() ? shown && zoomFocus(zoomOf(shown) / 1.25) : zoomAt(cam.z / 1.25, ...center()); }
+    if (e.shiftKey && e.code === "Digit1") isFocus() ? fitFocus() : fitCanvas();
+    if (e.shiftKey && e.code === "Digit0") isFocus() ? zoomFocus(1) : zoomAt(1, ...center());
     if (isFocus() && e.key === "ArrowLeft") step(-1);
     if (isFocus() && e.key === "ArrowRight") step(1);
-    if (!isFocus() && (e.key === "Backspace" || e.key === "Delete") && selected) removeArtboard(selected);
+    // (On the canvas, Delete removes a selected variation; screens are removed with 🗑 in the top bar.)
   });
   addEventListener("keyup", (e) => { if (e.code === "Space") setHand(false); });
   // The app's frames forward pinch-zoom and Space to the canvas (the overlay calls these).
@@ -1358,7 +1410,8 @@ export function studioPage(appPath) {
       head(a, f);
     });
     const focus = isFocus(), fid = focusedId();
-    for (const [id, f] of frames) f.el.classList.toggle("hidden", focus && id !== fid);
+    // On the canvas the live screens step aside: it shows pictures (drawCanvas), and a double-click goes live.
+    for (const [id, f] of frames) f.el.classList.toggle("hidden", !focus || id !== fid);
     viewport.classList.toggle("focus", focus);
     const a = canvas.artboards.find((x) => x.id === fid);
     $(".focus-pick").innerHTML = canvas.artboards.map((x) => '<option value="' + esc(x.id) + '"' + (x.id === fid ? " selected" : "") + ">" + esc(x.name || x.url) + "</option>").join("");
@@ -1371,6 +1424,12 @@ export function studioPage(appPath) {
     saveView();
     drawMinimap();
     dockPanel();
+    // The canvas's own cards; the comparison and Widths frames belong to the focus view.
+    // (A render during start-up can come before these are set up; the next one draws them.)
+    try {
+      if (!focus) { viewport.classList.remove("versus", "widths"); vs.el.classList.add("hidden"); }
+      drawCanvas();
+    } catch {}
   }
 
   // If the frame that held the panel went away, let the first artboard take it.
@@ -1418,7 +1477,12 @@ export function studioPage(appPath) {
     render();
   }
 
-  function drawMinimap() {}
+  function drawMinimap() {
+    if (typeof isCanvas !== "function" || !isCanvas() || !cv.layer) return;
+    // Far out, the size labels would run into each other: names only.
+    cv.layer.classList.toggle("cv-far", cam.z < 0.25);
+    drawLinks();
+  }
 
   // ---------- pages ----------
   // The app's routes, with ways to add them as screens. Routes with parameters ask for values.
@@ -1676,10 +1740,12 @@ export function studioPage(appPath) {
       sendingAll = false;
     }
   }
-  $(".fz-out").addEventListener("click", () => { const a = current(); a && zoomFocus(zoomOf(a) / 1.25); });
-  $(".fz-in").addEventListener("click", () => { const a = current(); a && zoomFocus(zoomOf(a) * 1.25); });
-  $(".fz-fit").addEventListener("click", fitFocus);
-  $(".fz-100").addEventListener("click", () => zoomFocus(1));
+  // Zoom acts on the screen in focus, or on the canvas.
+  const zoomBy = (k) => { if (!isFocus()) { const [mx, my] = center(); return zoomAt(cam.z * k, mx, my); } const a = current(); a && zoomFocus(zoomOf(a) * k); };
+  $(".fz-out").addEventListener("click", () => zoomBy(1 / 1.25));
+  $(".fz-in").addEventListener("click", () => zoomBy(1.25));
+  $(".fz-fit").addEventListener("click", () => (isFocus() ? fitFocus() : fitCanvas()));
+  $(".fz-100").addEventListener("click", () => { if (isFocus()) return zoomFocus(1); const [mx, my] = center(); zoomAt(1, mx, my); });
   $(".overview").addEventListener("click", () => {
     const pop = $(".overview-pop");
     pop.hidden = !pop.hidden;
@@ -2358,10 +2424,11 @@ export function studioPage(appPath) {
     for (const n of parsed.body.querySelectorAll("*")) for (const a of [...n.attributes]) if (/^on/i.test(a.name) || (/^(href|src|action|formaction|xlink:href)$/i.test(a.name) && /^\\s*javascript:/i.test(a.value))) n.removeAttribute(a.name);
     return parsed.body.firstElementChild ? doc.importNode(parsed.body.firstElementChild, true) : null;
   }
-  function exPreview(view, v, full) {
+  // r is the exploration request (the board's by default; a canvas card passes the one it was pinned with).
+  // opts.canvas: the whole screen at its real size, unscaled and not interactive (the canvas zooms it).
+  function exPreview(view, v, full, r = ex.req, opts = {}) {
     const changes = (v && v.changes) || [];
     const html = v && v.html;
-    const r = ex.req;
     const [w, h] = r.size;
     const frame = document.createElement("iframe");
     frame.name = "uit-explore"; // the panel's script stays out of these
@@ -2417,9 +2484,11 @@ export function studioPage(appPath) {
       if (vb.bottom > frame.contentWindow.innerHeight || vb.top < 0 || vb.right > frame.contentWindow.innerWidth || vb.left < 0) el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
       // Some entrance animations run in script, out of sight of the checks above: wait until the
       // element's box holds still for a few frames (or 3s), then crop to where it ended up.
-      if (full) {
-        el.style.setProperty("outline", "2px dashed rgba(120,170,255,.8)", "important");
-        el.style.setProperty("outline-offset", "3px", "important");
+      if (full || opts.canvas) {
+        if (!opts.canvas) {
+          el.style.setProperty("outline", "2px dashed rgba(120,170,255,.8)", "important");
+          el.style.setProperty("outline-offset", "3px", "important");
+        }
         frame.style.visibility = "";
         return;
       }
@@ -2439,7 +2508,11 @@ export function studioPage(appPath) {
       frame.style.visibility = "";
     });
     frame.style.visibility = "hidden";
-    if (full) {
+    if (opts.canvas) {
+      view.style.width = w + "px";
+      view.style.height = h + "px";
+      frame.style.pointerEvents = "none";
+    } else if (full) {
       const board = $(".explore");
       const scale = Math.min(1, (board.clientHeight - 90) / h, (board.clientWidth - 40) / w);
       view.style.width = Math.round(w * scale) + "px";
@@ -2546,6 +2619,7 @@ export function studioPage(appPath) {
       };
     }
     btn("On screen", "See it on the whole screen", () => exFull(cur));
+    if (kind !== "original") btn("Pin", "Pin it to the canvas, beside its screen, to keep and compare it with others (and branch off it)", () => pinFromExplore(cur));
     btn(kind === "original" ? "More variations" : "More like this", kind === "original" ? "Ask Claude for more (two, unless the direction says how many)" : "More that push this one further", () => {
       const dir = $(".ex-dir").value.trim();
       const text = kind === "original" ? dir : "Variations on “" + cur.name + "” (" + (v.why || "") + "). Push that idea further in different ways" + (dir ? ", " + dir : "") + (cur.html ? ". Start from its layout and return full variations (html and changes): " + JSON.stringify({ html: cur.html, changes: cur.changes }) : ". Start from its changes and return full change sets: " + JSON.stringify(cur.changes));
@@ -2642,6 +2716,349 @@ export function studioPage(appPath) {
     if (full) full.remove();
     else closeExplore();
   });
+
+  // ---------- the canvas ----------
+  // Every screen as a picture (a static snapshot, light enough for dozens), your pinned explorations beside
+  // the screen they came from with a line back to it, and the flow map's taps as arrows between screens.
+  // Double-click a screen to work on it live; a variation's More like this branches off it.
+  const cv = { cards: new Map(), queue: [], capturing: false, sel: null, timer: null, flows: [], flowsAt: 0 };
+  const isCanvas = () => view.mode === "canvas";
+  const CV_GAP = 64;
+  const cvVariants = () => (canvas.variants ||= []);
+  const cvPending = () => (canvas.pending ||= []);
+  const itemById = (id) => canvas.artboards.find((a) => a.id === id) || cvVariants().find((v) => v.id === id) || null;
+  const isScreen = (it) => canvas.artboards.includes(it);
+  function itemRect(it) {
+    const [w, h] = isScreen(it) ? size(it) : (it.req && it.req.size) || [390, 844];
+    return { x: it.x, y: it.y, w, h };
+  }
+  function rootArtboard(it) {
+    for (let i = 0; it && !isScreen(it) && i < 30; i++) it = itemById(it.parent);
+    return it && isScreen(it) ? it : null;
+  }
+  // The first free place to the right of (x, y), clear of every screen, variation and placeholder.
+  function freeSpot(x, y, w, h) {
+    const rects = [...canvas.artboards, ...cvVariants()].map(itemRect).concat(cvPending().map((p) => ({ x: p.x, y: p.y, w: p.w || 390, h: p.h || 844 })));
+    for (let i = 0; i < 400; i++) {
+      if (!rects.some((r) => x < r.x + r.w + 40 && x + w + 40 > r.x && y < r.y + r.h + 72 && y + h + 72 > r.y)) return { x: Math.round(x / 8) * 8, y };
+      x += 40;
+    }
+    return { x, y };
+  }
+  const cvReq = (r) => ({ snapshot: r.snapshot, selector: r.selector, url: r.url, size: r.size, element: r.element, page: r.page, context: r.context, mode: r.mode, skills: r.skills, scope: r.scope, label: r.label });
+  // A variation onto the canvas, beside its parent (a screen, or the variation it branched from).
+  function pinVariant(v, req, parentId) {
+    const parent = itemById(parentId);
+    if (!parent || !req || !req.size) return null;
+    const pr = itemRect(parent);
+    const [w, h] = req.size;
+    const spot = freeSpot(pr.x + pr.w + CV_GAP, pr.y, w, h);
+    const item = { id: "v" + Math.random().toString(36).slice(2, 9), parent: parent.id, x: spot.x, y: spot.y, name: v.name, why: v.why || "", changes: v.changes || [], at: Date.now(), req: cvReq(req) };
+    for (const k of ["html", "state", "when", "skill"]) if (v[k]) item[k] = v[k];
+    cvVariants().push(item);
+    save();
+    if (isCanvas()) drawCanvas();
+    return item;
+  }
+  // From the Explore board: the screen it explored is the parent.
+  function pinFromExplore(v) {
+    const r = ex.req;
+    if (!r) return;
+    const a = canvas.artboards.find((x) => urlPath(x.url) === urlPath(r.url)) || current();
+    if (!a) return note("No screen to pin it to.");
+    pinVariant(v, r, a.id);
+    note("Pinned “" + v.name + "” to the canvas, beside " + (a.name || a.url) + ".");
+  }
+
+  // ---------- pictures ----------
+  // Each screen loads on its own (as Check all does) and its panel snapshots it; the dev server keeps the
+  // snapshots the canvas uses. One at a time, in the background.
+  function queuePictures(force) {
+    for (const a of canvas.artboards) if ((force || !a.snap) && !cv.queue.includes(a.id)) cv.queue.push(a.id);
+    takePictures();
+  }
+  async function takePictures() {
+    if (cv.capturing) return;
+    cv.capturing = true;
+    try {
+      while (cv.queue.length) {
+        const a = canvas.artboards.find((x) => x.id === cv.queue[0]);
+        drawCvBar();
+        if (a) {
+          const [w, h] = size(a);
+          const frame = await loadHidden(a.url, w, h);
+          try {
+            const t = frame.contentWindow.__uiTweaks;
+            const html = await Promise.race([Promise.resolve().then(() => t.snapshotHtml()), sleep(15000).then(() => null)]);
+            const key = t.screenKey ? t.screenKey() : null;
+            if (html) {
+              const res = await fetch("/__ui-tweaks/snapshots", { method: "POST", headers: { "Content-Type": "text/html" }, body: html });
+              const out = await res.json();
+              if (res.ok && out.url) { a.snap = out.url; a.snapAt = Date.now(); if (key) a.heading = key.heading; save(); }
+            }
+          } catch {}
+          frame.remove();
+          if (isCanvas()) drawCanvas();
+        }
+        cv.queue.shift();
+      }
+    } finally {
+      cv.capturing = false;
+      drawCvBar();
+    }
+  }
+
+  // ---------- cards ----------
+  function cvSelect(id) {
+    cv.sel = id;
+    for (const [cid, c] of cv.cards) c.el.classList.toggle("selected", cid === id);
+  }
+  function cvOpen(it) {
+    const a = rootArtboard(it);
+    if (!a) return;
+    select(a.id);
+    setMode("focus", a.id);
+  }
+  function makeCard(kind, it) {
+    const el = document.createElement("div");
+    el.className = "cv-card cv-" + kind;
+    // Your app's screens (in code) are plain; explorations say so in the header and on the card.
+    el.innerHTML = '<div class="cv-head">' + (kind === "screen" ? "" : '<span class="cv-tag">Exploration</span>') + '<span class="cv-name"></span><span class="cv-meta"></span></div><div class="cv-body"></div>' + (kind === "variant" ? '<div class="cv-flag"></div><div class="cv-actions"></div>' : "");
+    const card = { el, kind, id: it.id, body: el.querySelector(".cv-body"), shown: null };
+    // Drag the header to move it (8px grid); its branch lines follow.
+    el.querySelector(".cv-head").addEventListener("pointerdown", (e) => {
+      if (kind === "pending" || e.button !== 0) return;
+      e.stopPropagation();
+      cvSelect(it.id);
+      const target = itemById(it.id);
+      if (!target) return;
+      const start = { x: e.clientX, y: e.clientY, ix: target.x, iy: target.y };
+      const head = e.currentTarget;
+      head.setPointerCapture(e.pointerId);
+      const move = (ev) => {
+        target.x = Math.round((start.ix + (ev.clientX - start.x) / cam.z) / 8) * 8;
+        target.y = Math.round((start.iy + (ev.clientY - start.y) / cam.z) / 8) * 8;
+        el.style.left = target.x + "px";
+        el.style.top = target.y + "px";
+        drawLinks();
+      };
+      const up = () => { head.removeEventListener("pointermove", move); head.removeEventListener("pointerup", up); save(); };
+      head.addEventListener("pointermove", move);
+      head.addEventListener("pointerup", up);
+    });
+    if (kind !== "pending") {
+      el.addEventListener("pointerdown", (e) => { if (!e.target.closest("button")) cvSelect(it.id); });
+      el.addEventListener("dblclick", (e) => { if (!e.target.closest("button")) cvOpen(itemById(it.id)); });
+    }
+    if (kind === "variant") {
+      const actions = el.querySelector(".cv-actions");
+      const btn = (text, title, run, cls) => { const b = Object.assign(document.createElement("button"), { textContent: text, title }); if (cls) b.className = cls; b.addEventListener("click", (e) => { e.stopPropagation(); run(); }); actions.append(b); };
+      btn(it.state ? "Build it" : it.html ? "Build it" : "Use", it.state ? "Claude adds this state to the component" + (it.when ? ", shown when " + it.when : "") : it.html ? "Claude builds this layout in the component" : "Put it on the real screen as tweaks", () => cvUse(itemById(it.id)), "primary");
+      btn("More like this", "Two more that push this one further, branching off it", () => cvMore(itemById(it.id)).catch((err) => note("Couldn't ask Claude: " + err.message)));
+      btn("Remove", "Take it (and what branched off it) off the canvas", () => cvRemove(it.id));
+    }
+    cv.layer.append(el);
+    cv.cards.set(it.id, card);
+    return card;
+  }
+  function fillCard(card, it) {
+    const r = itemRect(it);
+    Object.assign(card.el.style, { left: r.x + "px", top: r.y + "px" });
+    Object.assign(card.body.style, { width: r.w + "px", height: r.h + "px" });
+    if (card.kind === "screen") {
+      card.el.querySelector(".cv-name").textContent = it.name || it.url;
+      card.el.querySelector(".cv-meta").textContent = r.w + "×" + r.h;
+      card.el.title = it.url + "\\nDouble-click to work on it";
+      if (card.shown !== (it.snap || "")) {
+        card.shown = it.snap || "";
+        card.body.innerHTML = "";
+        if (it.snap) {
+          const f = Object.assign(document.createElement("iframe"), { name: "uit-explore", src: it.snap, tabIndex: -1, title: it.name || "Screen" });
+          f.setAttribute("aria-hidden", "true");
+          Object.assign(f.style, { width: r.w + "px", height: r.h + "px" });
+          card.body.append(f);
+        } else card.body.append(Object.assign(document.createElement("div"), { className: "cv-wait", textContent: "Taking its picture…" }));
+      }
+    } else if (card.kind === "variant") {
+      card.el.querySelector(".cv-name").textContent = it.name;
+      card.el.querySelector(".cv-meta").textContent = it.state ? "State" : it.html ? "Layout" : "Styles";
+      card.el.title = "Exploration, not in your code" + (it.sentAt ? " (sent to code)" : "") + ": " + (it.why || it.name) + "\\nDouble-click to open its screen";
+      const flag = card.el.querySelector(".cv-flag");
+      flag.textContent = it.sentAt ? "Sent to code" : "Not in your code";
+      flag.classList.toggle("sent", !!it.sentAt);
+      const key = JSON.stringify([it.changes, it.html]);
+      if (card.shown !== key) {
+        card.shown = key;
+        card.body.innerHTML = "";
+        if (it.req && it.req.snapshot) exPreview(card.body, it, false, it.req, { canvas: true });
+        else card.body.append(Object.assign(document.createElement("div"), { className: "cv-wait", textContent: "Its snapshot is gone" }));
+      }
+    } else {
+      card.el.querySelector(".cv-name").textContent = "Claude is sketching…";
+      card.el.querySelector(".cv-meta").textContent = "";
+      if (!card.shown) { card.shown = "1"; card.body.append(Object.assign(document.createElement("div"), { className: "cv-wait", textContent: "Two more, branching off this one" })); }
+    }
+  }
+  function drawCanvas() {
+    if (!cv.layer) {
+      cv.layer = document.createElement("div");
+      cv.layer.className = "cv-layer";
+      cv.layer.innerHTML = '<svg class="cv-links" width="1" height="1"><defs><marker id="cv-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0L8 4L0 8z"/></marker></defs><g class="cv-flow"></g><g class="cv-branch"></g></svg>';
+      world.prepend(cv.layer);
+    }
+    cv.layer.hidden = !isCanvas();
+    $(".canvas-toggle").classList.toggle("on", isCanvas());
+    drawCvBar();
+    if (!isCanvas()) return;
+    // Placeholders for asks still on the way take their spot beside their parent.
+    for (const p of cvPending()) if (p.x === undefined) { const par = itemById(p.parent); if (par) { const r = itemRect(par); Object.assign(p, freeSpot(r.x + r.w + CV_GAP, r.y, r.w, r.h), { w: r.w, h: r.h }); } }
+    const items = [...canvas.artboards.map((it) => ["screen", it]), ...cvVariants().map((it) => ["variant", it]), ...cvPending().map((p) => ["pending", { ...p, req: { size: [p.w || 390, p.h || 844] } }])];
+    const ids = new Set(items.map(([, it]) => it.id));
+    for (const [id, c] of cv.cards) if (!ids.has(id)) { c.el.remove(); cv.cards.delete(id); }
+    for (const [kind, it] of items) fillCard(cv.cards.get(it.id) || makeCard(kind, it), it);
+    cvSelect(cv.sel);
+    drawLinks();
+    if (canvas.artboards.some((a) => !a.snap)) queuePictures(false);
+    if (cvPending().length) { clearTimeout(cv.timer); cv.timer = setTimeout(pollCanvas, 1500); }
+    if (Date.now() - cv.flowsAt > 10000) {
+      cv.flowsAt = Date.now();
+      fetch("/__ui-tweaks/flows", { cache: "no-store" }).then((r) => r.json()).then((d) => { cv.flows = d.flows || []; drawLinks(); }).catch(() => {});
+    }
+  }
+  // Branch lines (parent → variation) and flow arrows (a tap from one screen to another), redrawn as things move.
+  function drawLinks() {
+    if (!cv.layer || !isCanvas()) return;
+    const z = cam.z, sw = 1.5 / z;
+    const curve = (a, b) => {
+      // Right edge to left edge when b is to the right; otherwise over the top.
+      if (b.x > a.x + a.w) { const x1 = a.x + a.w, y1 = a.y + Math.min(a.h / 2, 160), x2 = b.x - 2 / z, y2 = b.y + Math.min(b.h / 2, 160), mx = (x1 + x2) / 2; return ["M" + x1 + " " + y1 + " C" + mx + " " + y1 + " " + mx + " " + y2 + " " + x2 + " " + y2, mx, (y1 + y2) / 2]; }
+      const x1 = a.x + a.w / 2, y1 = a.y - 36 / z, x2 = b.x + b.w / 2, y2 = b.y - 36 / z, top = Math.min(y1, y2) - 120 / z;
+      return ["M" + x1 + " " + y1 + " C" + x1 + " " + top + " " + x2 + " " + top + " " + x2 + " " + y2, (x1 + x2) / 2, top + 20 / z];
+    };
+    let branch = "";
+    for (const v of [...cvVariants(), ...cvPending()]) {
+      const p = itemById(v.parent);
+      if (!p) continue;
+      const [d] = curve(itemRect(p), { x: v.x, y: v.y, w: v.w || itemRect(v).w, h: v.h || itemRect(v).h });
+      branch += '<path d="' + d + '" stroke-width="' + sw + '"' + (v.req || v.name ? "" : ' stroke-dasharray="' + 6 / z + " " + 4 / z + '"') + "/>";
+    }
+    // Flow taps: a screen is its URL plus its main heading (what the flow map records).
+    const boardFor = (n) => {
+      const same = canvas.artboards.filter((a) => urlPath(a.url) === n.url);
+      return same.find((a) => a.heading && a.heading === n.heading) || (same.length === 1 ? same[0] : null);
+    };
+    let flow = "";
+    const seen = new Set();
+    for (const f of cv.flows) {
+      const a = boardFor(f.from), b = boardFor(f.to);
+      if (!a || !b || a === b || seen.has(a.id + ">" + b.id)) continue;
+      seen.add(a.id + ">" + b.id);
+      const [d, lx, ly] = curve(itemRect(a), itemRect(b));
+      flow += '<path d="' + d + '" stroke-width="' + sw + '" marker-end="url(#cv-head)"/>';
+      if (f.via) flow += '<text x="' + lx + '" y="' + ly + '" style="font-size:' + 12 / z + "px;stroke-width:" + 4 / z + 'px">' + esc(f.via.length > 24 ? f.via.slice(0, 23) + "…" : f.via) + "</text>";
+    }
+    cv.layer.querySelector(".cv-branch").innerHTML = branch;
+    cv.layer.querySelector(".cv-flow").innerHTML = flow;
+    const m = cv.layer.querySelector("#cv-head");
+    m.setAttribute("markerWidth", 9 / z);
+    m.setAttribute("markerHeight", 9 / z);
+  }
+  function drawCvBar() {
+    const bar = $(".cv-bar");
+    if (!bar) return;
+    bar.hidden = !isCanvas();
+    if (!isCanvas()) return;
+    const n = cvVariants().length;
+    bar.querySelector(".cv-count").textContent = canvas.artboards.length + " screens" + (n ? " · " + n + " variation" + (n === 1 ? "" : "s") : "") + (cv.queue.length ? " · picturing " + cv.queue.length + "…" : "");
+  }
+  function fitCanvas() {
+    const rects = [...canvas.artboards, ...cvVariants()].map(itemRect);
+    if (!rects.length) return;
+    const x = Math.min(...rects.map((r) => r.x)), y = Math.min(...rects.map((r) => r.y)) - 40;
+    const w = Math.max(...rects.map((r) => r.x + r.w)) - x, h = Math.max(...rects.map((r) => r.y + r.h)) - y;
+    const z = Math.min(1, (viewport.clientWidth - 96) / w, (viewport.clientHeight - 120) / h);
+    // Clear of the canvas bar at the top.
+    cam = { z: Math.min(z, (viewport.clientHeight - 150) / h), x: 0, y: 0 };
+    cam.x = (viewport.clientWidth - w * cam.z) / 2 - x * cam.z;
+    cam.y = 76 - y * cam.z;
+    applyCam();
+  }
+
+  // ---------- acting on a variation ----------
+  function cvUse(it) {
+    const a = rootArtboard(it);
+    if (!a || !it) return;
+    it.sentAt = Date.now();
+    save();
+    select(a.id);
+    setMode("focus", a.id);
+    note(it.html ? "Opening " + (a.name || a.url) + ": Claude builds “" + it.name + "” in the component." : "Opening " + (a.name || a.url) + " with “" + it.name + "” on it as tweaks.");
+    // Once its panel is up and the app has settled; the element must be on a fresh load of the screen.
+    const go = (n = 0) => {
+      const f = frames.get(a.id);
+      let t = null;
+      try { t = f && f.iframe.contentWindow.__uiTweaks; } catch {}
+      if (t && t.useVariant) return setTimeout(() => t.useVariant(it.req.selector, it.changes, it.name, it.html, it.why, { state: it.state, when: it.when }), 1200);
+      if (n < 60) setTimeout(() => go(n + 1), 250);
+    };
+    go();
+  }
+  async function cvMore(it) {
+    if (!it || !it.req) return;
+    const r = it.req;
+    const instruction = ("Variations on “" + it.name + "” (" + (it.why || "") + "). Push that idea further in different ways" + (it.html ? ". Start from its layout and return full variations (html and changes): " + JSON.stringify({ html: it.html, changes: it.changes }) : ". Start from its changes and return full change sets: " + JSON.stringify(it.changes))).slice(0, 20000);
+    const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "variations", instruction, mode: r.mode === "states" ? undefined : r.mode, scope: r.scope, skills: r.skills, element: r.element, page: r.page, context: r.context, count: 2 }) });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error || res.statusText);
+    cvPending().push({ id: out.ask.id, parent: it.id, at: Date.now() });
+    save();
+    drawCanvas();
+    pollCanvas();
+  }
+  async function pollCanvas() {
+    clearTimeout(cv.timer);
+    if (!cvPending().length) return;
+    try {
+      const { asks = [] } = await fetch("/__ui-tweaks/status", { cache: "no-store" }).then((r) => r.json());
+      let changed = false;
+      for (const p of [...cvPending()]) {
+        const s = asks.find((x) => x.id === p.id);
+        const drop = () => { canvas.pending = cvPending().filter((x) => x !== p); changed = true; };
+        if (s && s.status === "done") {
+          drop();
+          const parent = itemById(p.parent);
+          for (const v of s.variants || []) if (parent) pinVariant(v, parent.req, parent.id);
+        } else if ((s && s.status === "failed") || (!s && Date.now() - p.at > 120000)) {
+          drop();
+          note("No new variations: " + ((s && s.error) || "the request isn't in the queue any more."));
+        }
+      }
+      if (changed) { save(); drawCanvas(); }
+    } catch {}
+    cv.timer = setTimeout(pollCanvas, 1500);
+  }
+  function cvRemove(id) {
+    const gone = new Set([id]);
+    for (let grew = true; grew;) { grew = false; for (const v of cvVariants()) if (!gone.has(v.id) && gone.has(v.parent)) { gone.add(v.id); grew = true; } }
+    canvas.variants = cvVariants().filter((v) => !gone.has(v.id));
+    canvas.pending = cvPending().filter((p) => !gone.has(p.parent));
+    if (gone.has(cv.sel)) cv.sel = null;
+    save();
+    drawCanvas();
+  }
+  addEventListener("keydown", (e) => {
+    if (!isCanvas() || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+    if ((e.key === "Backspace" || e.key === "Delete") && cv.sel && cvVariants().some((v) => v.id === cv.sel)) { e.preventDefault(); cvRemove(cv.sel); }
+    if (e.key === "Enter" && cv.sel) { const it = itemById(cv.sel); if (it) cvOpen(it); }
+  });
+  $(".canvas-toggle").addEventListener("click", () => {
+    const first = !view.canvasSeen;
+    view.canvasSeen = true;
+    setMode(isCanvas() ? "focus" : "canvas");
+    if (isCanvas() && first) setTimeout(fitCanvas, 0);
+  });
+  $(".cv-bar .cv-fit").addEventListener("click", fitCanvas);
+  $(".cv-bar .cv-refresh").addEventListener("click", () => { queuePictures(true); note("Taking a fresh picture of every screen, one at a time…"); });
 
   // ---------- review pages ----------
   // Every screen (or this one) captured in one pass, side by side with the other version when comparing,
@@ -2849,7 +3266,7 @@ export function studioPage(appPath) {
   // to the right of the screen you're editing, the same size, and follows its scrolling and navigation.
   let versus = null; // { ref, status, url, sha, subject, when, error }
   let refsInfo = null;
-  const versusOn = () => !!(versus && view.versus && !view.widths);
+  const versusOn = () => !!(versus && view.versus && !view.widths && view.mode !== "canvas");
   const vs = (() => {
     const el = document.createElement("div");
     el.className = "ab vs-ab hidden";
@@ -3316,7 +3733,9 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
         await fs.mkdir(dir, { recursive: true });
         const id = `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
         await fs.writeFile(path.join(dir, `${id}.html`), html);
-        const old = (await fs.readdir(dir)).filter((n) => n.endsWith(".html")).sort();
+        // The last 40, plus any the canvas shows (its screens' pictures and pinned variations).
+        const pinned = await fs.readFile(path.join(tweaksDir(root), "canvas.json"), "utf8").catch(() => "");
+        const old = (await fs.readdir(dir)).filter((n) => n.endsWith(".html") && !pinned.includes(n)).sort();
         for (const n of old.slice(0, Math.max(0, old.length - 40))) await fs.rm(path.join(dir, n), { force: true });
         return send(res, 200, { url: `${PREFIX}/snapshots/${id}.html` });
       }

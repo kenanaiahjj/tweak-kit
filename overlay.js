@@ -7390,6 +7390,9 @@
     comment: (selector) => startComment(document.querySelector(selector)),
     // Worst-case data on the page (true/false, or toggles), and the Tab order (true shows its pins).
     worstCase: (on) => worstCase(on === undefined ? undefined : !!on),
+    // The screen as a static page (the studio canvas's picture of it) and its main heading.
+    snapshotHtml: () => snapshotHtml(document.body),
+    screenKey: () => screenKey(),
     // The screen as History pictures it (an SVG), for checking the pictures.
     screenSvg: () => screenSvg(),
     rtl: (on) => rtlMode(on === undefined ? undefined : !!on),

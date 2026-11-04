@@ -759,13 +759,30 @@ export function studioPage(appPath) {
   .toolbar select { font-weight: 500; }
   .focus-zoom, .zoom { font-variant-numeric: tabular-nums; }
   .sep { display: none; }
+
+  /* ---------- layout audit ----------
+     Two deliberate rows. Row 1 is 46px to its hairline, the same as the panel header, so one rule runs
+     across the window; row 2 sits 6px under it. Controls are 30px, 8px corners, 2px apart in a group and
+     12px between groups (6px each side of a hairline divider). */
+  .toolbar { row-gap: 6px; padding: 8px 10px 6px; }
+  .tb-break { flex-basis: 100%; height: 1px; margin: 2px -10px 0; background: rgba(255,255,255,.1); }
+  .tb-break + .tb-group { margin-left: 0; padding-left: 0; box-shadow: none; }
+  .toolbar .focus-pick { width: 156px; }
+  .toolbar .focus-device { width: 148px; }
+  .toolbar .width-slider { width: 112px; }
+  .toolbar .focus-zoom { min-width: 40px; padding: 0 2px; text-align: center; color: rgba(255,255,255,.7); font-size: 12px; }
+  /* Sidebar: the screen's name gets the row; its URL is in the tooltip. */
+  .pages button.pg-screen .src { display: none; }
+  .pages button.pg-screen .name { flex: 1; }
+  .pages .pg-all:disabled { background: transparent; box-shadow: none; color: var(--dim); justify-content: flex-start; padding-left: 2px; cursor: default; }
+  .pages .pg-all:disabled::before { content: "✓"; margin-right: 6px; color: #8ee6a8; }
 </style>
 </head>
 <body>
 <div class="studio">
   <div class="stage">
     <div class="toolbar">
-      <!-- Groups never break apart; on a narrow window the later ones wrap onto a second row. -->
+      <!-- Row 1: where you are (screen, device, zoom). Groups never break apart; on a narrow window they wrap. -->
       <span class="tb-group">
         <button class="exit" data-icon="x" title="Leave the studio">✕</button>
         <button class="reload" data-icon="reload" title="Reload every artboard">↻</button>
@@ -784,8 +801,6 @@ export function studioPage(appPath) {
       <span class="tb-group focus-tools">
         <select class="focus-device" title="Device"></select>
         <button class="focus-turn" data-icon="rotate" title="Rotate">⟲</button>
-        <button class="phone-toggle" data-icon="smartphone" title="Open this screen on your phone: scan the code (same Wi-Fi)">Phone</button>
-        <button class="wd-toggle" data-icon="widths" title="Every width at once: this screen at phone, tablet and laptop widths side by side; your edits show on all of them">Widths</button>
         <span class="ws"><input type="range" class="width-slider" min="280" max="1920" step="1" title="Width: drag to watch the layout respond (ticks are your breakpoints); pick a device to reset" /><span class="ws-ticks"></span></span>
       </span>
       <span class="tb-group focus-tools">
@@ -795,9 +810,19 @@ export function studioPage(appPath) {
         <button class="fz-fit" data-icon="fit" title="Fit the screen (⇧1)">Fit</button>
         <button class="fz-100" title="Actual size (⇧0)">1:1</button>
       </span>
+      <span class="tb-group tb-end">
+        <a class="tb" data-icon="palette" data-label="Tokens" href="/__ui-tweaks/system" title="Design system: every token in your CSS, editable">Tokens</a>
+      </span>
+      <!-- Row 2: how you work on the screen. The rule between the rows lines up with the panel header's. -->
+      <div class="tb-break"></div>
+      <span class="tb-group">
+        <span class="vs-modes"><button data-mode="interact" title="Interact (C): use the app; clicks go to it, not the panel">Interact</button><button data-mode="inspect" title="Inspect (V): click elements to select and tweak them">Inspect</button></span>
+      </span>
       <span class="tb-group">
         <button class="guides-toggle" data-icon="guides" title="Layout guides over the screen: columns and a baseline grid">Guides</button>
         <span class="scheme-seg" title="Show the screens light or dark, whatever your system is set to"><button data-scheme="" data-icon="contrast" title="As your system is set">Auto</button><button data-scheme="light" data-icon="sun" title="Light">☀︎</button><button data-scheme="dark" data-icon="moon" title="Dark">☾</button></span>
+        <button class="wd-toggle" data-icon="widths" title="Every width at once: this screen at phone, tablet and laptop widths side by side; your edits show on all of them">Widths</button>
+        <button class="phone-toggle" data-icon="smartphone" title="Open this screen on your phone: scan the code (same Wi-Fi)">Phone</button>
         <!-- Capture (📷 and Review) is on hold: hidden until CAPTURE is turned on below. -->
         <button class="shot" data-icon="camera" hidden title="Copy a picture of the screen to the clipboard (both versions when comparing). Shift-click also saves a PNG">📷</button>
         <button class="review-toggle" hidden title="Make a review page: every screen captured (side by side with the other version when comparing), which ones changed, and a note; open it or publish it with Claude">Review</button>
@@ -808,13 +833,11 @@ export function studioPage(appPath) {
         <button class="copy-toggle" data-icon="type" data-label="Copy" title="Every text on every screen in one table: fix typos and wording in bulk, then send the changes as one batch">Copy</button>
         <button class="ck-all-toggle" data-icon="check-circle" data-label="Check all" title="Check every screen: layout (also at 320px wide), contrast, tap targets, labels, keyboard and off-token values, with the worst screens first">✓ All screens</button>
         <button class="ex-toggle" data-icon="sparkles" data-label="Explorations" hidden title="Your explorations: reopen the variations Claude made for an element">✦ Explorations</button>
-        <button class="vs-toggle" data-icon="branch" data-label="Versions" title="Compare with another branch or commit, side by side">⑂ Versions</button>
-        <span class="vs-modes"><button data-mode="interact" title="Interact (C): use the app; clicks go to it, not the panel">Interact</button><button data-mode="inspect" title="Inspect (V): click elements to select and tweak them">Inspect</button></span>
-        <button class="vs-mirror" data-icon="mirror" data-label="Mirror clicks" hidden title="Repeat your clicks and typing on the other version, so both walk through the same flow">⇆ Mirror clicks</button>
-        <button class="vs-match" data-icon="match" data-label="Match" hidden title="Both sides drifted apart? Reload both at this screen's starting state (its URL, fixture and screen)">⟲ Match</button>
       </span>
-      <span class="tb-group tb-end">
-        <a class="tb" data-icon="palette" data-label="Tokens" href="/__ui-tweaks/system" title="Design system: every token in your CSS, editable">Tokens</a>
+      <span class="tb-group">
+        <button class="vs-toggle" data-icon="branch" data-label="Versions" title="Compare with another branch or commit, side by side">⑂ Versions</button>
+        <button class="vs-mirror" data-icon="mirror" hidden title="Mirror clicks: repeat your clicks and typing on the other version, so both walk through the same flow">⇆ Mirror clicks</button>
+        <button class="vs-match" data-icon="match" hidden title="Match: both sides drifted apart? Reload both at this screen's starting state (its URL, fixture and screen)">⟲ Match</button>
       </span>
     </div>
     <div class="body">
@@ -986,7 +1009,8 @@ export function studioPage(appPath) {
     focusPan.y = clamp(focusPan.y, sh, vh);
     world.style.transform = "translate(" + focusPan.x + "px," + focusPan.y + "px) scale(" + z + ") translate(" + -a.x + "px," + -a.y + "px)";
     world.style.setProperty("--iz", String(1 / z));
-    $(".focus-zoom").textContent = w + "×" + h + " · " + Math.round(z * 100) + "%";
+    $(".focus-zoom").textContent = Math.round(z * 100) + "%";
+    $(".focus-zoom").title = w + "×" + h + " at " + Math.round(z * 100) + "%. Pinch or ⌘-scroll to zoom; scroll or drag to pan";
   }
   // Zoom the shown screen keeping the point under (mx, my) in place.
   function zoomFocus(z, mx = viewport.clientWidth / 2, my = viewport.clientHeight / 2) {

@@ -1881,12 +1881,8 @@
     .arrange button.icon { flex: none; width: 28px; height: 28px; padding: 0; display: inline-grid; place-items: center; background: transparent; color: var(--label); }
     .arrange button.icon:hover { background: var(--hover); color: var(--text); }
     .arrange button.icon.danger:hover { background: rgba(229,72,77,.16); color: #ff8a8d; }
-    .copy-as { margin-left: auto; display: inline-flex; align-items: center; gap: 1px; padding: 2px; border-radius: 8px; background: var(--bg2); }
     .ask-pull { margin-top: 6px; height: 24px; padding: 0 9px; border: 0; border-radius: 6px; background: var(--bg2); color: var(--text); font-size: 11.5px; cursor: pointer; }
     .ask-pull:hover { background: var(--hover); }
-    .copy-as > span { padding: 0 6px 0 5px; color: var(--dim); font-size: 11px; }
-    .copy-as button { flex: none; height: 22px; padding: 0 7px; border: 0; border-radius: 6px; background: transparent; color: var(--label); font-size: 11px; cursor: pointer; }
-    .copy-as button:hover { background: var(--hover); color: var(--text); }
     .bar-sep { width: 1px; height: 14px; background: var(--line); margin: 0 4px; flex: none; }
     /* Press feedback on every button, interruptible. */
     button { transition-property: background-color, color, box-shadow, opacity, transform; transition-duration: .15s; transition-timing-function: cubic-bezier(0.2, 0, 0, 1); }
@@ -1996,6 +1992,38 @@
     .ref-add { height: 28px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--bg2); color: var(--label); font-size: 12px; font-weight: 500; cursor: pointer; }
     .ref-add:hover { background: var(--hover); color: var(--text); }
     .ask-box.dropping { outline: 2px dashed rgba(255,255,255,.35); outline-offset: 4px; border-radius: var(--radius); }
+    /* ---------- layout audit ----------
+       One scale: 36px rows (fields), 32px buttons, 28px icon and compact buttons, 24px chips; 8px corners on
+       controls, 6px inside them, 4px on the smallest; 13px titles and body, 12px labels and chips, 11px
+       meta. Blocks in a section are 8px apart; related lines 4px. */
+    .el-meta { margin-top: 4px; }
+    .crumbs, .arrange, .layers, .seg.states { margin-top: 8px; }
+    .crumbs button { font-size: 12px; }
+    /* The path to the element reads as a path (text, › between), not as buttons like the actions under it. */
+    .crumbs.path { gap: 0; row-gap: 2px; align-items: center; }
+    .crumbs.path button { height: 22px; padding: 0 5px; background: transparent; color: var(--dim); font-family: var(--mono); font-size: 11.5px; }
+    .crumbs.path button:hover { background: var(--hover); color: var(--text); }
+    .crumbs.path button.here { color: var(--text); }
+    .crumbs.path button + button::before { content: "›"; margin: 0 6px 0 -1px; color: rgba(255,255,255,.25); font-family: system-ui, sans-serif; }
+    /* Arrange: fixed icon buttons, then Copy as and Paper at the end, on one line. */
+    .arrange { flex-wrap: nowrap; align-items: center; gap: 2px; }
+    .arrange > button.icon { flex: none; width: 32px; height: 32px; padding: 0; }
+    .copy-as { position: relative; margin-left: auto; padding: 0; background: transparent; }
+    .copy-as .copy-btn { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 8px 0 10px; border: 0; border-radius: var(--radius); background: transparent; color: var(--label); font-size: 12px; font-weight: 500; cursor: pointer; transition: background .15s, color .15s; }
+    .copy-as .copy-btn:hover, .copy-as .copy-btn[aria-expanded="true"] { background: var(--hover); color: var(--text); }
+    .copy-as .copy-btn .ic { width: 14px; height: 14px; opacity: .6; }
+    .copy-pop { position: absolute; z-index: 5; right: 0; top: calc(100% + 4px); width: max-content; padding: 4px; display: grid; gap: 1px; border-radius: 10px; background: #2a2a2a; box-shadow: 0 0 0 1px var(--line), 0 12px 32px rgba(0,0,0,.45); }
+    .copy-pop[hidden] { display: none; }
+    .copy-pop button { display: flex; align-items: baseline; gap: 8px; height: 30px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font-size: 12.5px; text-align: left; cursor: pointer; }
+    .copy-pop button:hover { background: var(--hover); }
+    .copy-pop button b { font-weight: 600; min-width: 64px; }
+    .copy-pop button span { color: var(--dim); font-size: 12px; white-space: nowrap; }
+    /* Section header actions ("Remove", "Reset"): a small button, not a 17px sliver. */
+    .h-btn { height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; }
+    .h-btn:hover { background: var(--hover); color: var(--text); }
+    /* The Ask row: Skills and + Reference the same height and corner. */
+    .skill-btn { height: 28px; padding: 0 8px 0 10px; border-radius: var(--radius); font-size: 12px; }
+    .changes > h4 { font-size: 13px; min-height: 22px; display: flex; align-items: center; margin: 0 0 4px; }
     .hidden { display: none !important; }
   </style>
   <div class="hover-box hidden"></div>
@@ -5582,18 +5610,18 @@
       const src = info.react && info.react.jsxSource ? `<br/><code>${info.react.jsxSource}</code>` : "";
       meta.innerHTML = cls + src;
       const crumbs = document.createElement("div");
-      crumbs.className = "crumbs";
+      crumbs.className = "crumbs path";
       const chain = [];
       for (let n = el; n && n !== document.body && chain.length < 5; n = n.parentElement) chain.unshift(n);
       chain.forEach((n) => {
         const b = document.createElement("button");
         b.textContent = n.classList[0] ? "." + n.classList[0] : n.tagName.toLowerCase();
-        if (n === el) b.style.color = "#fff";
+        if (n === el) b.classList.add("here");
         b.addEventListener("click", () => select(n));
         crumbs.append(b);
       });
       const styleTools = document.createElement("div");
-      styleTools.className = "crumbs";
+      styleTools.className = "crumbs actions";
       for (const [label, title, run] of [
         ["Copy style", "Copy this element's type, fill, border, radius, shadow and padding (⌘⌥C)", copyStyle],
         ["Paste style", "Paste the copied style onto this element (⌘⌥V)", pasteStyle],
@@ -5621,14 +5649,29 @@
         b.addEventListener("click", run);
         arrange.append(b);
       }
+      // Copy as code: one button, a small menu (CSS, Tailwind, JSX), so the row stays on one line.
       const copyAs = document.createElement("span");
       copyAs.className = "copy-as";
-      copyAs.append(Object.assign(document.createElement("span"), { textContent: "Copy as" }));
-      for (const [label, kind, title] of [["CSS", "css", "Copy its styles as CSS"], ["Tailwind", "tailwind", "Copy its styles as Tailwind classes"], ["JSX", "jsx", "Copy its JSX as written in the source"]]) {
-        const b = Object.assign(document.createElement("button"), { textContent: label, title });
-        b.addEventListener("click", () => copyCode(el, kind));
-        copyAs.append(b);
+      const copyBtn = Object.assign(document.createElement("button"), { className: "copy-btn", title: "Copy its code: CSS, Tailwind classes or JSX" });
+      copyBtn.append(Object.assign(document.createElement("span"), { textContent: "Copy as" }));
+      copyBtn.append(setIcon(document.createElement("span"), "chevron-down", "▾"));
+      const copyPop = Object.assign(document.createElement("div"), { className: "copy-pop", hidden: true });
+      for (const [label, kind, hint] of [["CSS", "css", "its styles as a CSS block"], ["Tailwind", "tailwind", "its styles as classes"], ["JSX", "jsx", "as written in the source"]]) {
+        const b = document.createElement("button");
+        b.append(Object.assign(document.createElement("b"), { textContent: label }), Object.assign(document.createElement("span"), { textContent: hint }));
+        b.addEventListener("click", () => { copyPop.hidden = true; copyBtn.setAttribute("aria-expanded", "false"); copyCode(el, kind); });
+        copyPop.append(b);
       }
+      copyBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        copyPop.hidden = !copyPop.hidden;
+        copyBtn.setAttribute("aria-expanded", String(!copyPop.hidden));
+        if (!copyPop.hidden) {
+          const away = (ev) => { if (!ev.composedPath().includes(copyAs)) { copyPop.hidden = true; copyBtn.setAttribute("aria-expanded", "false"); panel.removeEventListener("pointerdown", away, true); } };
+          panel.addEventListener("pointerdown", away, true);
+        }
+      });
+      copyAs.append(copyBtn, copyPop);
       arrange.append(copyAs);
       const toPaper = setIcon(Object.assign(document.createElement("button"), { className: "icon", title: "Send to Paper: Claude Code places it in your open Paper file as editable layers. Shift-click: with its hover, focus and pressed states and the other colour scheme" }), "send", "Paper");
       toPaper.addEventListener("click", (e) => sendToPaper(el, { states: e.shiftKey }));
@@ -5636,7 +5679,7 @@
       head.append(name, meta, crumbs, arrange, styleTools, layersTree(el));
       const states = document.createElement("div");
       states.className = "seg";
-      states.style.marginTop = "8px";
+      states.classList.add("states");
       for (const [st, label] of [["", "Default"], ["hover", "Hover"], ["active", "Active"], ["focus-visible", "Focus"]]) {
         const b = document.createElement("button");
         b.textContent = label;

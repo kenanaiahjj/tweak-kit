@@ -6,7 +6,7 @@ import { adoptToken, createToken, scanTokens, setToken } from "./tokens.mjs";
 import { systemPage } from "./system-page.mjs";
 import { addAsk, askStatus, cancelAsk } from "./asks.mjs";
 import { queueTokens, sendToPaper } from "./paper.mjs";
-import { exportHandoff, handoffData, readIndex, saveHandoff } from "./handoff.mjs";
+import { deployHandoff, exportHandoff, handoffData, readIndex, saveHandoff } from "./handoff.mjs";
 import { handoffPage } from "./handoff-page.mjs";
 import net from "node:net";
 import { jsxAt, toTailwind } from "./code.mjs";
@@ -845,6 +845,12 @@ export function studioPage(appPath) {
   .ho-viewer-bar a, .ho-viewer-bar button { height: 28px; padding: 0 12px; border: 0; border-radius: 8px; background: rgba(255,255,255,.1); color: #fff; font: 500 12px/28px system-ui, -apple-system, sans-serif; text-decoration: none; cursor: pointer; }
   .ho-viewer-bar a:hover, .ho-viewer-bar button:hover { background: rgba(255,255,255,.18); }
   .ho-viewer iframe { flex: 1; width: 100%; border: 0; }
+  .ho-shared { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; background: rgba(52,211,153,.1); box-shadow: inset 0 0 0 1px rgba(52,211,153,.3); font: 12px system-ui, -apple-system, sans-serif; }
+  .ho-shared[hidden] { display: none; }
+  .ho-shared span { color: #6ee7b7; font-weight: 600; }
+  .ho-shared a { flex: 1; min-width: 0; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
+  .ho-shared a:hover { text-decoration: underline; }
+  .ho-shared button { height: 24px; padding: 0 8px; border: 0; border-radius: 6px; background: rgba(255,255,255,.1); color: #fff; font: 500 11.5px system-ui, -apple-system, sans-serif; cursor: pointer; }
   .ho-empty { padding: 4px 6px; color: rgba(255,255,255,.45); font-size: 12px; }
   .canvas-toggle.on { background: rgba(255,255,255,.11); color: #fff; }
 
@@ -3210,30 +3216,45 @@ export function studioPage(appPath) {
   addEventListener("beforeunload", (e) => { if (hoBusy) { e.preventDefault(); e.returnValue = ""; } });
   async function drawHandoffPop(button) {
     const pop = $(".ho-pop");
-    let versions = [];
-    try { versions = (await fetch("/__ui-tweaks/handoff/versions", { cache: "no-store" }).then((r) => r.json())).versions || []; } catch {}
+    let versions = [], shared = null;
+    try { const d = await fetch("/__ui-tweaks/handoff/versions", { cache: "no-store" }).then((r) => r.json()); versions = d.versions || []; shared = d.shared; } catch {}
     const last = versions[versions.length - 1];
-    pop.innerHTML = '<h4>Handoff</h4><p>A read-only version of every screen for developers, PMs and QA: inspect measurements and colours, search it, and compare with the last version. Add your hosted app to let them click through it too.</p><label class="ho-label">Version<input class="ho-name" maxlength="60" /></label><label class="ho-label">Live app<input class="ho-app" type="url" placeholder="https://your-app.vercel.app (optional)" /></label><div class="cn-actions"><button class="cn-go primary ho-save">' + (hoBusy ? "Capturing…" : "Save a version") + '</button></div><div class="ho-list"></div>';
+    pop.innerHTML = '<h4>Handoff</h4><p>A read-only version of every screen for developers, PMs and QA: inspect measurements and colours, search it, and compare with the last version. Add your hosted app to let them click through it too.</p><label class="ho-label">Version<input class="ho-name" maxlength="60" /></label><label class="ho-label">Live app<input class="ho-app" type="url" placeholder="https://your-app.vercel.app (optional)" /></label><div class="cn-actions"><button class="cn-go primary ho-save">' + (hoBusy ? "Capturing…" : "Save a version") + '</button></div><div class="ho-shared" hidden><span>Shared</span><a target="_blank" rel="noopener"></a><button title="Copy the link">Copy</button></div><div class="ho-list"></div>';
     pop.querySelector(".ho-name").value = "Version " + (versions.length + 1);
+    // Where the handoff is shared (the same address every time), and which version is up there.
+    if (shared && shared.url) {
+      const box = pop.querySelector(".ho-shared");
+      box.hidden = false;
+      const sv = versions.find((x) => x.id === shared.version);
+      box.querySelector("a").href = shared.url;
+      box.querySelector("a").textContent = shared.url.replace(/^https:[/][/]/, "") + (sv ? " · " + sv.label : "");
+      box.querySelector("button").addEventListener("click", () => navigator.clipboard.writeText(shared.url).then(() => note("Copied " + shared.url), () => note(shared.url)));
+    }
     pop.querySelector(".ho-save").disabled = hoBusy;
     const list = pop.querySelector(".ho-list");
     for (const v of versions.slice().reverse().slice(0, 6)) {
       const row = document.createElement("div");
       row.className = "ho-row";
-      row.innerHTML = '<div><b></b><span></span></div><a class="ho-open" target="_blank" rel="noopener">Open</a><a class="ho-dl" title="One self-contained file: send it, or host it anywhere">Download</a><button class="ho-pub" title="Your Claude Code session publishes it as a private claude.ai page with a link (best for smaller apps: the page carries every screen and image)">Link</button>';
+      row.innerHTML = '<div><b></b><span></span></div><a class="ho-open" target="_blank" rel="noopener">Open</a><a class="ho-dl" title="One self-contained file: send it, or host it anywhere">Download</a><button class="ho-pub" title="Put it on Vercel (its own project, with your logged-in Vercel CLI): anyone with the link can view it, and sharing again updates the same address">Share</button>';
       row.querySelector("b").textContent = v.label;
       row.querySelector("span").textContent = new Date(v.at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) + (v.commit ? " · " + v.commit : "") + (v === last && versions.length > 1 ? " · " + v.changed + " changed, " + v.added + " new" : " · " + v.screens + " screens");
       row.querySelector(".ho-open").href = "/__ui-tweaks/handoff#v=" + encodeURIComponent(v.id);
       // Over the studio, not instead of it (this tab keeps the studio; New tab opens it on its own).
       row.querySelector(".ho-open").addEventListener("click", (e) => { e.preventDefault(); pop.hidden = true; openHandoffViewer(row.querySelector(".ho-open").href); });
       row.querySelector(".ho-dl").href = "/__ui-tweaks/handoff/export?version=" + encodeURIComponent(v.id);
-      row.querySelector(".ho-pub").addEventListener("click", async () => {
+      row.querySelector(".ho-pub").addEventListener("click", async (e) => {
+        const b = e.currentTarget;
+        b.disabled = true;
+        b.textContent = "Sharing…";
+        note("Putting “" + v.label + "” on Vercel (about a minute)…");
         try {
-          const res = await fetch("/__ui-tweaks/handoff/publish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: v.id }) });
+          const res = await fetch("/__ui-tweaks/handoff/deploy", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: v.id }) });
           const out = await res.json();
           if (!res.ok) throw new Error(out.error || res.statusText);
-          note("Sent to Claude Code: it publishes “" + out.title + "” (" + Math.round(out.bytes / 1e5) / 10 + " MB) and posts the link there.");
-        } catch (e) { note("Couldn't publish it: " + e.message); }
+          try { await navigator.clipboard.writeText(out.url); } catch {}
+          note("Shared: " + out.url + " (copied)");
+        } catch (err) { note("Couldn't share it: " + err.message); }
+        drawHandoffPop(button);
       });
       list.append(row);
     }
@@ -4032,7 +4053,15 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
       // Handoff: read-only versions of the screens (the viewer, its data, saving a version, sharing one).
       if (url.pathname === `${PREFIX}/handoff` && req.method === "GET") return send(res, 200, handoffPage(), "text/html; charset=utf-8");
       if (url.pathname === `${PREFIX}/handoff/data` && req.method === "GET") return send(res, 200, await handoffData(root));
-      if (url.pathname === `${PREFIX}/handoff/versions` && req.method === "GET") return send(res, 200, { versions: (await readIndex(root)).versions.map(({ screens, ...v }) => ({ ...v, screens: screens.length, changed: screens.filter((x) => x.status === "changed").length, added: screens.filter((x) => x.status === "new").length })) });
+      if (url.pathname === `${PREFIX}/handoff/deploy` && req.method === "POST") {
+        try {
+          const origin = `http://${req.headers.host || "localhost"}`;
+          return send(res, 200, { ok: true, ...(await deployHandoff(root, origin, JSON.parse((await readBody(req, 10_000)) || "{}").version || null)) });
+        } catch (error) {
+          return send(res, error.status || 500, { error: error.message });
+        }
+      }
+      if (url.pathname === `${PREFIX}/handoff/versions` && req.method === "GET") return send(res, 200, { shared: (await readIndex(root)).shared || null, versions: (await readIndex(root)).versions.map(({ screens, ...v }) => ({ ...v, screens: screens.length, changed: screens.filter((x) => x.status === "changed").length, added: screens.filter((x) => x.status === "new").length })) });
       if (url.pathname === `${PREFIX}/handoff` && req.method === "POST") {
         try {
           return send(res, 200, { ok: true, ...(await saveHandoff(root, JSON.parse(await readBody(req, 120_000_000)))) });

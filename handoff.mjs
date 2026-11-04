@@ -5,6 +5,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import { listRefs } from "./versions.mjs";
 import { handoffPage } from "./handoff-page.mjs";
 
@@ -140,4 +141,53 @@ export async function exportHandoff(root, origin, versionId) {
     await fs.writeFile(path.join(root, file), page);
     return { file, title: `${data.project} · ${index.versions[at].label}`, bytes: page.length };
   }
+}
+
+// ---------- sharing on Vercel ----------
+// The handoff page (with every version up to the chosen one) goes to a Vercel project of its own, named after
+// the app (oneqr-handoff), with the Vercel CLI the person is logged in to. A production deploy, so its
+// .vercel.app address opens for anyone with the link; each new share replaces it at the same address.
+let deploying = null;
+function run(cmd, args, cwd, ms = 240_000) {
+  return new Promise((resolve) => {
+    let out = "", done = false;
+    const child = spawn(cmd, args, { cwd, env: { ...process.env, FORCE_COLOR: "0" } });
+    const finish = (code) => { if (!done) { done = true; resolve({ code, out }); } };
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (out += d));
+    child.on("error", (e) => { out += String(e && e.message); finish(-1); });
+    child.on("close", finish);
+    setTimeout(() => { child.kill("SIGTERM"); out += "\nTimed out"; finish(-1); }, ms);
+  });
+}
+export async function deployHandoff(root, origin, versionId) {
+  if (deploying) throw Object.assign(new Error("Already sharing a version; wait for it to finish"), { status: 409 });
+  deploying = (async () => {
+    const out = await exportHandoff(root, origin, versionId || null);
+    const name = (path.basename(root).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "app") + "-handoff";
+    const site = path.join(handoffDir(root), name);
+    await fs.mkdir(site, { recursive: true });
+    await fs.copyFile(path.join(root, out.file), path.join(site, "index.html"));
+    await fs.writeFile(path.join(site, "vercel.json"), JSON.stringify({ cleanUrls: true, headers: [{ source: "/(.*)", headers: [{ key: "X-Robots-Tag", value: "noindex" }] }] }, null, 2) + "\n");
+    // With several teams, the CLI won't pick one on its own: use the one it has selected (vercel switch).
+    let res = await run("vercel", ["deploy", "--prod", "--yes"], site);
+    if (res.code !== 0 && /multiple teams/i.test(res.out)) {
+      const teams = await run("vercel", ["teams", "ls"], site, 60_000);
+      const current = (/✔\s+(\S+)/.exec(teams.out) || [])[1];
+      if (current) res = await run("vercel", ["deploy", "--prod", "--yes", "--scope", current], site);
+    }
+    if (res.code !== 0) {
+      const why = /not found|ENOENT/i.test(res.out) ? "The Vercel CLI isn't installed (npm i -g vercel)" : /log ?in|credentials|token/i.test(res.out) ? "The Vercel CLI isn't logged in: run vercel login in a terminal" : res.out.trim().split("\n").slice(-3).join(" ");
+      throw Object.assign(new Error(why), { status: 502 });
+    }
+    // The stable address (the alias), else the deployment's own.
+    const urls = [...res.out.matchAll(/https:\/\/[a-z0-9.-]+\.vercel\.app/gi)].map((m) => m[0]);
+    const alias = urls.find((u) => u.includes(`//${name}.`) || /Aliased/i.test(res.out.split(u)[0].split("\n").pop())) || urls[urls.length - 1];
+    if (!alias) throw Object.assign(new Error("Vercel didn't say where it deployed"), { status: 502 });
+    const index = await readIndex(root);
+    index.shared = { url: alias, version: versionId || (index.versions[index.versions.length - 1] || {}).id, at: Date.now(), project: name };
+    await fs.writeFile(path.join(handoffDir(root), "index.json"), JSON.stringify(index, null, 2) + "\n");
+    return { url: alias, project: name, bytes: out.bytes };
+  })();
+  try { return await deploying; } finally { deploying = null; }
 }

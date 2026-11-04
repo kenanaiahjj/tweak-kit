@@ -21,7 +21,9 @@ export async function readAsks(root) {
 
 export async function addAsk(root, body) {
   const kind = body && body.kind;
-  if (!["edit", "variations", "publish", "paper", "paper-pull"].includes(kind)) throw Object.assign(new Error("kind is edit, variations, publish, paper or paper-pull"), { status: 400 });
+  if (!["edit", "variations", "publish", "paper", "paper-pull", "tokens"].includes(kind)) throw Object.assign(new Error("kind is edit, variations, publish, paper, paper-pull or tokens"), { status: 400 });
+  // tokens: the project's design tokens into the design tool (push) or its changes back into the CSS (pull).
+  if (kind === "tokens" && (!["push", "pull"].includes(body.direction) || body.file !== ".ui-tweaks/paper/tokens.json")) throw Object.assign(new Error("tokens needs a direction and the saved tokens"), { status: 400 });
   // publish: Claude publishes a saved review page (a file in .ui-tweaks/reviews) as a shareable page.
   if (kind === "publish" && !/^\.ui-tweaks\/reviews\/[a-z0-9-]+\.html$/.test(String(body.file || ""))) throw Object.assign(new Error("publish needs a review file"), { status: 400 });
   // paper: Claude places a captured element or screen (a file in .ui-tweaks/paper) in the open Paper file.
@@ -40,8 +42,8 @@ export async function addAsk(root, body) {
     page: body.page || null,
     context: body.context || null, // for variations: the element's subtree and current styles
     count: Math.min(4, Math.max(1, Number(body.count) || 2)),
-    // For variations: style changes only, rebuilt layouts only, or either.
-    ...(kind === "variations" && ["styles", "layout"].includes(body.mode) ? { mode: body.mode } : {}),
+    // For variations: style changes only, rebuilt layouts only, either, or the element's missing states.
+    ...(kind === "variations" && ["styles", "layout", "states"].includes(body.mode) ? { mode: body.mode } : {}),
     // Variations of the whole screen (nothing was selected), not one element.
     ...(kind === "variations" && body.scope === "screen" ? { scope: "screen" } : {}),
     // Design skills to work from (names; the mod finds them among the installed ones), at most 3.
@@ -49,7 +51,8 @@ export async function addAsk(root, body) {
     ...(kind === "publish" ? { file: body.file, title: String(body.title || "Design review").slice(0, 120) } : {}),
     ...(kind === "paper" ? { files: files.map((f) => ({ file: f.file, title: String(f.title || "Screen").slice(0, 120), width: Math.round(Number(f.width)) || 0, height: Math.round(Number(f.height)) || 0 })), title: String(body.title || "Screen").slice(0, 120), whole: !!body.whole } : {}),
     ...(kind === "paper-pull" ? { ...(body.file ? { file: body.file } : {}), title: String(body.title || "").slice(0, 120) } : {}),
-    ...(kind === "paper" || kind === "paper-pull" ? { target: body.target === "figma" ? "figma" : "paper" } : {}),
+    ...(kind === "tokens" ? { direction: body.direction, file: body.file } : {}),
+    ...(kind === "paper" || kind === "paper-pull" || kind === "tokens" ? { target: body.target === "figma" ? "figma" : "paper" } : {}),
     // Reference images attached in the panel (files the dev server saved in .ui-tweaks/refs).
     ...(Array.isArray(body.refs) && body.refs.length ? { refs: body.refs.filter((r) => /^\.ui-tweaks\/refs\/r[a-z0-9]+\.(png|jpg|webp|gif)$/.test(String(r))).slice(0, 6) } : {}),
     at: Date.now(),

@@ -1661,6 +1661,16 @@
     .off-token .btn { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
     .ck-pin { position: fixed; pointer-events: auto; min-width: 18px; height: 18px; margin: -9px 0 0 -9px; padding: 0 4px; border-radius: 9px; color: #fff; font: 700 10px/18px system-ui, -apple-system, sans-serif; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.4), 0 0 0 1.5px #fff; cursor: pointer; z-index: 2; }
     .ck-pin.ck-bad { background: #e5484d; }
+    .ck-outline { display: flex; flex-direction: column; gap: 1px; margin: 6px 0 8px; padding: 4px; border-radius: 8px; background: var(--bg2); }
+    .ck-outline button { display: flex; align-items: center; gap: 8px; min-height: 24px; padding: 2px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--text); font-size: 11.5px; text-align: left; cursor: pointer; }
+    .ck-outline button:hover { background: var(--hover); }
+    .ck-outline .ol-tag { flex: none; min-width: 22px; padding: 1px 5px; border-radius: 4px; background: rgba(13,153,255,.16); color: #6cb8ff; font: 600 10px/14px var(--mono, ui-monospace, monospace); text-align: center; }
+    .ck-outline .ol-l .ol-tag { background: rgba(255,196,107,.16); color: #ffc46b; }
+    .ck-outline button span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .h-shots { display: flex; gap: 6px; margin: 6px 0 2px; }
+    .h-shots a { display: flex; flex-direction: column; gap: 3px; color: var(--dim); font-size: 10.5px; text-decoration: none; }
+    .h-shots img { width: 96px; height: 72px; object-fit: cover; object-position: top; border-radius: 6px; background: var(--bg2); outline: 1px solid rgba(255,255,255,.1); outline-offset: -1px; }
+    .h-shots a:hover img { outline-color: #0d99ff; }
     .kb-pin { position: fixed; pointer-events: none; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 5px; background: #0d99ff; color: #fff; font: 700 10px/18px system-ui, -apple-system, sans-serif; text-align: center; font-variant-numeric: tabular-nums; box-shadow: 0 1px 4px rgba(0,0,0,.35), 0 0 0 1.5px #fff; z-index: 2; }
     .ck-pin.ck-warn { background: #d97706; }
     .ck-pin:hover, .ck-pin.on { transform: scale(1.2); z-index: 3; }
@@ -2354,7 +2364,7 @@
   // ---------- check this screen ----------
   // One pass over what's on screen: text contrast, tap targets, missing labels and hand-written values a
   // token could hold. Each finding is pinned on the page and listed in the panel; a click selects it.
-  const CHECK_KINDS = { layout: "Layout", contrast: "Contrast", tap: "Tap targets", label: "Labels", keyboard: "Keyboard", token: "Off-token values" };
+  const CHECK_KINDS = { layout: "Layout", contrast: "Contrast", tap: "Tap targets", label: "Labels", keyboard: "Keyboard", structure: "Structure", motion: "Motion", rtl: "Right-to-left", token: "Off-token values" };
   const shownEl = (el) => {
     if (!el.getClientRects().length) return false;
     const cs = getComputedStyle(el);
@@ -2480,7 +2490,8 @@
       else if (el.matches('button, a[href], [role="button"], [role="link"]') && !accessibleName(el)) issues.push({ kind: "label", severe: true, el, what: `${el.tagName === "A" ? "link" : "button"} without a name`, detail: "screen readers announce nothing: add text or aria-label" });
       else if (el.matches('input:not([type="hidden"]):not([type="submit"]):not([type="button"]), select, textarea') && !labelled(el)) issues.push({ kind: "label", severe: !el.getAttribute("placeholder"), el, what: el.getAttribute("placeholder") ? "placeholder as the only label" : "field without a label", detail: "add a <label> or aria-label" });
     }
-    issues.push(...keyboardIssues(shown));
+    issues.push(...keyboardIssues(shown), ...structureIssues(shown), ...motionIssues(shown));
+    if (modes.rtl) issues.push(...rtlIssues(shown));
     // Off-token values on text and controls (the elements people see as the design), grouped per element.
     const scan = await loadTokenScan();
     if (scan && scan.tokens && scan.tokens.length) {
@@ -2493,6 +2504,122 @@
     issues.sort((a, b) => a.el.getBoundingClientRect().top - b.el.getBoundingClientRect().top || a.el.getBoundingClientRect().left - b.el.getBoundingClientRect().left);
     return issues;
   }
+  // ---------- the page's rules, flattened (cached per stylesheet change) ----------
+  let pageRules = null;
+  function allRules() {
+    if (pageRules && pageRules.version === sheetVersion) return pageRules.list;
+    const list = [];
+    for (const sheet of document.styleSheets) {
+      if (sheet.ownerNode && (isOwn(sheet.ownerNode) || ourSheet(sheet.ownerNode))) continue;
+      let rules;
+      try { rules = sheet.cssRules; } catch { continue; }
+      collectRules(rules, sheet, [], list);
+    }
+    pageRules = { version: sheetVersion, list };
+    return list;
+  }
+  const ruleMatches = (rule, el) => { try { return el.matches(rule.selectorText); } catch { return false; } };
+
+  // ---------- structure: headings and landmarks ----------
+  const LANDMARKS = 'header, nav, main, aside, footer, [role="banner"], [role="navigation"], [role="main"], [role="complementary"], [role="contentinfo"], [role="search"], form[aria-label], section[aria-label]';
+  const levelOf = (h) => Number(h.getAttribute("aria-level")) || Number((/^H([1-6])$/.exec(h.tagName) || [])[1]) || 2;
+  // The screen as a screen reader outlines it: headings by level and the landmark regions, in page order.
+  function outline() {
+    return [...document.body.querySelectorAll(`h1, h2, h3, h4, h5, h6, [role="heading"], ${LANDMARKS}`)]
+      .filter((el) => !isOwn(el) && shownEl(el))
+      .map((el) => (/^H[1-6]$/.test(el.tagName) || el.getAttribute("role") === "heading" ? { el, heading: levelOf(el), text: (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 70) } : { el, landmark: el.getAttribute("role") || { HEADER: "banner", NAV: "navigation", MAIN: "main", ASIDE: "complementary", FOOTER: "contentinfo", FORM: "form", SECTION: "region" }[el.tagName] || el.tagName.toLowerCase(), text: el.getAttribute("aria-label") || "" }));
+  }
+  function structureIssues(shown) {
+    const out = [];
+    const items = outline().filter((i) => shown.includes(i.el));
+    const heads = items.filter((i) => i.heading);
+    const root = screenRoot() || document.body;
+    if (!heads.length) out.push({ kind: "structure", severe: false, el: root, what: "no headings", detail: "screen reader users jump between headings: give the screen at least a heading for its title" });
+    else {
+      const ones = heads.filter((h) => h.heading === 1);
+      if (!ones.length) out.push({ kind: "structure", severe: false, el: heads[0].el, what: "no h1", detail: "the screen's title should be the one h1" });
+      if (ones.length > 1) out.push({ kind: "structure", severe: false, el: ones[1].el, what: `${ones.length} h1s`, detail: "one h1 per screen, for its title; the rest a level below" });
+      for (let i = 1; i < heads.length; i++) if (heads[i].heading > heads[i - 1].heading + 1) out.push({ kind: "structure", severe: false, el: heads[i].el, what: `h${heads[i - 1].heading} → h${heads[i].heading}`, detail: `skips a level after “${heads[i - 1].text.slice(0, 30)}”: use h${heads[i - 1].heading + 1}` });
+    }
+    if (!items.some((i) => i.landmark === "main")) out.push({ kind: "structure", severe: false, el: root, what: "no main region", detail: "wrap the screen's content in <main> so it can be jumped to" });
+    return out;
+  }
+
+  // ---------- reduced motion ----------
+  // Animations that keep playing for people who asked for less motion: no @media (prefers-reduced-motion)
+  // rule reaches them. Endless ones count most.
+  function motionIssues(shown) {
+    const out = [];
+    const reduced = allRules().filter(({ rule, conditions }) => conditions.some((c) => /prefers-reduced-motion/.test(c)) && /animation|transition/.test(rule.style.cssText));
+    const handled = (el) => reduced.some(({ rule }) => ruleMatches(rule, el));
+    for (const el of shown) {
+      const cs = getComputedStyle(el);
+      if (cs.animationName === "none" || !cs.animationName) continue;
+      const secs = Math.max(...cs.animationDuration.split(",").map((d) => parseFloat(d) * (d.includes("ms") ? 0.001 : 1)));
+      if (!(secs > 0)) continue;
+      if (handled(el)) continue;
+      const endless = cs.animationIterationCount.split(",").some((c) => c.trim() === "infinite");
+      out.push({ kind: "motion", severe: endless, el, what: endless ? `“${cs.animationName.split(",")[0].trim()}” loops forever` : `“${cs.animationName.split(",")[0].trim()}” animates`, detail: "no prefers-reduced-motion rule stops or softens it for people who turn motion down" });
+      if (out.length >= 20) break;
+    }
+    return out;
+  }
+
+  // ---------- right-to-left ----------
+  // With the screen flipped (dir="rtl"), what doesn't follow: sides set as left/right instead of start/end.
+  const modes = { rtl: false, large: false };
+  const PHYSICAL = [["padding-left", "padding-right", "padding-inline-start/end"], ["margin-left", "margin-right", "margin-inline-start/end"], ["border-left-width", "border-right-width", "border-inline-start/end"], ["left", "right", "inset-inline-start/end"], ["border-top-left-radius", "border-top-right-radius", "border-start-start/start-end-radius"]];
+  function rtlIssues(shown) {
+    const out = [];
+    const sided = allRules().filter(({ rule }) => /(^|[\s;])(padding|margin|border)-(left|right)|(^|[\s;])(left|right)\s*:|text-align\s*:\s*(left|right)|float\s*:\s*(left|right)|border-top-(left|right)-radius/.test(rule.style.cssText));
+    for (const el of shown) {
+      const cs = getComputedStyle(el);
+      const props = [];
+      for (const [l, r, use] of PHYSICAL) {
+        if (l === "left" && cs.position === "static") continue;
+        if (cs.getPropertyValue(l) === cs.getPropertyValue(r)) continue;
+        const rules = sided.filter(({ rule }) => (rule.style.getPropertyValue(l) || rule.style.getPropertyValue(r)) && ruleMatches(rule, el));
+        if (rules.length) props.push(`${l} ${cs.getPropertyValue(l)} / ${r} ${cs.getPropertyValue(r)} (use ${use})`);
+      }
+      if (/^(left|right)$/.test(cs.textAlign) && sided.some(({ rule }) => /text-align/.test(rule.style.cssText) && ruleMatches(rule, el))) props.push(`text-align ${cs.textAlign} (use start/end)`);
+      if (props.length) out.push({ kind: "rtl", severe: false, el, what: "doesn't flip", detail: props.join("; ") });
+      if (out.length >= 30) break;
+    }
+    return out;
+  }
+  function rtlMode(on = !modes.rtl) {
+    modes.rtl = on;
+    const html = document.documentElement;
+    if (on) { modes.dirWas = html.getAttribute("dir"); html.setAttribute("dir", "rtl"); }
+    else modes.dirWas == null ? html.removeAttribute("dir") : html.setAttribute("dir", modes.dirWas);
+    toast(on ? "Right-to-left: the screen is flipped (on the page only). Checking…" : "Left-to-right again");
+    runCheck();
+  }
+
+  // ---------- 200% text ----------
+  // Every text twice as big (what WCAG asks a layout to survive), on the page only, then the layout check.
+  const bigText = new Map();
+  function largeText(on = !modes.large) {
+    modes.large = on;
+    if (on) {
+      const els = [...document.body.querySelectorAll("*")].filter((n) => !isOwn(n) && shownEl(n) && (ownText(n) || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(n.tagName)));
+      const sizes = els.map((el) => { const cs = getComputedStyle(el); return [el, parseFloat(cs.fontSize), cs.lineHeight]; });
+      for (const [el, fs, lh] of sizes) {
+        bigText.set(el, [el.style.getPropertyValue("font-size"), el.style.getPropertyPriority("font-size"), el.style.getPropertyValue("line-height"), el.style.getPropertyPriority("line-height")]);
+        el.style.setProperty("font-size", fs * 2 + "px", "important");
+        if (/px$/.test(lh)) el.style.setProperty("line-height", parseFloat(lh) * 2 + "px", "important");
+      }
+    } else {
+      for (const [el, [f, fp, l, lp]] of bigText) {
+        f ? el.style.setProperty("font-size", f, fp) : el.style.removeProperty("font-size");
+        l ? el.style.setProperty("line-height", l, lp) : el.style.removeProperty("line-height");
+      }
+      bigText.clear();
+    }
+    toast(on ? "Text at 200% (on the page only). Checking the layout…" : "Text back to its size");
+    runCheck();
+  }
+
   // ---------- keyboard ----------
   const FOCUSABLE = 'a[href], button, input:not([type="hidden"]), select, textarea, summary, iframe, [tabindex], [contenteditable=""], [contenteditable="true"]';
   // What Tab visits, in order: positive tabindex first (ascending), then the page order.
@@ -2712,13 +2839,38 @@
     // Stress the screen, and see the keyboard's path through it.
     const tools = document.createElement("div");
     tools.className = "crumbs ck-tools";
+    if (modes.rtl || modes.large || worst.on) box.append(lbl("Checked " + [worst.on && "with worst-case data", modes.rtl && "right-to-left", modes.large && "at 200% text"].filter(Boolean).join(", ") + "."));
     const wc = Object.assign(document.createElement("button"), { textContent: worst.on ? "Real data" : "Worst-case data", title: worst.on ? "Put the real text back" : "Swap every text for its worst case (long names, unbroken emails, huge numbers, other scripts) on the page only, then check again" });
     wc.addEventListener("click", () => worstCase());
     const to = Object.assign(document.createElement("button"), { textContent: state.showTabOrder ? "Hide tab order" : "Show tab order", title: "Number everything Tab visits, in order" });
     to.addEventListener("click", () => { toggleTabOrder(); render(); });
-    tools.append(wc, to);
+    const rtl = Object.assign(document.createElement("button"), { textContent: modes.rtl ? "Left-to-right" : "Right-to-left", title: "Flip the screen to right-to-left (on the page only) and list what doesn't follow" });
+    rtl.addEventListener("click", () => rtlMode());
+    const big = Object.assign(document.createElement("button"), { textContent: modes.large ? "Text 100%" : "Text 200%", title: "Every text twice as big, as WCAG asks a layout to survive (on the page only), then check the layout" });
+    big.addEventListener("click", () => largeText());
+    const st = Object.assign(document.createElement("button"), { textContent: state.showOutline ? "Hide structure" : "Structure", title: "Headings and regions, as a screen reader outlines the screen" });
+    st.addEventListener("click", () => { state.showOutline = !state.showOutline; render(); });
+    tools.append(wc, to, rtl, big, st);
     box.append(tools);
-    const fixable = c.issues.filter((i) => (i.kind === "label" || i.kind === "contrast" || i.kind === "layout" || i.kind === "keyboard") && !c.hidden.has(i.kind) && i.el.isConnected);
+    // The outline: headings indented by level, regions as tags; a row selects it.
+    if (state.showOutline) {
+      const ol = document.createElement("div");
+      ol.className = "ck-outline";
+      const items = outline();
+      if (!items.length) ol.append(lbl("No headings or regions on this screen."));
+      for (const it of items) {
+        const row = document.createElement("button");
+        row.className = it.heading ? "ol-h" : "ol-l";
+        if (it.heading) row.style.paddingLeft = 8 + (it.heading - 1) * 12 + "px";
+        row.innerHTML = `<span class="ol-tag"></span><span></span>`;
+        row.firstChild.textContent = it.heading ? `H${it.heading}` : it.landmark;
+        row.lastChild.textContent = it.text || (it.heading ? "(empty heading)" : "");
+        row.addEventListener("click", () => select(it.el));
+        ol.append(row);
+      }
+      box.append(ol);
+    }
+    const fixable = c.issues.filter((i) => ["label", "contrast", "layout", "keyboard", "structure", "motion", "rtl"].includes(i.kind) && !c.hidden.has(i.kind) && i.el.isConnected);
     if (fixable.length) {
       const fix = Object.assign(document.createElement("button"), { className: "btn primary ck-fix", textContent: `Fix ${fixable.length} with Claude`, title: "Claude fixes the layout, contrast, label and keyboard findings in the source (Undo apply reverts it)" });
       fix.addEventListener("click", () => {
@@ -2726,7 +2878,7 @@
           const d = describe(i.el);
           return `- ${CHECK_KINDS[i.kind]}: ${nameOf(i.el)} ${i.what}, ${i.detail}. Selector: ${d.selector}${d.react && d.react.jsxSource ? `, JSX at ${d.react.jsxSource}` : ""}`;
         });
-        ask("edit", null, `Fix these findings from a check of the screen ${here()} at ${innerWidth}px wide, keeping the design's look (for layout, make it fit the width without hiding content; for contrast, adjust the colour as little as needed, preferring the project's tokens; for labels, add real text, alt or aria-label that says what it is; for keyboard, make it a real button or link (or focusable with Enter and Space), give focus a visible style that fits the design, and put the Tab order in reading order):\n${lines.join("\n")}`);
+        ask("edit", null, `Fix these findings from a check of the screen ${here()} at ${innerWidth}px wide, keeping the design's look (for layout, make it fit the width without hiding content; for contrast, adjust the colour as little as needed, preferring the project's tokens; for labels, add real text, alt or aria-label that says what it is; for keyboard, make it a real button or link (or focusable with Enter and Space), give focus a visible style that fits the design, and put the Tab order in reading order; for structure, fix heading levels and add a <main> without changing the look; for motion, add a prefers-reduced-motion rule that stops or softens it; for right-to-left, use logical properties like padding-inline-start instead of left/right):\n${lines.join("\n")}`);
       });
       box.append(fix);
     }
@@ -4428,6 +4580,7 @@
   }
   // Using a layout variation: it changes the markup, so Claude builds it in the component.
   function buildLayoutAsk(v, el) {
+    if (v.state) return `Add the missing “${v.name}” state to this element's component: when ${v.when || `it is ${v.state}`}, render it like this target markup from a live preview (built from the existing classes and tokens):\n${v.html}\nWire it to the component's real data and status (add the condition, or the loading/error status it needs, where the data comes from). Keep the current look for every other state, and don't hardcode the copy if the component takes it from data.`;
     const changes = (v.changes || []).map((c) => `${c.target} { ${c.prop}: ${c.value} }`).join("; ");
     return `Rebuild this element to match the layout variation “${v.name}”${v.why ? ` (${v.why})` : ""}. Make it real in the component: keep its data, props, handlers and existing components (don't hardcode content that comes from data), and match this target markup from a live preview:\n${v.html}${changes ? `\nPlus these styles: ${changes}` : ""}`;
   }
@@ -5110,6 +5263,17 @@
         const head = Object.assign(document.createElement("b"), { textContent: `${e.count} change${e.count === 1 ? "" : "s"}` });
         head.append(byTag(e.by));
         if (e.what) w.append(Object.assign(document.createElement("span"), { className: "h-detail", textContent: e.what, title: e.what }));
+        // Before and after, side by side; a click opens one full size.
+        if (e.shots) {
+          const pics = document.createElement("div");
+          pics.className = "h-shots";
+          for (const side of ["before", "after"]) {
+            const a = Object.assign(document.createElement("a"), { href: `${API}/history-shots/${e.id}-${side}.svg`, target: "_blank", rel: "noopener", title: side === "before" ? "Before this apply" : "After it" });
+            a.append(Object.assign(document.createElement("img"), { src: `${API}/history-shots/${e.id}-${side}.svg`, alt: side, loading: "lazy" }), Object.assign(document.createElement("span"), { textContent: side === "before" ? "Before" : "After" }));
+            pics.append(a);
+          }
+          w.append(pics);
+        }
         w.append(Object.assign(document.createElement("span"), { textContent: `${e.files.map((f) => f.split("/").pop()).join(", ")} · ${ago(e.at)}` }));
         w.prepend(head);
         row.append(w);
@@ -5198,6 +5362,9 @@
     add("History", "🕘", () => { state.showHistory = true; render(); });
     add(worst.on ? "Real data" : "Worst-case data", "long names, huge numbers, other scripts", () => worstCase());
     add(state.showTabOrder ? "Hide tab order" : "Show tab order", "Tab", () => toggleTabOrder());
+    add(modes.rtl ? "Left-to-right" : "Right-to-left", "flip and check", () => rtlMode());
+    add(modes.large ? "Text at 100%" : "Text at 200%", "WCAG resize", () => largeText());
+    add("Headings and regions", "structure", () => { state.showOutline = true; runCheck(); });
     add("Send this screen to Paper", "", () => sendToPaper(null));
     add("Send this screen to Figma", "", () => sendToPaper(null, { target: "figma" }));
     add("Pull changes from Paper", "what's selected in Paper", () => pullFromDesign({ title: "" }));
@@ -6035,8 +6202,40 @@
     }, attempt ? 900 : 1200);
   }
 
+  // ---------- pictures for History ----------
+  // The screen as an SVG (the page's markup and styles in a foreignObject), at the window's size.
+  function screenSvg() {
+    const xml = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const css = [];
+    for (const sheet of document.styleSheets) {
+      if (sheet.ownerNode && isOwn(sheet.ownerNode)) continue;
+      try { css.push([...sheet.cssRules].map((r) => r.cssText).join("\n")); } catch {}
+    }
+    const body = document.body.cloneNode(true);
+    body.querySelectorAll("script, ui-tweaks-overlay, iframe, video, canvas, noscript, template").forEach((n) => n.remove());
+    const html = document.documentElement;
+    const attrs = ["class", "style", "data-theme", "dir"].map((k) => (html.getAttribute(k) ? " " + k + '="' + xml(html.getAttribute(k)).replace(/"/g, "&quot;") + '"' : "")).join("");
+    const w = innerWidth, h = innerHeight;
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + " " + h + '"><foreignObject width="100%" height="100%"><html xmlns="http://www.w3.org/1999/xhtml"' + attrs + "><head><style>" + xml(css.join("\n")) + "</style></head>" + new XMLSerializer().serializeToString(body) + "</html></foreignObject></svg>";
+  }
+  // Before (the source as it is: previews off) and after (with them), sent just ahead of an apply; the dev
+  // server pins them to the History entry that apply makes.
+  function shootForHistory() {
+    if (!ownsPanel()) return;
+    try {
+      const was = !!state.comparing;
+      compare(true);
+      const before = screenSvg();
+      compare(was);
+      const after = screenSvg();
+      if (before.length + after.length > 8_000_000) return;
+      fetch(API + "/history-shots", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ before, after }) }).catch(() => {});
+    } catch {}
+  }
+
   async function send(list) {
     if (!list.length) return;
+    shootForHistory();
     try {
       refreshDescriptions(list);
       state.codePreview = null;
@@ -7136,7 +7335,7 @@
     send: () => send([...state.tweaks.values()].filter((t) => !t.batchId)),
     compare,
     // The studio's Explore board: put a variation on the real screen as ordinary tweaks.
-    useVariant: (selector, changes, name, html, why) => useVariant({ selector }, { name, changes, html, why }),
+    useVariant: (selector, changes, name, html, why, more = {}) => useVariant({ selector }, { name, changes, html, why, state: more.state, when: more.when }),
     // For the studio's board: the same cleaning the page uses before showing a layout variation.
     safeMarkup,
     // Picking on or off (off: clicks reach the app, as when the studio's comparison is set to Interact).
@@ -7148,6 +7347,49 @@
     comment: (selector) => startComment(document.querySelector(selector)),
     // Worst-case data on the page (true/false, or toggles), and the Tab order (true shows its pins).
     worstCase: (on) => worstCase(on === undefined ? undefined : !!on),
+    // The screen as History pictures it (an SVG), for checking the pictures.
+    screenSvg: () => screenSvg(),
+    rtl: (on) => rtlMode(on === undefined ? undefined : !!on),
+    // The components on the screen, for the studio's gallery: each instance's root captured as static
+    // HTML with its styles inline (as for Paper), its name and where its JSX is. Screen-sized ones are left out.
+    components: () => {
+      const out = [];
+      const vw = innerWidth, vh = innerHeight;
+      for (const el of document.body.querySelectorAll("*")) {
+        if (isOwn(el) || !shownEl(el)) continue;
+        const r = reactInfo(el);
+        const name = r && r.components && r.components[0] && r.components[0].name;
+        if (!name) continue;
+        const pr = el.parentElement && el.parentElement !== document.body ? reactInfo(el.parentElement) : null;
+        if (pr && pr.components && pr.components[0] && pr.components[0].name === name) continue; // not its root
+        if (!r.jsxSource) continue; // a library's (icons, UI kits): not one of the project's components
+        const b = el.getBoundingClientRect();
+        if (b.width < 8 || b.height < 8 || (b.width > vw * 0.9 && b.height > vh * 0.6)) continue;
+        try {
+          const cap = paperHtml(el);
+          if (cap.html.length > 80000) continue;
+          out.push({ name, html: cap.html, width: cap.width, height: cap.height, selector: cssPath(el), source: r.jsxSource || "" });
+        } catch {}
+        if (out.length >= 40) break;
+      }
+      return out;
+    },
+    // Every text on the screen, for the studio's copy table: the text, where it is, and its JSX.
+    texts: () => {
+      const out = [], seen = new Set();
+      for (const el of document.body.querySelectorAll("*")) {
+        if (isOwn(el) || !ownText(el) || el.closest("script, style, noscript, template, svg") || !shownEl(el)) continue;
+        const text = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join(" ").trim().replace(/\s+/g, " ");
+        if (!text || text.length > 400 || seen.has(text) || /^[\d\s.,:%$€£¥+\-/()#·•|]+$/.test(text)) continue;
+        seen.add(text);
+        const r = reactInfo(el);
+        out.push({ text, selector: cssPath(el), tag: el.tagName.toLowerCase(), source: (r && r.jsxSource) || "" });
+        if (out.length >= 400) break;
+      }
+      return out;
+    },
+    largeText: (on) => largeText(on === undefined ? undefined : !!on),
+    outline: () => outline().map((i) => (i.heading ? "h" + i.heading + " " + i.text : "[" + i.landmark + "]" + (i.text ? " " + i.text : ""))),
     tabOrder: (show) => { if (show !== undefined) toggleTabOrder(!!show); return tabOrder().map((el) => nameOf(el)); },
     // The Paper-ready HTML of a selector (or the screen), without sending it.
     paperHtml: (selector) => paperHtml(selector ? document.querySelector(selector) : paperScreenRoot()),

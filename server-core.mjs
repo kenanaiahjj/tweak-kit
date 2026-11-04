@@ -5,7 +5,8 @@ import { updateStatus } from "./update.mjs";
 import { adoptToken, createToken, scanTokens, setToken } from "./tokens.mjs";
 import { systemPage } from "./system-page.mjs";
 import { addAsk, askStatus, cancelAsk } from "./asks.mjs";
-import { sendToPaper } from "./paper.mjs";
+import { queueTokens, sendToPaper } from "./paper.mjs";
+import net from "node:net";
 import { jsxAt, toTailwind } from "./code.mjs";
 import { findRoutes as findAppRoutes } from "./routes.mjs";
 import { listRefs, startVersion, stopVersion, versionStatus } from "./versions.mjs";
@@ -110,6 +111,43 @@ export async function recordHistory(root, { by, count, files, what }) {
 }
 
 // ---------- comments ----------
+// ---------- pictures for History ----------
+// The panel sends the screen before and after just ahead of an apply; they wait as "pending" until the History
+// entry that apply makes shows up, then take its id. Pictures of entries that are gone are removed.
+const shotsDir = (root) => path.join(tweaksDir(root), "history", "shots");
+export async function saveShots(root, { before, after }) {
+  if (typeof before !== "string" || typeof after !== "string" || !before.startsWith("<svg") || !after.startsWith("<svg")) throw Object.assign(new Error("Two SVG pictures are needed"), { status: 400 });
+  const dir = shotsDir(root);
+  await fs.mkdir(dir, { recursive: true });
+  const at = Date.now();
+  await fs.writeFile(path.join(dir, `pending-${at}-before.svg`), before);
+  await fs.writeFile(path.join(dir, `pending-${at}-after.svg`), after);
+  return at;
+}
+export async function matchShots(root, entries) {
+  const dir = shotsDir(root);
+  const names = await fs.readdir(dir).catch(() => []);
+  const pending = [...new Set(names.map((n) => (/^pending-(\d+)-before\.svg$/.exec(n) || [])[1]).filter(Boolean))].map(Number).sort((a, b) => a - b);
+  const has = new Set(names.filter((n) => /^h[a-z0-9]+-before\.svg$/.test(n)).map((n) => n.split("-")[0]));
+  for (const e of entries) {
+    if (has.has(e.id)) continue;
+    // The pictures taken last before this apply (within two minutes of it).
+    const at = pending.filter((t) => t <= e.at + 2000 && t >= e.at - 120000).pop();
+    if (!at) continue;
+    for (const side of ["before", "after"]) await fs.rename(path.join(dir, `pending-${at}-${side}.svg`), path.join(dir, `${e.id}-${side}.svg`)).catch(() => {});
+    pending.splice(pending.indexOf(at), 1);
+    has.add(e.id);
+  }
+  const ids = new Set(entries.map((e) => e.id));
+  const now = Date.now();
+  for (const n of await fs.readdir(dir).catch(() => [])) {
+    const id = n.split("-")[0];
+    const old = /^pending-(\d+)-/.exec(n);
+    if ((old && now - Number(old[1]) > 10 * 60_000) || (!old && /^h[a-z0-9]+-(before|after)\.svg$/.test(n) && !ids.has(id))) { await fs.rm(path.join(dir, n), { force: true }); has.delete(id); }
+  }
+  return has;
+}
+
 // .ui-tweaks/comments.json: notes pinned to elements on a screen (kept in git, so the team sees them).
 async function readComments(root) {
   try {
@@ -170,6 +208,26 @@ export async function changeFlows(root, method, body = {}) {
   await fs.writeFile(path.join(tweaksDir(root), ".gitignore"), GITIGNORE);
   await fs.writeFile(path.join(tweaksDir(root), "flows.json"), JSON.stringify({ flows }, null, 2) + "\n");
   return flows;
+}
+
+// ---------- open on your phone ----------
+/** This machine's addresses on the local network (Wi-Fi first), and whether the dev server answers there. */
+export async function lanAddress(port) {
+  const all = [];
+  for (const [name, list] of Object.entries(os.networkInterfaces())) {
+    for (const a of list || []) if (a.family === "IPv4" && !a.internal && !/^169\.254\./.test(a.address)) all.push({ name, address: a.address });
+  }
+  // en0 is Wi-Fi on a Mac; private ranges before anything else (VPNs, Docker bridges).
+  const rank = (x) => (x.name === "en0" ? 0 : /^(192\.168|10\.)/.test(x.address) ? 1 : /^172\.(1[6-9]|2\d|3[01])\./.test(x.address) ? 2 : 3);
+  all.sort((a, b) => rank(a) - rank(b));
+  const pick = all[0];
+  if (!pick || !port) return { address: null, reachable: false };
+  const reachable = await new Promise((resolve) => {
+    const sock = net.connect({ host: pick.address, port, timeout: 800 }, () => { sock.destroy(); resolve(true); });
+    sock.on("error", () => resolve(false));
+    sock.on("timeout", () => { sock.destroy(); resolve(false); });
+  });
+  return { address: pick.address, reachable };
 }
 
 /** Appends outcomes to .ui-tweaks/log.json (newest last, last 300 kept). */
@@ -491,6 +549,40 @@ export function studioPage(appPath) {
   .ck-all-name b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ck-all-name span, .ck-all-kinds { color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ck-all-wait { padding: 10px; color: var(--dim); font-size: 12px; }
+  .copy-deck { width: min(640px, calc(100vw - 32px)); }
+  .gallery { position: fixed; z-index: 30; left: 12px; right: 312px; top: 64px; bottom: 16px; display: flex; flex-direction: column; background: #1c1c1c; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 48px rgba(0,0,0,.55); }
+  .gallery[hidden] { display: none; }
+  .phone-pop { position: fixed; z-index: 30; top: 64px; width: 260px; padding: 16px; background: #212121; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 48px rgba(0,0,0,.55); color: var(--text); font: 12.5px/1.45 system-ui, -apple-system, sans-serif; text-wrap: pretty; }
+  .phone-pop[hidden] { display: none; }
+  .phone-pop .qr { display: grid; place-items: center; width: 228px; height: 228px; border-radius: 10px; background: #fff; }
+  .phone-pop .qr svg { width: 204px; height: 204px; }
+  .phone-pop b { display: block; margin: 12px 0 2px; color: #fff; font-weight: 600; }
+  .phone-pop code { display: block; padding: 6px 8px; margin-top: 6px; border-radius: 6px; background: rgba(255,255,255,.06); color: #fff; font: 11.5px var(--mono, ui-monospace, monospace); word-break: break-all; user-select: all; }
+  .phone-pop .warn { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: rgba(255,178,32,.12); color: #ffcf70; }
+  .gal-body { flex: 1; overflow: auto; padding: 8px 16px 24px; }
+  .gal-comp { margin-top: 18px; }
+  .gal-comp h4 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 10px; font: 600 13px system-ui, -apple-system, sans-serif; color: #fff; }
+  .gal-comp h4 span { color: var(--dim); font: 400 11px var(--mono, ui-monospace, monospace); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gal-row { display: flex; flex-wrap: wrap; gap: 12px; }
+  .gal-card { width: 260px; display: flex; flex-direction: column; border-radius: 10px; overflow: hidden; background: #262626; box-shadow: 0 0 0 1px rgba(255,255,255,.08); }
+  .gal-prev { height: 170px; display: grid; place-items: center; overflow: hidden; background: repeating-conic-gradient(#2c2c2c 0 25%, #262626 0 50%) 0 0 / 16px 16px; }
+  .gal-prev > div { transform-origin: center; flex: none; }
+  .gal-meta { display: flex; align-items: center; gap: 6px; padding: 8px 10px; }
+  .gal-meta span { flex: 1; min-width: 0; color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .gal-meta button { height: 24px; padding: 0 8px; border: 0; border-radius: 6px; background: rgba(255,255,255,.08); color: #fff; font: 500 11.5px system-ui, -apple-system, sans-serif; cursor: pointer; }
+  .gal-meta button:hover { background: rgba(255,255,255,.14); }
+  .cd-search { margin: 8px 10px 2px; height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.04); color: #fff; font: 12.5px system-ui, -apple-system, sans-serif; }
+  .cd-row { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 10px; align-items: start; padding: 6px 8px; border-radius: 8px; }
+  .cd-row:hover { background: rgba(255,255,255,.04); }
+  .cd-row textarea { width: 100%; min-height: 30px; padding: 6px 8px; border: 1px solid transparent; border-radius: 7px; background: rgba(255,255,255,.05); color: #fff; font: 12.5px/1.4 system-ui, -apple-system, sans-serif; resize: vertical; field-sizing: content; text-wrap: pretty; }
+  .cd-row textarea:focus { outline: none; border-color: #0d99ff; }
+  .cd-row.changed textarea { border-color: rgba(255,196,107,.6); background: rgba(255,196,107,.08); }
+  .cd-where { color: var(--dim); font-size: 11px; line-height: 1.35; padding-top: 7px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+  .cd-foot { display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--line); }
+  .cd-foot span { flex: 1; color: var(--dim); font-size: 12px; }
+  .cd-foot button { height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: rgba(255,255,255,.08); color: #fff; font: 500 12px system-ui, -apple-system, sans-serif; cursor: pointer; }
+  .cd-foot button.primary { background: #0d99ff; }
+  .cd-foot button:disabled { opacity: .4; cursor: default; }
   .cm-pop .cm-empty { padding: 10px; color: var(--dim); font-size: 12px; line-height: 1.45; }
   .toolbar .cm-toggle.on { background: rgba(255,178,32,.16); color: #ffb020; }
   .ex-pop .ex-forget { color: var(--dim); font-size: 11.5px; text-align: center; }
@@ -692,6 +784,7 @@ export function studioPage(appPath) {
       <span class="tb-group focus-tools">
         <select class="focus-device" title="Device"></select>
         <button class="focus-turn" data-icon="rotate" title="Rotate">⟲</button>
+        <button class="phone-toggle" data-icon="smartphone" title="Open this screen on your phone: scan the code (same Wi-Fi)">Phone</button>
         <button class="wd-toggle" data-icon="widths" title="Every width at once: this screen at phone, tablet and laptop widths side by side; your edits show on all of them">Widths</button>
         <span class="ws"><input type="range" class="width-slider" min="280" max="1920" step="1" title="Width: drag to watch the layout respond (ticks are your breakpoints); pick a device to reset" /><span class="ws-ticks"></span></span>
       </span>
@@ -711,6 +804,8 @@ export function studioPage(appPath) {
       </span>
       <span class="tb-group">
         <button class="cm-toggle" data-icon="comment" title="Comments pinned to elements (M on a screen: pin one to the selected element)">💬</button>
+        <button class="gal-toggle" data-icon="components" data-label="Components" title="Every component in the app, as it appears on your screens, side by side with its variants">Components</button>
+        <button class="copy-toggle" data-icon="type" data-label="Copy" title="Every text on every screen in one table: fix typos and wording in bulk, then send the changes as one batch">Copy</button>
         <button class="ck-all-toggle" data-icon="check-circle" data-label="Check all" title="Check every screen: layout (also at 320px wide), contrast, tap targets, labels, keyboard and off-token values, with the worst screens first">✓ All screens</button>
         <button class="ex-toggle" data-icon="sparkles" data-label="Explorations" hidden title="Your explorations: reopen the variations Claude made for an element">✦ Explorations</button>
         <button class="vs-toggle" data-icon="branch" data-label="Versions" title="Compare with another branch or commit, side by side">⑂ Versions</button>
@@ -741,6 +836,9 @@ export function studioPage(appPath) {
 <div class="ex-pop" hidden></div>
 <div class="ex-pop cm-pop" hidden></div>
 <div class="ck-all" hidden></div>
+<div class="ck-all copy-deck" hidden></div>
+<div class="gallery" hidden></div>
+<div class="phone-pop" hidden></div>
 <div class="rv-progress" hidden></div>
 <div class="vs-pop" hidden></div>
 <script>
@@ -1767,7 +1865,7 @@ export function studioPage(appPath) {
   // Each screen loads in a hidden frame of its own size (and again at 320px wide, for layout only); its panel
   // runs the same check as ✓ in the panel. The report lists screens with the most failures first.
   const ckAll = { running: false, cancel: false, results: [] };
-  const CK_KINDS = { layout: "Layout", contrast: "Contrast", tap: "Tap targets", label: "Labels", keyboard: "Keyboard", token: "Off-token" };
+  const CK_KINDS = { layout: "Layout", contrast: "Contrast", tap: "Tap targets", label: "Labels", keyboard: "Keyboard", structure: "Structure", motion: "Motion", rtl: "RTL", token: "Off-token" };
   function loadHidden(url, w, h) {
     return new Promise((resolve) => {
       const frame = document.createElement("iframe");
@@ -1853,6 +1951,226 @@ export function studioPage(appPath) {
     if (ckAll.running) { box.hidden = false; return; }
     if (ckAll.results.length && box.hidden) { box.hidden = false; drawCkAll(); return; }
     checkAll();
+  });
+
+  // ---------- open on your phone ----------
+  // A QR code for this screen at the machine's Wi-Fi address. The code is drawn by qrcode-generator (loaded
+  // once from cdnjs); without it the address is still there to type.
+  let qrLib = null;
+  function loadQrLib() {
+    if (window.qrcode) return Promise.resolve(window.qrcode);
+    return (qrLib ||= new Promise((resolve) => {
+      const tag = document.createElement("script");
+      tag.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js";
+      tag.onload = () => resolve(window.qrcode || null);
+      tag.onerror = () => { qrLib = null; resolve(null); };
+      document.head.append(tag);
+    }));
+  }
+  $(".phone-toggle").addEventListener("click", async (e) => {
+    const pop = $(".phone-pop");
+    if (!pop.hidden) { pop.hidden = true; return; }
+    const r = e.currentTarget.getBoundingClientRect();
+    pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 270)) + "px";
+    pop.innerHTML = '<div class="qr">…</div>';
+    pop.hidden = false;
+    let lan = null;
+    try { lan = await fetch("/__ui-tweaks/lan", { cache: "no-store" }).then((x) => x.json()); } catch {}
+    const f = frames.get(focusedId());
+    const url = lan && lan.url ? lan.url + (f ? pathOf(f) : "/") : null;
+    if (!url) { pop.innerHTML = '<b>No network address</b>This computer isn\u2019t on a local network, so a phone can\u2019t reach it.'; return; }
+    const lib = await loadQrLib();
+    let svg = "";
+    if (lib) { try { const q = lib(0, "M"); q.addData(url); q.make(); svg = q.createSvgTag({ cellSize: 4, margin: 0, scalable: true }); } catch {} }
+    pop.innerHTML = '<div class="qr">' + (svg || "<span style='color:#000'>Couldn\u2019t draw the code</span>") + '</div><b>Scan with your phone</b>Same Wi-Fi as this computer. It opens this screen; the panel works there too.<code></code>' + (lan.reachable ? "" : '<div class="warn">The dev server only listens on this computer, so your phone can\u2019t reach it yet. Start it with <code>--host</code> (Vite: <code>vite --host</code>, or <code>server: { host: true }</code> in vite.config).</div>');
+    pop.querySelector("code").textContent = url;
+  });
+  addEventListener("pointerdown", (e) => { const pop = $(".phone-pop"); if (!pop.hidden && !e.target.closest(".phone-pop, .phone-toggle")) pop.hidden = true; });
+
+  // ---------- component gallery ----------
+  // Each screen loads on its own; its panel captures the root of every component on it (styles inline, as for
+  // Paper). They're grouped by component, the distinct looks side by side: a Storybook made from your screens.
+  const gal = { loading: false, cancel: false, comps: new Map() };
+  async function loadGallery() {
+    if (gal.loading) return;
+    Object.assign(gal, { loading: true, cancel: false, comps: new Map() });
+    drawGallery();
+    for (const [i, a] of canvas.artboards.entries()) {
+      if (gal.cancel) break;
+      gal.progress = (i + 1) + " of " + canvas.artboards.length;
+      const sum = $(".gallery .ck-all-sum");
+      if (sum) sum.textContent = "Reading screen " + gal.progress + "…";
+      const [w, h] = size(a);
+      const frame = await loadHidden(a.url, w, h);
+      try {
+        const list = await Promise.race([Promise.resolve().then(() => frame.contentWindow.__uiTweaks.components()), sleep(15000).then(() => [])]);
+        for (const c of list) {
+          const entry = gal.comps.get(c.name) || { name: c.name, source: c.source.replace(/:\\d+(:\\d+)?$/, ""), looks: [] };
+          // Distinct looks only (the same markup and styles once), four at most.
+          if (entry.looks.length < 4 && !entry.looks.some((l) => l.html === c.html)) entry.looks.push({ ...c, screen: a.name || a.url, artboard: a.id });
+          gal.comps.set(c.name, entry);
+        }
+      } catch {}
+      frame.remove();
+      drawGallery();
+    }
+    gal.loading = false;
+    drawGallery();
+  }
+  function drawGallery() {
+    const box = $(".gallery");
+    const comps = [...gal.comps.values()].sort((a, b) => b.looks.length - a.looks.length || a.name.localeCompare(b.name));
+    box.innerHTML = '<div class="ck-all-head"><h3>Components</h3><span class="ck-all-sum"></span><button class="gal-reload">Read again</button><button class="ck-all-close">Close</button></div><div class="gal-body"></div>';
+    box.querySelector(".ck-all-sum").textContent = gal.loading ? "Reading screen " + (gal.progress || "") + "…" : comps.length + " components on " + canvas.artboards.length + " screens";
+    box.querySelector(".gal-reload").hidden = gal.loading;
+    box.querySelector(".gal-reload").addEventListener("click", loadGallery);
+    box.querySelector(".ck-all-close").addEventListener("click", () => { if (gal.loading) gal.cancel = true; box.hidden = true; });
+    const body = box.querySelector(".gal-body");
+    if (!comps.length) body.append(Object.assign(document.createElement("div"), { className: "ck-all-wait", textContent: gal.loading ? "Each screen loads on its own (it doesn't change the one you're on)…" : "No React components found on your screens." }));
+    for (const c of comps) {
+      const sec = document.createElement("div");
+      sec.className = "gal-comp";
+      sec.innerHTML = "<h4><b></b><span></span></h4><div class='gal-row'></div>";
+      sec.querySelector("b").textContent = c.name;
+      sec.querySelector("h4 span").textContent = c.source;
+      for (const look of c.looks) {
+        const card = document.createElement("div");
+        card.className = "gal-card";
+        card.innerHTML = '<div class="gal-prev"><div></div></div><div class="gal-meta"><span></span><button class="gal-open" title="Open the screen it\u2019s on, with it selected">Open</button><button class="gal-paper" title="Send this look to your open Paper file">Paper</button></div>';
+        // The capture renders in a shadow root: its inline styles only, nothing from the studio.
+        const holder = card.querySelector(".gal-prev > div");
+        const shadow = holder.attachShadow({ mode: "open" });
+        // Nothing inherited from the studio, no default margins: the capture's inline styles are all there is.
+        shadow.innerHTML = "<style>:host { all: initial; display: block; } * { box-sizing: border-box; margin: 0; }</style>" + look.html;
+        const z = Math.min(1, 240 / Math.max(1, look.width), 150 / Math.max(1, look.height));
+        Object.assign(holder.style, { width: look.width + "px", height: look.height + "px", transform: "scale(" + z + ")" });
+        card.querySelector(".gal-meta span").textContent = look.screen + " · " + look.width + "×" + look.height;
+        card.querySelector(".gal-open").addEventListener("click", () => {
+          box.hidden = true;
+          setMode("focus", look.artboard);
+          const pick = (n = 0) => { const f = frames.get(look.artboard); let t = null; try { t = f && f.iframe.contentWindow.__uiTweaks; } catch {} if (t && t.select) t.select(look.selector); else if (n < 40) setTimeout(() => pick(n + 1), 200); };
+          setTimeout(pick, 800);
+        });
+        card.querySelector(".gal-paper").addEventListener("click", async () => {
+          try {
+            const res = await fetch("/__ui-tweaks/paper", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ screens: [{ html: look.html, width: look.width, height: look.height, title: c.name }], target: "paper", title: c.name }) });
+            const out = await res.json();
+            if (!res.ok) throw new Error(out.error || res.statusText);
+            note("Sent “" + c.name + "” to Claude Code: it places it in your open Paper file");
+          } catch (error) { note("Couldn't send it (" + error.message + ")"); }
+        });
+        sec.querySelector(".gal-row").append(card);
+      }
+      body.append(sec);
+    }
+  }
+  $(".gal-toggle").addEventListener("click", () => {
+    const box = $(".gallery");
+    if (!box.hidden) { box.hidden = true; return; }
+    box.hidden = false;
+    if (!gal.comps.size && !gal.loading) loadGallery();
+    else drawGallery();
+  });
+
+  // ---------- copy table ----------
+  // Every text on every screen, one row per distinct text (with the screens it's on). Edit any; the edits go
+  // to Claude as one batch that changes the source (or the data or translation file the text comes from).
+  const cd = { loading: false, cancel: false, rows: [], edits: new Map(), filter: "" };
+  async function loadCopy() {
+    if (cd.loading) return;
+    Object.assign(cd, { loading: true, cancel: false, rows: [] });
+    const byText = new Map();
+    drawCopy();
+    for (const [i, a] of canvas.artboards.entries()) {
+      if (cd.cancel) break;
+      cd.progress = (i + 1) + " of " + canvas.artboards.length;
+      drawCopy(true);
+      const [w, h] = size(a);
+      const frame = await loadHidden(a.url, w, h);
+      try {
+        const list = await Promise.race([Promise.resolve().then(() => frame.contentWindow.__uiTweaks.texts()), sleep(15000).then(() => [])]);
+        for (const t of list) {
+          const row = byText.get(t.text) || { text: t.text, screens: [], sources: new Set(), selectors: [] };
+          if (!row.screens.includes(a.name || a.url)) row.screens.push(a.name || a.url);
+          if (t.source) row.sources.add(t.source);
+          if (row.selectors.length < 3) row.selectors.push(t.selector);
+          byText.set(t.text, row);
+        }
+      } catch {}
+      frame.remove();
+      cd.rows = [...byText.values()];
+    }
+    cd.loading = false;
+    drawCopy();
+  }
+  function drawCopy(progressOnly) {
+    const box = $(".copy-deck");
+    const changed = [...cd.edits.entries()].filter(([from, to]) => to.trim() && to !== from);
+    if (progressOnly && box.querySelector(".ck-all-sum")) { box.querySelector(".ck-all-sum").textContent = "Reading screen " + cd.progress + "…"; return; }
+    box.innerHTML = '<div class="ck-all-head"><h3>Copy</h3><span class="ck-all-sum"></span><button class="cd-reload">Read again</button><button class="ck-all-close">Close</button></div><input class="cd-search" placeholder="Find text…" /><div class="ck-all-list cd-list"></div><div class="cd-foot"><span></span><button class="cd-fix" title="Claude fixes typos, inconsistent terms and capitalisation across all of it in the source (Undo apply reverts it)">Fix typos with Claude</button><button class="primary cd-send">Send changes</button></div>';
+    box.querySelector(".ck-all-sum").textContent = cd.loading ? "Reading screen " + (cd.progress || "") + "…" : cd.rows.length + " texts on " + canvas.artboards.length + " screens";
+    box.querySelector(".ck-all-close").addEventListener("click", () => { if (cd.loading) cd.cancel = true; box.hidden = true; });
+    box.querySelector(".cd-reload").addEventListener("click", loadCopy);
+    box.querySelector(".cd-reload").hidden = cd.loading;
+    const search = box.querySelector(".cd-search");
+    search.value = cd.filter;
+    search.addEventListener("input", () => { cd.filter = search.value; drawRows(); });
+    const list = box.querySelector(".cd-list");
+    const foot = box.querySelector(".cd-foot span");
+    const send = box.querySelector(".cd-send");
+    const drawFoot = () => {
+      const n = [...cd.edits.entries()].filter(([from, to]) => to.trim() && to !== from).length;
+      foot.textContent = n ? n + " changed" : "Edit any text, then send the changes as one batch";
+      send.disabled = !n;
+      send.textContent = n ? "Send " + n + " change" + (n === 1 ? "" : "s") : "Send changes";
+    };
+    const drawRows = () => {
+      list.innerHTML = "";
+      const q = cd.filter.trim().toLowerCase();
+      const rows = cd.rows.filter((r) => !q || r.text.toLowerCase().includes(q) || (cd.edits.get(r.text) || "").toLowerCase().includes(q));
+      for (const r of rows.slice(0, 500)) {
+        const row = document.createElement("div");
+        row.className = "cd-row" + (cd.edits.has(r.text) && cd.edits.get(r.text) !== r.text ? " changed" : "");
+        const ta = document.createElement("textarea");
+        ta.rows = 1;
+        ta.value = cd.edits.has(r.text) ? cd.edits.get(r.text) : r.text;
+        ta.addEventListener("input", () => { ta.value === r.text ? cd.edits.delete(r.text) : cd.edits.set(r.text, ta.value); row.classList.toggle("changed", cd.edits.has(r.text)); drawFoot(); });
+        const where = document.createElement("div");
+        where.className = "cd-where";
+        where.textContent = r.screens.length > 2 ? r.screens.slice(0, 2).join(", ") + " +" + (r.screens.length - 2) : r.screens.join(", ");
+        where.title = r.screens.join("\\n");
+        row.append(ta, where);
+        list.append(row);
+      }
+      if (cd.loading && !rows.length) list.append(Object.assign(document.createElement("div"), { className: "ck-all-wait", textContent: "Each screen loads on its own (it doesn't change the one you're on)…" }));
+    };
+    drawRows();
+    drawFoot();
+    const ask = async (instruction, done) => {
+      try {
+        const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "edit", instruction, element: null, page: { url: (current() || {}).url || "/" } }) });
+        const out = await res.json();
+        if (!res.ok) throw new Error(out.error || res.statusText);
+        done();
+      } catch (error) { note("Couldn't send it (" + error.message + ")"); }
+    };
+    send.addEventListener("click", () => {
+      const changes = cd.rows.filter((r) => cd.edits.has(r.text) && cd.edits.get(r.text).trim() && cd.edits.get(r.text) !== r.text);
+      const lines = changes.map((r) => "- “" + r.text + "” → “" + cd.edits.get(r.text).trim() + "” (on " + r.screens.join(", ") + (r.sources.size ? "; JSX at " + [...r.sources].slice(0, 3).join(", ") : "") + ")");
+      ask("Copy edit across the app: change these texts in the source, every place each one appears. Change only the wording; if a text comes from data, a constant or a translation file, change it there (in every language file only if the translation is the same text). Keep markup and styling as they are.\\n" + lines.join("\\n"), () => { cd.edits.clear(); note("Sent " + changes.length + " text change" + (changes.length === 1 ? "" : "s") + " to Claude; Undo apply reverts them."); drawCopy(); });
+    });
+    box.querySelector(".cd-fix").addEventListener("click", () => {
+      const texts = cd.rows.map((r) => "- “" + r.text + "”").join("\\n").slice(0, 20000);
+      ask("Proofread the app's copy and fix it in the source: typos, grammar, inconsistent terms for the same thing, and inconsistent capitalisation of buttons and headings (use the style most of them already follow). Don't rewrite for tone or change meaning, and leave names, codes and numbers alone. The texts on its screens:\\n" + texts, () => note("Claude is proofreading; Undo apply reverts it."));
+    });
+  }
+  $(".copy-toggle").addEventListener("click", () => {
+    const box = $(".copy-deck");
+    if (!box.hidden) { box.hidden = true; return; }
+    $(".ck-all:not(.copy-deck)").hidden = true;
+    box.hidden = false;
+    if (!cd.rows.length && !cd.loading) loadCopy();
+    else drawCopy();
   });
 
   // ---------- light / dark ----------
@@ -2090,7 +2408,7 @@ export function studioPage(appPath) {
     const actions = card.querySelector(".ex-actions");
     const btn = (text, title, run, cls) => { const b = Object.assign(document.createElement("button"), { textContent: text, title }); if (cls) b.className = cls; b.addEventListener("click", run); actions.append(b); return b; };
     if (kind !== "original") {
-      btn(v.html ? "Build it" : "Use on screen", v.html ? "A new layout: Claude builds it in the component (Undo apply reverts it)" : "Put this on the real screen as tweaks (send them, or they apply in instant mode)", () => exUse(cur), "use");
+      btn(v.html ? "Build it" : "Use on screen", v.state ? "A missing state: Claude adds it to the component" + (v.when ? ", shown when " + v.when : "") + " (Undo apply reverts it)" : v.html ? "A new layout: Claude builds it in the component (Undo apply reverts it)" : "Put this on the real screen as tweaks (send them, or they apply in instant mode)", () => exUse(cur), "use");
       const edit = card.querySelector(".ex-edit");
       const editBtn = btn("Edit", "Adjust this variation's values before using it", () => {
         edit.hidden = !edit.hidden;
@@ -2188,7 +2506,7 @@ export function studioPage(appPath) {
     if (!ex.req) { box.hidden = true; box.innerHTML = ""; return; }
     const grid = box.querySelector(".ex-grid");
     if (!grid) {
-      box.innerHTML = '<div class="ex-head"><h3>Explore</h3><span class="ex-el"></span><input class="ex-dir" placeholder="Direction for more, e.g. “bolder, more compact”" /><span class="ex-mode" title="What the next variations may change"><button data-mode="">Any</button><button data-mode="styles">Styles</button><button data-mode="layout">Layout</button></span><span class="ex-skills" hidden></span><span class="ex-refs"></span><button class="ex-ref-add" title="Add a reference image for the next variations (or drop one here)">＋ Reference</button><input type="file" class="ex-ref-file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden /><button class="ex-more">More variations</button><button class="ex-close" title="Back to the screen (Esc)">Close</button></div><div class="ex-grid"></div>';
+      box.innerHTML = '<div class="ex-head"><h3>Explore</h3><span class="ex-el"></span><input class="ex-dir" placeholder="Direction for more, e.g. “bolder, more compact”" /><span class="ex-mode" title="What the next variations may change"><button data-mode="">Any</button><button data-mode="styles">Styles</button><button data-mode="layout">Layout</button><button data-mode="states" title="The states this element is missing (empty, loading, error…), designed to fit; Build it adds one to the component">States</button></span><span class="ex-skills" hidden></span><span class="ex-refs"></span><button class="ex-ref-add" title="Add a reference image for the next variations (or drop one here)">＋ Reference</button><input type="file" class="ex-ref-file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden /><button class="ex-more">More variations</button><button class="ex-close" title="Back to the screen (Esc)">Close</button></div><div class="ex-grid"></div>';
       box.querySelector(".ex-el").textContent = ex.req.label;
       box.querySelector(".ex-el").title = ex.req.selector;
       box.querySelector(".ex-dir").value = ex.req.instruction || "";
@@ -2238,7 +2556,7 @@ export function studioPage(appPath) {
   function exUse(v) {
     const f = frames.get(focusedId());
     try {
-      f.iframe.contentWindow.__uiTweaks.useVariant(ex.req.selector, v.changes, v.name, v.html, v.why);
+      f.iframe.contentWindow.__uiTweaks.useVariant(ex.req.selector, v.changes, v.name, v.html, v.why, { state: v.state, when: v.when });
       ex.req.used = v.name;
       saveExploration();
       closeExplore();
@@ -2852,7 +3170,26 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
         try {
           log = (JSON.parse(await fs.readFile(path.join(tweaksDir(root), "log.json"), "utf8")).entries || []).slice(-40);
         } catch {}
-        return send(res, 200, { entries: (await readHistory(root)).map((e) => ({ id: e.id, at: e.at, by: e.by, count: e.count, files: e.files.map((f) => path.relative(root, f)), what: e.what || null })), log });
+        const entries = await readHistory(root);
+        const shots = await matchShots(root, entries).catch(() => new Set());
+        return send(res, 200, { entries: entries.map((e) => ({ id: e.id, at: e.at, by: e.by, count: e.count, files: e.files.map((f) => path.relative(root, f)), what: e.what || null, shots: shots.has(e.id) })), log });
+      }
+      if (req.method === "POST" && url.pathname === `${PREFIX}/history-shots`) {
+        try {
+          return send(res, 200, { ok: true, at: await saveShots(root, JSON.parse(await readBody(req, 12_000_000))) });
+        } catch (error) {
+          return send(res, error.status || 500, { error: error.message });
+        }
+      }
+      if (req.method === "GET" && url.pathname.startsWith(`${PREFIX}/history-shots/`)) {
+        const name = url.pathname.slice(`${PREFIX}/history-shots/`.length);
+        if (!/^h[a-z0-9]+-(before|after)\.svg$/.test(name)) return send(res, 404, { error: "No such picture" });
+        const svg = await fs.readFile(path.join(shotsDir(root), name), "utf8").catch(() => null);
+        if (svg === null) return send(res, 404, { error: "That picture is gone" });
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "image/svg+xml");
+        res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src * data:; font-src * data:");
+        return res.end(svg);
       }
       if (req.method === "GET" && url.pathname === `${PREFIX}/breakpoints`) {
         const summary = await scanBreakpoints(root);
@@ -2971,6 +3308,18 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
           running: await readRunning(root),
           listener: await readListener(root),
         });
+      }
+      if (url.pathname === `${PREFIX}/design-tokens` && req.method === "POST") {
+        try {
+          return send(res, 200, { ok: true, ask: await queueTokens(root, JSON.parse((await readBody(req, 10_000)) || "{}")) });
+        } catch (error) {
+          return send(res, error.status || 500, { error: error.message });
+        }
+      }
+      if (url.pathname === `${PREFIX}/lan` && req.method === "GET") {
+        const port = req.socket.localPort;
+        const lan = await lanAddress(port);
+        return send(res, 200, { ...lan, port, url: lan.address ? `http://${lan.address}:${port}` : null });
       }
       if (url.pathname === `${PREFIX}/flows`) {
         if (req.method === "GET") return send(res, 200, { flows: await readFlows(root) });

@@ -100,6 +100,9 @@ export function systemPage() {
   <span class="grow"></span>
   <input type="search" placeholder="Filter tokens" />
   <button class="btn rescan" title="Read the stylesheets again">Rescan</button>
+  <select class="btn design-tool" title="Which design tool the tokens go to and come from"><option value="paper">Paper</option><option value="figma">Figma</option></select>
+  <button class="btn tokens-push" title="Claude Code puts these tokens into your open design file (as Paper tokens or Figma variables, with their modes), so captures sent there use them">Send tokens</button>
+  <button class="btn tokens-pull" title="Claude Code reads the tokens in your open design file and changes the ones that differ here, in your CSS">Pull tokens</button>
   <a class="btn" href="/__ui-tweaks/studio">Canvas</a>
 </div>
 <div class="layout">
@@ -391,6 +394,17 @@ export function systemPage() {
 
   $("input[type=search]").addEventListener("input", (e) => { filter = e.target.value.trim().toLowerCase(); render(); });
   $(".rescan").addEventListener("click", () => load().then(() => toast("Rescanned")));
+  // Tokens to the design tool and back: the dev server saves them as they are now; Claude Code does the rest.
+  for (const [cls, direction] of [[".tokens-push", "push"], [".tokens-pull", "pull"]]) $(cls).addEventListener("click", async () => {
+    const target = $(".design-tool").value;
+    const tool = target === "figma" ? "Figma" : "Paper";
+    try {
+      const res = await fetch("/__ui-tweaks/design-tokens", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ direction, target }) });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error || res.statusText);
+      toast(direction === "push" ? "Sent to Claude Code: it puts your tokens into the open " + tool + " file" : "Sent to Claude Code: it brings the " + tool + " file's token changes into your CSS");
+    } catch (e) { toast("Couldn't send it (" + e.message + ")"); }
+  });
   // Pick up edits made elsewhere (the panel, Claude) when the page regains focus.
   addEventListener("focus", () => load());
   load().catch((e) => ($("main").innerHTML = '<div class="loading">Couldn\\'t read the tokens: ' + e.message + "</div>"));

@@ -197,7 +197,7 @@ Answer with exactly one line of JSON and nothing after it:
 {"variants":[{"name":"<2-4 words>","why":"<one sentence>","changes":[{"target":":scope","prop":"padding","value":"16px 20px"}]},{"name":"<2-4 words>","why":"<one sentence>","html":"<div class=\\"card\\">…</div>","changes":[]}]}`
 
 type Capture = { file: string; title: string; width?: number; height?: number }
-type Ask = { id: string; kind: 'edit' | 'variations' | 'publish' | 'paper' | 'paper-pull'; instruction: string; file?: string; files?: Capture[]; target?: 'paper' | 'figma'; title?: string; whole?: boolean; refs?: string[]; mode?: 'any' | 'styles' | 'layout'; scope?: 'screen'; skills?: string[]; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
+type Ask = { id: string; kind: 'edit' | 'variations' | 'publish' | 'paper' | 'paper-pull' | 'tokens'; direction?: 'push' | 'pull'; instruction: string; file?: string; files?: Capture[]; target?: 'paper' | 'figma'; title?: string; whole?: boolean; refs?: string[]; mode?: 'any' | 'styles' | 'layout' | 'states'; scope?: 'screen'; skills?: string[]; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
 type AskOutcome = { status: 'running' | 'done' | 'failed'; startedAt?: number; summary?: string; needs?: string; files?: string[]; variants?: unknown[]; error?: string }
 
 /** The last line of an answer that parses as a JSON object. */
@@ -227,11 +227,11 @@ export function cleanMarkup(html: unknown): string | undefined {
   return /^<[a-z]/i.test(out) && out.length <= 60000 ? out : undefined
 }
 
-export function cleanVariants(raw: unknown, max = 4): { name: string; why: string; changes: { target: string; prop: string; value: string }[]; html?: string; skill?: string }[] {
+export function cleanVariants(raw: unknown, max = 4): { name: string; why: string; changes: { target: string; prop: string; value: string }[]; html?: string; skill?: string; state?: string; when?: string }[] {
   if (!Array.isArray(raw)) return []
   return raw
     .map(v => {
-      const o = (v ?? {}) as { name?: unknown; why?: unknown; changes?: unknown; html?: unknown; skill?: unknown }
+      const o = (v ?? {}) as { name?: unknown; why?: unknown; changes?: unknown; html?: unknown; skill?: unknown; state?: unknown; when?: unknown }
       const changes = (Array.isArray(o.changes) ? o.changes : [])
         .map(c => c as { target?: unknown; prop?: unknown; value?: unknown })
         .filter(c => typeof c.prop === 'string' && /^-?[a-z][a-z-]*$/.test(c.prop) && typeof c.value === 'string' && !/[;{}]/.test(c.value))
@@ -239,7 +239,10 @@ export function cleanVariants(raw: unknown, max = 4): { name: string; why: strin
         .slice(0, 20)
       const html = cleanMarkup(o.html)
       const skill = typeof o.skill === 'string' && /^[a-z0-9][a-z0-9-]{0,60}$/.test(o.skill) ? o.skill : undefined
-      return { name: String(o.name ?? 'Variation').slice(0, 40), why: String(o.why ?? '').slice(0, 240), changes, ...(html ? { html } : {}), ...(skill ? { skill } : {}) }
+      // A missing state (empty, loading, error…) and when the component shows it.
+      const state = typeof o.state === 'string' && /^[a-z][a-z -]{0,30}$/i.test(o.state) ? o.state.toLowerCase() : undefined
+      const when = typeof o.when === 'string' && o.when.trim() ? o.when.trim().slice(0, 240) : undefined
+      return { name: String(o.name ?? 'Variation').slice(0, 40), why: String(o.why ?? '').slice(0, 240), changes, ...(html ? { html } : {}), ...(skill ? { skill } : {}), ...(state && html ? { state } : {}), ...(state && html && when ? { when } : {}) }
     })
     .filter(v => v.changes.length > 0 || v.html)
     .slice(0, max)
@@ -258,8 +261,10 @@ export function askPrompt(ask: Ask, root: string | null, skills: DesignSkill[] =
   }
   return [
     // Two by default; the person's direction can ask for another number ("give me 4", "just one").
-    `Propose ${ask.count ?? 2} variation${(ask.count ?? 2) === 1 ? '' : 's'}, unless the direction asks for a different number (then that many, at most 4).${ask.instruction ? ` Direction: ${ask.instruction}` : ''}`,
-    `Kinds: ${ask.mode === 'styles' ? 'style variations only' : ask.mode === 'layout' ? 'layout variations only (each one rebuilds the markup)' : 'style or layout, whichever serves the direction; unless it is clearly about colour or type alone, make at least one a layout variation'}.`,
+    ask.mode === 'states'
+      ? `Design the states this element is missing.${ask.instruction ? ` Direction: ${ask.instruction}` : ''} Read its component's source (the jsxSource in the element) to see what it shows and which states it already handles: for a list or data, empty and loading; for anything that fetches or submits, error; for a form, invalid and submitting; others that fit (offline, partial, success). Design up to 4 it lacks, most needed first, as layout variations: each "html" is the element in that state, built from its existing classes and tokens so it belongs; each has "state" (one or two words, e.g. "empty") and "when" (the condition in the component's code that should show it, e.g. "items.length === 0"). Name each after its state ("Empty", "Loading", "Error"). Write real, specific copy for the app, not lorem ipsum. If it already handles every state that applies, answer with an empty list.`
+      : `Propose ${ask.count ?? 2} variation${(ask.count ?? 2) === 1 ? '' : 's'}, unless the direction asks for a different number (then that many, at most 4).${ask.instruction ? ` Direction: ${ask.instruction}` : ''}`,
+    ask.mode === 'states' ? '' : `Kinds: ${ask.mode === 'styles' ? 'style variations only' : ask.mode === 'layout' ? 'layout variations only (each one rebuilds the markup)' : 'style or layout, whichever serves the direction; unless it is clearly about colour or type alone, make at least one a layout variation'}.`,
     ask.scope === 'screen' ? 'The element is the whole screen: rethink its layout and hierarchy as a whole (sections, grouping, order, density), not one control.' : '',
     `Screen: ${ask.page?.url ?? '?'}`,
     `Element: ${JSON.stringify(ask.element ?? {})}`,
@@ -396,11 +401,14 @@ export function paperPrompt(files: Capture[], ask: Pick<Ask, 'whole' | 'page' | 
     `Put ${what}${from} into my open ${tool} file, as editable layers that look exactly like they do in the app.`,
     `The UI tweaks panel captured ${files.length > 1 ? 'them' : 'it'} as HTML: every style is inline from what the browser computed, block flows and grids are already flex, absolute things are placed against their parent (which is relative), layer-name attributes carry component and class names, and the app's images are paper-asset:// paths to local files.\n${list}`,
     steps,
+    figma
+      ? ''
+      : `If the file has tokens (get_basic_info lists them), use var(--name) wherever a captured value equals a token's value exactly, so the layers stay linked to the design system.`,
     `Fix what ${tool} doesn't take as you go: no margin (turn it into the parent's padding or gap), no display:grid, no display:inline outside text spans, no tables. Keep the fonts, colours, sizes and spacing as captured; don't redesign or tidy anything.`,
     figma
       ? `When it's all in, screenshot the frames, fix anything clipped or out of place, and tell me in one line that it's in Figma.`
       : `When it's all in, take a get_screenshot of each artboard, fix anything clipped or out of place (set an artboard to height fit-content if content runs past it), call finish_working_on_nodes, and tell me in one line that it's in Paper.`,
-  ].join('\n\n')
+  ].filter(Boolean).join('\n\n')
 }
 
 // Pull changes back: what was designed in Paper (or Figma) goes into the source.
@@ -418,6 +426,36 @@ export function pullPrompt(ask: Pick<Ask, 'page' | 'target' | 'title' | 'file'>,
       ? `What the app looked like when it was sent to ${tool} is captured at ${original} (HTML with every style inline). Compare the design with it: the differences are what was designed. Change only those in the source, nothing that's the same.`
       : `There's no capture of how it looked before, so compare the design with the running screen's source and change only what differs.`,
     `Make the changes the way the project is written: its existing CSS files, tokens (CSS variables) and components, editing rules rather than adding inline styles, and keeping data, props and handlers. A changed text that comes from data stays data. Then tell me in a short list what you changed, and anything you left because it couldn't map to the code.`,
+  ].join('\n\n')
+}
+
+// Design tokens to Paper or Figma, or their changes back into the CSS.
+export function tokensPrompt(ask: Pick<Ask, 'direction' | 'target'>, file: string, root: string): string {
+  const figma = ask.target === 'figma'
+  const tool = figma ? 'Figma' : 'Paper'
+  const read = figma
+    ? `Load the figma:figma-use skill first and follow it. If Figma's MCP server isn't connected or authorized, say so (it's authorized with /mcp) and stop.`
+    : `Read Paper's guide first (get_guide "paper-mcp-instructions") if you haven't this session, then get_tokens for the open file.`
+  const saved = `The project's design tokens are at ${file}: each has its CSS name, a category, and a value per mode (the first mode is the base, e.g. ":root"; others like dark), with the file and line where it's declared. The project is ${root}.`
+  if (ask.direction === 'pull') {
+    return [
+      `Bring the token changes made in my open ${tool} file back into the project's CSS.`,
+      saved,
+      read,
+      figma
+        ? `Read the file's variables (get_variable_defs, or the variables API through figma-use) and match them to the project's tokens by name (a variable "color/brand" or "--color-brand" is the token --color-brand).`
+        : `Match Paper's tokens to the project's by name.`,
+      `For each token whose value differs, change it in the CSS at the file and line listed (in that mode's block); a token that's new in ${tool} goes into the base mode's block next to its category. Leave tokens that are the same, and never delete one. Then tell me in a short list what changed.`,
+    ].join('\n\n')
+  }
+  return [
+    `Put the project's design tokens into my open ${tool} file, so designs there use the same names and values as the code.`,
+    saved,
+    read,
+    figma
+      ? `Create (or update) a variable collection named "Tokens" with one mode per project mode, and a variable per token: colours as COLOR, lengths as FLOAT in px, others as STRING; name them by category, e.g. "color/brand" for --color-brand, and set each mode's value (resolve var() references to the token they point at, as an alias where you can).`
+      : `Create the tokens that don't exist yet with create_tokens and update the ones that do with set_tokens, keeping each CSS name (with its leading --). Where a value is var(--other), use the value it resolves to unless Paper takes references. If Paper's tokens have modes, set each mode's value; if not, use the base mode and tell me which modes were left out.`,
+    `Don't remove or rename tokens that are already in the file. When it's done, tell me in one line how many were added and updated.`,
   ].join('\n\n')
 }
 
@@ -462,6 +500,15 @@ async function startNextAsk($: EngineInterface) {
     await writeOutcome($, next.id, { status: 'done', summary: `Claude Code is placing ${files.length > 1 ? `all ${files.length}` : 'it'} in your open ${tool} file.` })
     $.clock.after(50, () => void $.prompt.submit({ text: paperPrompt(files, next) }))
     $.ui.toast(`Sending ${files.length > 1 ? `${files.length} captures` : `"${next.title ?? files[0]?.title ?? 'Screen'}"`} to ${tool}…`)
+    return
+  }
+  // Tokens to the design tool, or back: the main model too.
+  if (next.kind === 'tokens') {
+    const tool = next.target === 'figma' ? 'Figma' : 'Paper'
+    if (!next.file) return void (await writeOutcome($, next.id, { status: 'failed', error: 'No saved tokens.' }))
+    await writeOutcome($, next.id, { status: 'done', summary: next.direction === 'pull' ? `Claude Code is bringing ${tool}'s token changes into your CSS.` : `Claude Code is putting your tokens into ${tool}.` })
+    $.clock.after(50, () => void $.prompt.submit({ text: tokensPrompt(next, inProject(next.file ?? ''), projectRoot ?? '.') }))
+    $.ui.toast(next.direction === 'pull' ? `Pulling tokens from ${tool}…` : `Sending tokens to ${tool}…`)
     return
   }
   // Changes made in the design tool, back into the source: the main model again (it has the design tools).
@@ -515,6 +562,8 @@ export function askOutcome(kind: Ask['kind'], answer: string, changed: string[])
     return { status: 'failed', summary, ...(needs ? { needs } : { error: 'No files changed.' }) }
   }
   const variants = cleanVariants(report?.variants)
+  // An empty list on purpose (asked for missing states, and none are): say so rather than "try again".
+  if (!variants.length && Array.isArray(report?.variants) && !report.variants.length) return { status: 'failed', error: 'Nothing to add: it already handles every state that applies.' }
   return variants.length ? { status: 'done', variants } : { status: 'failed', error: 'No usable variations came back; try again.' }
 }
 

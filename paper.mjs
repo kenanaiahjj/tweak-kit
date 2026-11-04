@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { addAsk } from "./asks.mjs";
+import { scanTokens } from "./tokens.mjs";
 
 const KEEP = 40;
 const MAX = 1_000_000;
@@ -87,4 +88,22 @@ export async function sendToPaper(root, body, origin) {
     page: body.page || null,
     instruction: files.length > 1 ? `Send ${files.length} ${body.whole ? "screens" : `versions of “${title}”`} to ${tool}` : `Send ${body.whole ? "the screen" : `“${title}”`} to ${tool}`,
   });
+}
+
+/**
+ * Tokens to the design tool (push) or back (pull): the project's tokens as they are now, saved for Claude
+ * (name, category, a value per mode, and where each is declared), and an ask for it.
+ */
+export async function queueTokens(root, body) {
+  const direction = body && body.direction === "pull" ? "pull" : "push";
+  const target = body && body.target === "figma" ? "figma" : "paper";
+  const scan = await scanTokens(root);
+  const modes = scan.modes.map((m) => ({ key: m.key, label: m.label }));
+  const tokens = scan.tokens.map((t) => ({ name: t.name, category: t.category, values: Object.fromEntries(Object.entries(t.values).map(([k, v]) => [(modes.find((m) => m.key === k) || { label: k }).label, { value: v.value, at: `${v.file}:${v.line}` }])) }));
+  if (!tokens.length) throw Object.assign(new Error("No design tokens (CSS variables) found in the project's stylesheets"), { status: 400 });
+  const dir = path.join(root, ".ui-tweaks", "paper");
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, "tokens.json"), JSON.stringify({ modes: modes.map((m) => m.label), tokens }, null, 2) + "\n");
+  const tool = target === "figma" ? "Figma" : "Paper";
+  return addAsk(root, { kind: "tokens", direction, target, file: ".ui-tweaks/paper/tokens.json", instruction: direction === "push" ? `Send ${tokens.length} tokens to ${tool}` : `Pull token changes from ${tool}` });
 }

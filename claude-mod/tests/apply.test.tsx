@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { lineStats, unifiedDiff } from '../hooks/diff'
-import { askOutcome, askPrompt, cleanVariants, lastJson, paperPrompt, parseReport, pullPrompt, settle, summarize, verifyTweak } from '../hooks/register'
+import { askOutcome, askPrompt, cleanVariants, lastJson, paperPrompt, parseReport, pullPrompt, tokensPrompt, settle, summarize, verifyTweak } from '../hooks/register'
 
 const PENDING = JSON.stringify({
   version: 1,
@@ -345,4 +345,32 @@ test('pull from Paper: compares with the original capture and edits the source',
   expect(f).toContain('frame I have selected in Figma')
   expect(f).toContain("There's no capture")
   expect(f).toContain('figma:figma-design-to-code')
+})
+
+test('missing states: the prompt asks for the states it lacks, and variants keep state and when', () => {
+  const p = askPrompt({ id: 'a', kind: 'variations', instruction: '', mode: 'states', element: { react: { jsxSource: 'src/List.tsx:4' } } }, '/p')
+  expect(p).toContain('Design the states this element is missing.')
+  expect(p).toContain('"when"')
+  expect(p).not.toContain('Kinds:')
+  const v = cleanVariants([
+    { name: 'Empty', why: 'x', html: '<div class="list">No events yet</div>', state: 'Empty', when: 'events.length === 0' },
+    { name: 'Odd', why: 'x', changes: [{ prop: 'color', value: 'red' }], state: 'empty' },
+    { name: 'Bad', html: '<div>x</div>', state: 'drop table;' },
+  ])
+  expect(v[0]?.state).toBe('empty')
+  expect(v[0]?.when).toBe('events.length === 0')
+  expect(v[1]?.state).toBe(undefined)
+  expect(v[2]?.state).toBe(undefined)
+})
+
+test('tokens: push creates them in Paper or as Figma variables, pull edits the CSS', () => {
+  const push = tokensPrompt({ direction: 'push' }, '/p/.ui-tweaks/paper/tokens.json', '/p')
+  expect(push).toContain('create_tokens')
+  expect(push).toContain('/p/.ui-tweaks/paper/tokens.json')
+  const figma = tokensPrompt({ direction: 'push', target: 'figma' }, '/t.json', '/p')
+  expect(figma).toContain('variable collection named "Tokens"')
+  const pull = tokensPrompt({ direction: 'pull' }, '/t.json', '/p')
+  expect(pull).toContain('change it in the CSS at the file and line listed')
+  expect(pull).toContain('get_tokens')
+  expect(paperPrompt([{ file: '/a.html', title: 'A' }], {})).toContain('use var(--name) wherever a captured value equals')
 })

@@ -1,5 +1,5 @@
-// The handoff viewer: a read-only canvas of a version's screens with Inspect, Interact (a prototype that
-// follows the flow map), search (⌘/Ctrl+F) and before/after for screens that changed. The page's script and
+// The handoff viewer: a read-only canvas of a version's screens with Inspect, search (⌘/Ctrl+F),
+// before/after for screens that changed, and a link to the hosted app when the version has one. The page's script and
 // styles live in handoff-viewer.js / .css; with `embedded` the data is inside the page (a shareable export),
 // without it the viewer reads it from the dev server.
 import { readFileSync } from "node:fs";

@@ -57,7 +57,9 @@ export async function saveHandoff(root, body) {
   }
   let cur = {};
   try { cur = (await listRefs(root)).current || {}; } catch {}
-  const version = { id: `v${Date.now().toString(36)}`, label: clip(body.label, 60).trim() || `Version ${index.versions.length + 1}`, note: clip(body.note, 500), at: Date.now(), commit: cur.sha || null, branch: cur.name || null, dirty: !!cur.dirty, screens: out };
+  // The hosted app (a preview deploy) for clicking through it: http(s) only.
+  const appUrl = /^https?:\/\/[^\s"<>]+$/i.test(String(body.appUrl || "").trim()) ? String(body.appUrl).trim().slice(0, 500) : null;
+  const version = { id: `v${Date.now().toString(36)}`, ...(appUrl ? { appUrl } : {}), label: clip(body.label, 60).trim() || `Version ${index.versions.length + 1}`, note: clip(body.note, 500), at: Date.now(), commit: cur.sha || null, branch: cur.name || null, dirty: !!cur.dirty, screens: out };
   index.versions.push(version);
   await fs.writeFile(path.join(dir, "index.json"), JSON.stringify(index, null, 2) + "\n");
   return { version, changed: out.filter((s) => s.status === "changed").length, added: out.filter((s) => s.status === "new").length };
@@ -79,9 +81,7 @@ export async function handoffData(root, only = null) {
       }
     }
   }
-  let flows = [];
-  try { flows = JSON.parse(await fs.readFile(path.join(root, ".ui-tweaks", "flows.json"), "utf8")).flows || []; } catch {}
-  return { project: path.basename(root), versions, screens, styles, flows };
+  return { project: path.basename(root), versions, screens, styles };
 }
 
 // ---------- export ----------

@@ -47,3 +47,11 @@ test("export: assets inlined, base dropped, a publishable file", async () => {
   const ask = await addAsk(root, { kind: "publish", file: out.file, title: out.title });
   assert.equal(ask.kind, "publish");
 });
+
+test("a version can carry a link to the hosted app (http and https only)", async () => {
+  const root = await tmp();
+  const ok = await saveHandoff(root, { label: "v1", appUrl: "https://oneqr-git-main.vercel.app", screens: [screen("a", "<p>A</p>")] });
+  assert.equal(ok.version.appUrl, "https://oneqr-git-main.vercel.app");
+  const bad = await saveHandoff(root, { label: "v2", appUrl: "javascript:alert(1)", screens: [screen("a", "<p>A</p>")] });
+  assert.equal(bad.version.appUrl, undefined);
+});

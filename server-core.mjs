@@ -837,6 +837,14 @@ export function studioPage(appPath) {
   .ho-row span { font: 11.5px system-ui, -apple-system, sans-serif; color: rgba(255,255,255,.5); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ho-row a, .ho-row button { flex: none; height: 26px; padding: 0 8px; border: 0; border-radius: 7px; background: rgba(255,255,255,.07); color: rgba(255,255,255,.85); font: 500 12px/26px system-ui, -apple-system, sans-serif; text-decoration: none; cursor: pointer; }
   .ho-row a:hover, .ho-row button:hover { background: rgba(255,255,255,.14); color: #fff; }
+  .ho-viewer { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: #171717; }
+  .ho-viewer[hidden] { display: none; }
+  .ho-viewer-bar { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 8px 0 14px; background: #2a2340; border-bottom: 1px solid rgba(167,139,250,.35); font: 12.5px system-ui, -apple-system, sans-serif; color: rgba(255,255,255,.6); }
+  .ho-viewer-bar b { color: #fff; font-weight: 600; }
+  .ho-viewer-bar span { flex: 1; }
+  .ho-viewer-bar a, .ho-viewer-bar button { height: 28px; padding: 0 12px; border: 0; border-radius: 8px; background: rgba(255,255,255,.1); color: #fff; font: 500 12px/28px system-ui, -apple-system, sans-serif; text-decoration: none; cursor: pointer; }
+  .ho-viewer-bar a:hover, .ho-viewer-bar button:hover { background: rgba(255,255,255,.18); }
+  .ho-viewer iframe { flex: 1; width: 100%; border: 0; }
   .ho-empty { padding: 4px 6px; color: rgba(255,255,255,.45); font-size: 12px; }
   .canvas-toggle.on { background: rgba(255,255,255,.11); color: #fff; }
 
@@ -941,7 +949,7 @@ export function studioPage(appPath) {
       </span>
       <span class="tb-group">
         <button class="vs-toggle" data-icon="branch" data-label="Versions" title="Compare with another branch or commit, side by side">⑂ Versions</button>
-        <button class="ho-toggle" data-icon="handoff" data-label="Handoff" title="Handoff: a read-only version of every screen for developers, PMs and QA (inspect, click through, search, compare versions)">Handoff</button>
+        <button class="ho-toggle" data-icon="handoff" data-label="Handoff" title="Handoff: a read-only version of every screen for developers, PMs and QA (inspect, search, compare versions)">Handoff</button>
         <button class="vs-mirror" data-icon="mirror" hidden title="Mirror clicks: repeat your clicks and typing on the other version, so both walk through the same flow">⇆ Mirror clicks</button>
         <button class="vs-match" data-icon="match" hidden title="Match: both sides drifted apart? Reload both at this screen's starting state (its URL, fixture and screen)">⟲ Match</button>
       </span>
@@ -3185,12 +3193,27 @@ export function studioPage(appPath) {
   // A version of every screen for developers, PMs and QA: each screen loads on its own (as Check all does)
   // and its panel snapshots it; the dev server keeps the version and says which screens changed.
   let hoBusy = false;
+  function openHandoffViewer(href) {
+    let box = $(".ho-viewer");
+    if (!box) {
+      box = document.createElement("div");
+      box.className = "ho-viewer";
+      box.innerHTML = '<div class="ho-viewer-bar"><b>Handoff</b><span>What developers, PMs and QA see: read-only</span><a class="ho-newtab" target="_blank" rel="noopener">New tab</a><button class="ho-close">Close</button></div><iframe title="Handoff"></iframe>';
+      document.body.append(box);
+      box.querySelector(".ho-close").addEventListener("click", () => { box.hidden = true; box.querySelector("iframe").src = "about:blank"; });
+    }
+    box.querySelector(".ho-newtab").href = href;
+    box.querySelector("iframe").src = href;
+    box.hidden = false;
+  }
+  // Leaving the studio while a version is captured stops it: ask first.
+  addEventListener("beforeunload", (e) => { if (hoBusy) { e.preventDefault(); e.returnValue = ""; } });
   async function drawHandoffPop(button) {
     const pop = $(".ho-pop");
     let versions = [];
     try { versions = (await fetch("/__ui-tweaks/handoff/versions", { cache: "no-store" }).then((r) => r.json())).versions || []; } catch {}
     const last = versions[versions.length - 1];
-    pop.innerHTML = '<h4>Handoff</h4><p>A read-only version of every screen for developers, PMs and QA: inspect measurements and colours, click through it, search it, and compare with the last version.</p><label class="ho-label">Version<input class="ho-name" maxlength="60" /></label><div class="cn-actions"><button class="cn-go primary ho-save">' + (hoBusy ? "Capturing…" : "Save a version") + '</button></div><div class="ho-list"></div>';
+    pop.innerHTML = '<h4>Handoff</h4><p>A read-only version of every screen for developers, PMs and QA: inspect measurements and colours, search it, and compare with the last version. Add your hosted app to let them click through it too.</p><label class="ho-label">Version<input class="ho-name" maxlength="60" /></label><label class="ho-label">Live app<input class="ho-app" type="url" placeholder="https://your-app.vercel.app (optional)" /></label><div class="cn-actions"><button class="cn-go primary ho-save">' + (hoBusy ? "Capturing…" : "Save a version") + '</button></div><div class="ho-list"></div>';
     pop.querySelector(".ho-name").value = "Version " + (versions.length + 1);
     pop.querySelector(".ho-save").disabled = hoBusy;
     const list = pop.querySelector(".ho-list");
@@ -3201,6 +3224,8 @@ export function studioPage(appPath) {
       row.querySelector("b").textContent = v.label;
       row.querySelector("span").textContent = new Date(v.at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) + (v.commit ? " · " + v.commit : "") + (v === last && versions.length > 1 ? " · " + v.changed + " changed, " + v.added + " new" : " · " + v.screens + " screens");
       row.querySelector(".ho-open").href = "/__ui-tweaks/handoff#v=" + encodeURIComponent(v.id);
+      // Over the studio, not instead of it (this tab keeps the studio; New tab opens it on its own).
+      row.querySelector(".ho-open").addEventListener("click", (e) => { e.preventDefault(); pop.hidden = true; openHandoffViewer(row.querySelector(".ho-open").href); });
       row.querySelector(".ho-dl").href = "/__ui-tweaks/handoff/export?version=" + encodeURIComponent(v.id);
       row.querySelector(".ho-pub").addEventListener("click", async () => {
         try {
@@ -3213,10 +3238,19 @@ export function studioPage(appPath) {
       list.append(row);
     }
     if (!versions.length) list.append(Object.assign(document.createElement("div"), { className: "ho-empty", textContent: "No versions yet." }));
-    pop.querySelector(".ho-save").addEventListener("click", () => saveHandoffVersion(pop.querySelector(".ho-name").value.trim(), button));
+    // The hosted app (a preview deploy, say), for clicking through it: kept for the next version too.
+    const app = pop.querySelector(".ho-app");
+    try { app.value = localStorage.getItem("ui-tweaks:handoff-app") || ""; } catch {}
+    app.addEventListener("keydown", (e) => e.stopPropagation());
+    pop.querySelector(".ho-save").addEventListener("click", () => {
+      const url = app.value.trim();
+      if (url && !/^https?:[/][/]/i.test(url)) return note("The live app link starts with https://");
+      try { localStorage.setItem("ui-tweaks:handoff-app", url); } catch {}
+      saveHandoffVersion(pop.querySelector(".ho-name").value.trim(), button, url);
+    });
     pop.querySelector(".ho-name").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") pop.querySelector(".ho-save").click(); });
   }
-  async function saveHandoffVersion(label, button) {
+  async function saveHandoffVersion(label, button, appUrl) {
     if (hoBusy) return;
     hoBusy = true;
     drawHandoffPop(button);
@@ -3234,7 +3268,7 @@ export function studioPage(appPath) {
         frame.remove();
       }
       if (!screens.length) throw new Error("no screen could be captured");
-      const res = await fetch("/__ui-tweaks/handoff", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label, screens }) });
+      const res = await fetch("/__ui-tweaks/handoff", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label, screens, appUrl }) });
       const out = await res.json();
       if (!res.ok) throw new Error(out.error || res.statusText);
       note("Saved “" + out.version.label + "”: " + screens.length + " screens" + (out.changed || out.added ? ", " + out.changed + " changed and " + out.added + " new since the last version" : "") + ".");

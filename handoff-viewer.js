@@ -1,6 +1,6 @@
 // Handoff viewer: a read-only canvas of a version's screens. Inspect (measurements, colours, type, spacing,
-// distances with Alt), Interact (a prototype that follows the recorded taps), search with ⌘/Ctrl+F, and
-// before/after for the screens a version changed. The screens are static snapshots in same-origin iframes.
+// distances with Alt), search with ⌘/Ctrl+F, before/after for the screens a version changed, and a link to
+// the hosted app (when the version has one) to click through it. The screens are static snapshots.
 (async () => {
   const $ = (s, el = document) => el.querySelector(s);
   const h = (tag, props = {}, ...kids) => { const el = Object.assign(document.createElement(tag), props); for (const k of kids) el.append(k); return el; };
@@ -14,7 +14,6 @@
   const params = new URLSearchParams(location.hash.slice(1));
   const S = {
     vi: Math.max(0, D.versions.findIndex((v) => v.id === (params.get("v") || D.start))) >= 0 ? D.versions.findIndex((v) => v.id === (params.get("v") || D.start)) : D.versions.length - 1,
-    mode: "inspect",
     cam: { x: 40, y: 80, z: 0.3 },
     sel: null, // { sid, el }
     hover: null,
@@ -46,8 +45,7 @@
     <select class="hf-version" title="Version"></select>
     <span class="hf-meta"></span>
     <span class="hf-grow"></span>
-    <div class="hf-seg hf-mode"><button data-mode="inspect" title="Inspect (I): click anything for its measurements, colours and type">Inspect</button><button data-mode="interact" title="Interact (P): click through the screens like the app">Interact</button></div>
-    <span class="hf-sep"></span>
+    <a class="hf-btn hf-app" target="_blank" rel="noopener" hidden title="The app itself, hosted, to click through it">Open the app ↗</a>
     <button class="hf-btn hf-find" title="Search text, colours and elements on every screen">Search <kbd>${/Mac/.test(navigator.platform) ? "⌘" : "Ctrl"} F</kbd></button>
     <button class="hf-btn hf-outlines" title="Outline every element on the screens (O)">Outlines</button>
     <button class="hf-btn hf-fit" title="Fit every screen (⇧1)">Fit</button>
@@ -58,7 +56,7 @@
       <div class="hf-list-head"><input type="search" placeholder="Filter screens" /><label class="hf-check"><input type="checkbox" class="hf-changed" /> Changed in this version</label></div>
       <div class="hf-items"></div>
     </aside>
-    <main class="hf-stage"><div class="hf-world"></div><div class="hf-proto" hidden></div></main>
+    <main class="hf-stage"><div class="hf-world"></div></main>
     <aside class="hf-inspect"></aside>
   </div>
   <div class="hf-toast"></div>`;
@@ -73,6 +71,9 @@
     const changed = v.screens.filter((s) => statusOf(s) !== "same").length;
     $(".hf-meta").textContent = [when(v.at), v.branch && v.commit ? v.branch + " @ " + v.commit + (v.dirty ? " + changes" : "") : "", prevVersion() ? (changed ? changed + " changed since " + prevVersion().label : "No changes since " + prevVersion().label) : v.screens.length + " screens"].filter(Boolean).join(" · ");
     $(".hf-meta").title = v.note || "";
+    const app = $(".hf-app");
+    app.hidden = !v.appUrl;
+    if (v.appUrl) app.href = v.appUrl;
   }
   $(".hf-version").addEventListener("change", (e) => { S.vi = Number(e.target.value); S.sel = null; S.matches = []; build(); drawVersions(); drawList(); drawPanel(); fit(); syncHash(); });
 
@@ -88,7 +89,7 @@
       const b = h("button", { className: "hf-item" + (S.sel && S.sel.sid === s.id ? " on" : ""), title: s.url });
       b.append(h("span", { className: "nm", textContent: s.name || s.url }));
       if (st !== "same") b.append(h("span", { className: "hf-badge " + st, textContent: st === "new" ? "New" : "Changed" }));
-      b.addEventListener("click", () => { focusScreen(s.id); if (S.mode === "interact") openProto(s.id); });
+      b.addEventListener("click", () => focusScreen(s.id));
       box.append(b);
     }
   }
@@ -107,7 +108,7 @@
       const el = h("div", { className: "hf-card" + (st === "changed" ? " changed" : "") });
       Object.assign(el.style, { left: s.x + "px", top: s.y + "px" });
       const head = h("div", { className: "hf-card-head" });
-      head.append(h("span", { className: "nm", textContent: s.name || s.url }), h("span", { className: "sz", textContent: w + "×" + hh }));
+      head.append(h("span", { className: "nm", textContent: s.name || s.url }), h("span", { className: "sz", textContent: s.reached ? "reached by tapping · " + w + "×" + hh : w + "×" + hh }));
       if (st !== "same") head.append(h("span", { className: "hf-badge " + st, textContent: st === "new" ? "New" : "Changed" }));
       if (st === "changed") { const c = h("button", { textContent: "Compare", title: "This screen before and after this version" }); c.addEventListener("click", () => openCompare(s)); head.append(c); }
       const box = h("div", { className: "hf-frame" });
@@ -134,12 +135,11 @@
     doc.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (S.mode !== "inspect") return;
-      select(card.s.id, e.target.nodeType === 1 ? e.target : e.target.parentElement);
+            select(card.s.id, e.target.nodeType === 1 ? e.target : e.target.parentElement);
     }, true);
     doc.addEventListener("submit", (e) => e.preventDefault(), true);
     doc.addEventListener("mousemove", (e) => {
-      if (S.mode !== "inspect" || hand) return;
+      if (hand) return;
       const t = e.target.nodeType === 1 ? e.target : e.target.parentElement;
       S.alt = e.altKey;
       if (!S.hover || S.hover.el !== t || S.hover.sid !== card.s.id || S.altDrawn !== e.altKey) { S.hover = { sid: card.s.id, el: t }; S.altDrawn = e.altKey; drawMarks(); }
@@ -182,7 +182,6 @@
   }
   function onWheel(e) {
     e.preventDefault();
-    if (S.mode === "interact") return;
     const r = stage.getBoundingClientRect();
     if (e.ctrlKey || e.metaKey) zoomAt(S.cam.z * Math.exp(-Math.max(-25, Math.min(25, e.deltaY)) * 0.01), e.clientX - r.left, e.clientY - r.top);
     else { S.cam.x -= e.deltaX; S.cam.y -= e.deltaY; applyCam(); }
@@ -202,7 +201,7 @@
     target.addEventListener("pointerup", up);
   }
   stage.addEventListener("pointerdown", (e) => {
-    if (S.mode === "interact" || e.target.closest(".hf-card-head button")) return;
+    if (e.target.closest(".hf-card-head button")) return;
     if (e.target === stage || e.target === world || hand) startPan(e, null);
   });
   function focusScreen(sid, el) {
@@ -336,11 +335,10 @@
         const act = h("div", { className: "hf-sec" }, h("div", { className: "hf-actions" }));
         const a = act.firstChild;
         const link = h("button", { textContent: "Copy link to this screen" }); link.addEventListener("click", () => copy(location.href, "the link")); a.append(link);
-        const proto = h("button", { textContent: "Interact from here" }); proto.addEventListener("click", () => { setMode("interact"); openProto(s.id); }); a.append(proto);
         if (statusOf(s) === "changed") { const cmp = h("button", { textContent: "Compare with " + prevVersion().label }); cmp.addEventListener("click", () => openCompare(s)); a.append(cmp); }
         panel.append(act);
       } else {
-        box.innerHTML = "<b>Inspect</b>Click anything on a screen for its size, spacing, colours and type. Hold <kbd>Alt</kbd> and point at another element for the distance between them. Click a value to copy it.<br><br><kbd>" + (/Mac/.test(navigator.platform) ? "⌘" : "Ctrl") + " F</kbd> searches text, colours and elements on every screen. <kbd>P</kbd> switches to Interact to click through them like the app.";
+        box.innerHTML = "<b>Inspect</b>Click anything on a screen for its size, spacing, colours and type. Hold <kbd>Alt</kbd> and point at another element for the distance between them. Click a value to copy it.<br><br><kbd>" + (/Mac/.test(navigator.platform) ? "⌘" : "Ctrl") + " F</kbd> searches text, colours and elements on every screen." + (version().appUrl ? " <b style=\"display:inline;margin:0;color:inherit;font-weight:600\">Open the app ↗</b> (top right) is the real thing, to click through." : "");
         panel.append(box);
       }
       return;
@@ -491,7 +489,6 @@
       S.matches = all ? results.slice(0, 300) : [results[cur]];
       S.matchCur = results[cur];
       close();
-      if (S.mode === "interact") setMode("inspect");
       const m = results[cur];
       focusScreen(m.sid, m.el);
       select(m.sid, m.el);
@@ -562,69 +559,6 @@
     return out;
   }
 
-  // ---------- interact: a prototype that follows the flow map ----------
-  const proto = $(".hf-proto");
-  const P = { sid: null, back: [] };
-  const flowsFrom = (s) => (D.flows || []).filter((f) => f.from && f.from.url === s.url && (!f.from.heading || !s.heading || f.from.heading === s.heading));
-  const screenFor = (node) => {
-    const list = version().screens.filter((x) => x.url === node.url);
-    return list.find((x) => x.heading && x.heading === node.heading) || (list.length === 1 ? list[0] : null);
-  };
-  const labelOf = (el) => (el.getAttribute("aria-label") || el.getAttribute("title") || el.innerText || el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80);
-  function openProto(sid) {
-    const s = version().screens.find((x) => x.id === sid) || shown()[0];
-    if (!s) return;
-    if (P.sid && P.sid !== s.id) P.back.push(P.sid);
-    P.sid = s.id;
-    proto.hidden = false;
-    proto.innerHTML = `<div class="hf-proto-bar"><button class="hf-btn p-back" title="Back (⌫)">← Back</button><b></b><span></span><span class="hf-grow"></span><button class="hf-btn p-hot" title="Show what you can tap (H)">Hotspots</button><button class="hf-btn p-exit" title="Back to the canvas (Esc)">Canvas</button></div><div class="hf-proto-stage"><div class="hf-proto-frame"><iframe></iframe><div class="hf-marks"></div></div></div>`;
-    $("b", proto).textContent = s.name || s.url;
-    const hops = flowsFrom(s);
-    $(".hf-proto-bar > span", proto).textContent = hops.length ? hops.length + " recorded tap" + (hops.length === 1 ? "" : "s") + " from here" : "No taps recorded from this screen yet";
-    $(".p-back", proto).disabled = !P.back.length;
-    $(".p-back", proto).addEventListener("click", () => { const b = P.back.pop(); if (b) { P.sid = null; openProto(b); P.back.pop(); } });
-    $(".p-exit", proto).addEventListener("click", () => setMode("inspect"));
-    $(".p-hot", proto).addEventListener("click", () => hotspots(true));
-    const fr = $(".hf-proto-frame", proto), ifr = $("iframe", proto);
-    const [w, hh] = s.size;
-    const stageR = $(".hf-proto-stage", proto).getBoundingClientRect();
-    const z = Math.min(1, (stageR.width - 48) / w, (stageR.height - 48) / hh);
-    Object.assign(fr.style, { width: w + "px", height: hh + "px", transform: "scale(" + z + ")", margin: (-(1 - z) * hh) / 2 + "px " + (-(1 - z) * w) / 2 + "px" });
-    Object.assign(ifr.style, { width: w + "px", height: hh + "px" });
-    ifr.addEventListener("load", () => {
-      const doc = ifr.contentDocument;
-      doc.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        for (let n = e.target.nodeType === 1 ? e.target : e.target.parentElement; n && n !== doc.body; n = n.parentElement) {
-          const label = labelOf(n);
-          const hop = hops.find((f) => f.via && label && (label === f.via || label.startsWith(f.via)));
-          if (hop) { const to = screenFor(hop.to); if (to) return openProto(to.id); toast("“" + hop.via + "” goes to a screen that isn’t in this version"); return; }
-        }
-        hotspots(false);
-      }, true);
-      doc.addEventListener("submit", (e) => e.preventDefault(), true);
-      doc.addEventListener("keydown", onKey);
-    });
-    ifr.srcdoc = screenHtml(s.hash);
-    // Where you can tap: the elements whose label matches a recorded tap.
-    function hotspots(stay) {
-      const doc = ifr.contentDocument, marks = $(".hf-marks", fr);
-      if (!doc) return;
-      marks.innerHTML = "";
-      proto.classList.toggle("show-hot", stay && !proto.classList.contains("show-hot"));
-      for (const f of hops) {
-        const el = [...doc.body.querySelectorAll("a, button, [role=button], [role=link], [role=tab], label, li, div, span")].find((n) => labelOf(n) === f.via && n.getClientRects().length);
-        if (!el) continue;
-        const r = el.getBoundingClientRect();
-        const b = h("div", { className: "hf-hot", title: "Goes to " + ((screenFor(f.to) || {}).name || f.to.heading || f.to.url) });
-        Object.assign(b.style, { left: r.left - 3 + "px", top: r.top - 3 + "px", width: r.width + 6 + "px", height: r.height + 6 + "px" });
-        marks.append(b);
-      }
-      if (!marks.children.length) toast("No taps recorded from this screen: click through it in the studio's Interact mode to record them");
-    }
-  }
-
   // ---------- compare: a changed screen before and after ----------
   function openCompare(s) {
     const p = prevVersion();
@@ -674,19 +608,7 @@
     draw("side");
   }
 
-  // ---------- modes and keys ----------
-  function setMode(m) {
-    S.mode = m;
-    for (const b of document.querySelectorAll(".hf-mode button")) b.classList.toggle("on", b.dataset.mode === m);
-    proto.hidden = m !== "interact";
-    world.hidden = m === "interact";
-    $(".hf-body").classList.toggle("no-panel", m === "interact");
-    if (m === "interact") openProto((S.sel && S.sel.sid) || (shown()[0] || {}).id);
-    else { P.back = []; P.sid = null; }
-    S.hover = null;
-    drawMarks();
-  }
-  for (const b of document.querySelectorAll(".hf-mode button")) b.addEventListener("click", () => setMode(b.dataset.mode));
+  // ---------- keys ----------
   $(".hf-find").addEventListener("click", openSearch);
   $(".hf-fit").addEventListener("click", () => fit());
   $(".hf-outlines").addEventListener("click", () => { S.outlines = !S.outlines; $(".hf-outlines").classList.toggle("on", S.outlines); drawMarks(); });
@@ -696,12 +618,8 @@
     if (typing) return;
     if (e.code === "Space" && !e.repeat) { e.preventDefault(); hand = true; stage.classList.add("hand"); }
     if (e.key === "Alt") { S.alt = true; drawMarks(); }
-    if (e.key === "Escape") { if ($(".hf-compare")) return $(".hf-compare").remove(); if (S.mode === "interact") return setMode("inspect"); S.matches = []; S.sel = null; for (const c of cards.values()) c.el.classList.remove("on"); drawList(); drawPanel(); drawMarks(); syncHash(); }
-    if (e.key.toLowerCase() === "p" && !e.metaKey && !e.ctrlKey) setMode(S.mode === "interact" ? "inspect" : "interact");
-    if (e.key.toLowerCase() === "i" && !e.metaKey && !e.ctrlKey) setMode("inspect");
+    if (e.key === "Escape") { if ($(".hf-compare")) return $(".hf-compare").remove(); S.matches = []; S.sel = null; for (const c of cards.values()) c.el.classList.remove("on"); drawList(); drawPanel(); drawMarks(); syncHash(); }
     if (e.key.toLowerCase() === "o" && !e.metaKey && !e.ctrlKey) $(".hf-outlines").click();
-    if (e.key.toLowerCase() === "h" && S.mode === "interact") { const b = $(".p-hot"); if (b) b.click(); }
-    if (e.key === "Backspace" && S.mode === "interact") { const b = $(".p-back"); if (b && !b.disabled) b.click(); }
     if (e.shiftKey && e.code === "Digit1") fit();
     if ((e.metaKey || e.ctrlKey) && (e.key === "=" || e.key === "+")) { e.preventDefault(); zoomAt(S.cam.z * 1.25, stage.clientWidth / 2, stage.clientHeight / 2); }
     if ((e.metaKey || e.ctrlKey) && e.key === "-") { e.preventDefault(); zoomAt(S.cam.z / 1.25, stage.clientWidth / 2, stage.clientHeight / 2); }
@@ -719,7 +637,6 @@
   drawList();
   build();
   drawPanel();
-  setMode("inspect");
   requestAnimationFrame(() => {
     const sid = params.get("s");
     if (sid && cards.has(sid)) {

@@ -300,6 +300,14 @@ Press **Send to Claude**. The toast tells you what happened, e.g. "Applied 3 dir
 
 **One commit per Send (optional).** With `uiTweaks({ commit: true })` (or `serve.mjs --commit`), what a Send writes directly is committed as `UI tweak: .card padding-top`. Only files that had no uncommitted changes are committed, so your work in progress is never swept in; otherwise the files are written and left uncommitted, and the toast says why. Haiku's edits and **Undo apply** are not committed.
 
+### Send to Paper
+
+Bring what's in your app into [Paper](https://paper.design) as editable layers: a single element (the **send** icon in its header, or **Send to Paper** in the right-click menu), or the whole screen with nothing selected (**Send this screen to Paper** in the menu).
+
+The panel captures it exactly as it renders, with every style inline from what the browser computed and no classes or scripts. It converts it to what Paper takes: block flows become flex columns, grids become flex rows with their cell widths, and fixed or absolute things are placed against their parent. Layers are named after components and classes. Images from your project become local files Paper can read, and a video shows its current frame.
+
+Your Claude Code session (with the `ui-tweaks` mod) then places it in **the Paper file you have open**, as a new artboard at the captured size, using Paper's MCP tools: it turns any leftover margins into padding or gap, checks a screenshot, and tells you when it's in. Paper's desktop app needs to be open with its MCP server connected to Claude Code.
+
 ### Design system page
 
 **Tokens** in the studio toolbar, or **◧** in the panel, opens `/__ui-tweaks/system`: every design token (CSS custom property) your stylesheets declare, laid out for designers.
@@ -370,6 +378,7 @@ All inside `<project>/.ui-tweaks/`, which ignores itself in git (except `canvas.
 | `history.json`, `history/slot-N.json` | Undo history: file copies for the last 10 applies |
 | `lock.json` | Which session is applying right now |
 | `comments.json` | Comments pinned to elements (kept in git) |
+| `paper/` | Elements and screens captured for Send to Paper (last 20), and their inline images |
 | `server.json` | The dev server's address (also registered in `~/.ui-tweaks/servers/`), so the mod finds the project even when its session started in another folder |
 
 ## Setting it up for a team

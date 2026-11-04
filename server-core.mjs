@@ -5,6 +5,7 @@ import { updateStatus } from "./update.mjs";
 import { adoptToken, createToken, scanTokens, setToken } from "./tokens.mjs";
 import { systemPage } from "./system-page.mjs";
 import { addAsk, askStatus, cancelAsk } from "./asks.mjs";
+import { sendToPaper } from "./paper.mjs";
 import { jsxAt, toTailwind } from "./code.mjs";
 import { findRoutes as findAppRoutes } from "./routes.mjs";
 import { listRefs, startVersion, stopVersion, versionStatus } from "./versions.mjs";
@@ -2815,6 +2816,14 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
       }
       if (req.method === "POST" && url.pathname === `${PREFIX}/tailwind`) {
         return send(res, 200, toTailwind(JSON.parse(await readBody(req)).styles));
+      }
+      if (req.method === "POST" && url.pathname === `${PREFIX}/paper`) {
+        try {
+          const origin = `http://${req.headers.host || "localhost"}`;
+          return send(res, 200, { ok: true, ask: await sendToPaper(root, JSON.parse(await readBody(req, 2_000_000)), origin) });
+        } catch (error) {
+          return send(res, error.status || 500, { error: error.message });
+        }
       }
       if (req.method === "POST" && url.pathname === `${PREFIX}/ask`) {
         try {

@@ -4302,6 +4302,251 @@
     }
   }
 
+  // ---------- send to Paper ----------
+  // The element (or the whole screen) as Paper-ready HTML: every style inline from what the browser computed,
+  // no classes or scripts, block flows turned into flex columns, fixed things placed absolutely. The dev
+  // server saves it and Claude Code writes it into the open Paper file with Paper's own tools.
+  const PAPER_TEXT = ["color", "font-family", "font-size", "font-weight", "font-style", "line-height", "letter-spacing", "text-align", "text-transform", "text-decoration-line", "white-space"];
+  const PAPER_BOX = {
+    "flex-direction": "row", "flex-wrap": "nowrap", "justify-content": "normal", "align-items": "normal", "align-self": "auto", "align-content": "normal",
+    "row-gap": "normal", "column-gap": "normal", "flex-grow": "0", "flex-shrink": "1", "flex-basis": "auto",
+    "padding-top": "0px", "padding-right": "0px", "padding-bottom": "0px", "padding-left": "0px",
+    "margin-top": "0px", "margin-right": "0px", "margin-bottom": "0px", "margin-left": "0px",
+    "background-color": "rgba(0, 0, 0, 0)", "background-image": "none", "box-shadow": "none", "opacity": "1",
+    "backdrop-filter": "none", "filter": "none", "overflow-x": "visible", "overflow-y": "visible", "z-index": "auto", "object-fit": "fill",
+  };
+  const PAPER_TEXT_DEFAULT = { "font-style": "normal", "line-height": "normal", "letter-spacing": "normal", "text-align": "start", "text-transform": "none", "text-decoration-line": "none", "white-space": "normal" };
+  // A video's current frame (or its poster) as an image.
+  function videoFrame(v) {
+    try {
+      if (v.readyState >= 2 && v.videoWidth) {
+        const c = document.createElement("canvas");
+        const scale = Math.min(1, 1600 / v.videoWidth);
+        c.width = Math.round(v.videoWidth * scale);
+        c.height = Math.round(v.videoHeight * scale);
+        c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+        return c.toDataURL("image/jpeg", 0.85);
+      }
+    } catch {}
+    return v.poster || "";
+  }
+  // How tall the element's own text runs are (two lines or more means its width decides the wrapping).
+  function textHeight(el) {
+    const range = document.createRange();
+    let top = Infinity, bottom = -Infinity;
+    for (const n of el.childNodes) {
+      if (n.nodeType !== 3 || !n.textContent.trim()) continue;
+      range.selectNodeContents(n);
+      const r = range.getBoundingClientRect();
+      top = Math.min(top, r.top);
+      bottom = Math.max(bottom, r.bottom);
+    }
+    return bottom > top ? bottom - top : 0;
+  }
+  function paperHtml(root) {
+    const rootBox = root.getBoundingClientRect();
+    const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const abs = (u) => { try { return new URL(u, location.href).href; } catch { return u; } };
+    const px = (n) => Math.round(n * 100) / 100 + "px";
+    // Layer names: a component's name on its root element, else the first class (or id), made readable.
+    const compOf = (n) => { const r = n && n !== document.body ? reactInfo(n) : null; return (r && r.components && r.components[0] && r.components[0].name) || ""; };
+    const nameOf = (el) => {
+      const comp = compOf(el);
+      if (comp && comp !== compOf(el.parentElement)) return comp;
+      const raw = (el.classList[0] || el.id || "").replace(/[-_]+/g, " ").trim();
+      return raw ? raw[0].toUpperCase() + raw.slice(1) : "";
+    };
+    let count = 0;
+    const placed = (n) => { const p = getComputedStyle(n).position; return p === "absolute" || p === "fixed"; };
+    // Absolute things are placed against their parent's padding box (the parent is made relative).
+    const offset = (box, el) => {
+      const parent = el.parentElement, pb = parent.getBoundingClientRect(), pcs = getComputedStyle(parent);
+      return `left:${px(box.left - pb.left - parseFloat(pcs.borderLeftWidth))};top:${px(box.top - pb.top - parseFloat(pcs.borderTopWidth))}`;
+    };
+    const walk = (el, parentCs, depth) => {
+      if (isOwn(el) || /^(script|style|link|template|noscript|meta|head|title|iframe|object|embed)$/i.test(el.tagName)) return "";
+      const cs = getComputedStyle(el);
+      if (cs.display === "none" || cs.visibility === "hidden" || cs.visibility === "collapse") return "";
+      if (++count > 4000 || depth > 40) return "";
+      const tag = el.tagName.toLowerCase();
+      const box = el.getBoundingClientRect();
+      const st = [];
+      const set = (p, v) => st.push(p + ":" + v);
+      // An icon: kept as SVG, its currentColor resolved.
+      if (tag === "svg") {
+        const clone = el.cloneNode(true);
+        for (const n of [clone, ...clone.querySelectorAll("*")]) for (const a of [...n.attributes]) if (/^(data-|class$|style$|on)/i.test(a.name)) n.removeAttribute(a.name);
+        clone.setAttribute("width", Math.round(box.width));
+        clone.setAttribute("height", Math.round(box.height));
+        const color = cs.color;
+        let svg = clone.outerHTML.replace(/currentColor/g, color);
+        if (cs.fill && cs.fill !== "none" && !clone.getAttribute("fill")) svg = svg.replace(/^<svg/, `<svg fill="${cs.fill.replace(/currentcolor/i, color)}"`);
+        if (placed(el) && el !== root) svg = svg.replace(/^<svg/, `<svg style="position:absolute;${offset(box, el)}"`);
+        return svg;
+      }
+      // Layout: flex stays flex; a block flow becomes a flex column; inline things become text spans.
+      const flexish = /flex/.test(cs.display);
+      const inline = /^inline(?!-(flex|grid|block))/.test(cs.display) && el !== root;
+      const textOnly = [...el.childNodes].every((n) => n.nodeType === 3 || (n.nodeType === 1 && /^inline(?!-(flex|grid|block))/.test(getComputedStyle(n).display)) || n.nodeType === 8);
+      const grid = /grid/.test(cs.display);
+      if (flexish) set("display", "flex");
+      else if (grid) {
+        // A grid becomes flex: one row stays a row; more rows wrap. Its children keep their cell widths.
+        const tops = new Set([...el.children].filter((c) => !placed(c)).map((c) => Math.round(c.getBoundingClientRect().top)));
+        set("display", "flex");
+        if (tops.size > 1) set("flex-wrap", "wrap");
+        if (cs.alignItems !== "normal") set("align-items", cs.alignItems);
+        if (cs.justifyContent !== "normal") set("justify-content", cs.justifyContent);
+        // place-items: centre: the cells' own centring, as the flex row's.
+        else if (/center/.test(cs.justifyItems) && tops.size <= 1) set("justify-content", "center");
+      }
+      else if (!inline && !textOnly && tag !== "img") { set("display", "flex"); set("flex-direction", "column"); }
+      for (const [p, d] of Object.entries(PAPER_BOX)) {
+        const v = cs.getPropertyValue(p);
+        if (!v || v === d) continue;
+        // Pairs that agree go out as one: gap, overflow.
+        if (p === "column-gap" && v === cs.rowGap) continue;
+        if (p === "overflow-y" && v === cs.overflowX) continue;
+        if (p === "row-gap" && v === cs.columnGap && (flexish || /grid/.test(cs.display))) { set("gap", v); continue; }
+        if (p === "overflow-x" && v === cs.overflowY) { set("overflow", v); continue; }
+        if ((p === "flex-direction" || p === "flex-wrap" || p === "justify-content" || p === "align-items" || p === "align-content") && !flexish) continue;
+        if ((p === "row-gap" || p === "column-gap") && !flexish && !grid) continue;
+        if (p.startsWith("margin") && inline) continue;
+        set(p, v);
+      }
+      // A block flow's spacing: equal gaps between its children become the column's gap.
+      if (!flexish && !/grid/.test(cs.display) && !textOnly) {
+        const kids = [...el.children].filter((c) => !isOwn(c) && getComputedStyle(c).display !== "none" && !/absolute|fixed/.test(getComputedStyle(c).position));
+        const gaps = kids.slice(1).map((c, i) => Math.round(c.getBoundingClientRect().top - kids[i].getBoundingClientRect().bottom));
+        if (gaps.length && gaps.every((g) => g === gaps[0]) && gaps[0] > 0) set("gap", gaps[0] + "px");
+        set("align-items", "stretch");
+      }
+      // Borders and corners, short when all sides agree.
+      const sides = ["top", "right", "bottom", "left"].map((s) => [cs.getPropertyValue(`border-${s}-width`), cs.getPropertyValue(`border-${s}-style`), cs.getPropertyValue(`border-${s}-color`)]);
+      if (sides.every((s) => s.join() === sides[0].join())) { if (sides[0][1] !== "none" && parseFloat(sides[0][0])) set("border", sides[0].join(" ")); }
+      else ["top", "right", "bottom", "left"].forEach((s, i) => { if (sides[i][1] !== "none" && parseFloat(sides[i][0])) set(`border-${s}`, sides[i].join(" ")); });
+      const corners = ["top-left", "top-right", "bottom-right", "bottom-left"].map((c) => cs.getPropertyValue(`border-${c}-radius`));
+      if (corners.some((c) => parseFloat(c))) set("border-radius", corners.every((c) => c === corners[0]) ? corners[0] : corners.join(" "));
+      if (cs.backgroundImage !== "none") {
+        // Layered backgrounds list each value per layer: left out when every layer has the default.
+        const allAre = (v, d) => v.split(/,(?![^(]*\))/).every((x) => x.trim() === d);
+        if (!allAre(cs.backgroundSize, "auto")) set("background-size", cs.backgroundSize);
+        if (!allAre(cs.backgroundPosition, "0% 0%")) set("background-position", cs.backgroundPosition);
+        if (!allAre(cs.backgroundRepeat, "repeat")) set("background-repeat", cs.backgroundRepeat);
+      }
+      // Placement: absolute and fixed things placed against the captured root.
+      const absolute = placed(el) && el !== root;
+      if (absolute) { set("position", "absolute"); st.push(offset(box, el)); }
+      else if (el === root || cs.position === "relative" || cs.position === "sticky" || [...el.children].some(placed)) set("position", "relative");
+      // Sizes: the root, media and decorative boxes keep theirs; so does wrapping text and anything placed absolutely.
+      const media = tag === "img" || tag === "video" || tag === "canvas" || tag === "picture";
+      const hasText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+      const empty = !el.children.length && !hasText;
+      const inGrid = parentCs && /grid/.test(parentCs.display) && !absolute;
+      if (el === root || media || empty || absolute) { set("width", px(box.width)); set("height", px(box.height)); }
+      else if (inGrid) { set("width", px(box.width)); set("height", px(box.height)); }
+      else if (hasText && !inline && textHeight(el) > (parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2) * 1.6 && box.height <= textHeight(el) + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + 2) set("width", px(box.width));
+      else if (!inline && parentCs) {
+        // Wider than its content and not just stretched to the parent: the width is part of the design
+        // (a full-width button in a centred column, a sidebar in a row).
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+        const hug = range.getBoundingClientRect().width + pad;
+        const parent = el.parentElement.getBoundingClientRect();
+        const pcs = parentCs;
+        const inner = parent.width - parseFloat(pcs.paddingLeft) - parseFloat(pcs.paddingRight) - parseFloat(pcs.borderLeftWidth) - parseFloat(pcs.borderRightWidth);
+        const parentColumn = !/flex|grid/.test(pcs.display) || /column/.test(pcs.flexDirection);
+        const stretched = parentColumn && Math.abs(box.width - inner) < 1 && (!/flex/.test(pcs.display) || /normal|stretch/.test(cs.alignSelf === "auto" ? pcs.alignItems : cs.alignSelf));
+        const grows = !parentColumn && parseFloat(cs.flexGrow) > 0;
+        // Children that grow along a row fill whatever width it has, so the width isn't its content's.
+        const rowFills = /flex/.test(cs.display) && !/column/.test(cs.flexDirection) && [...el.children].some((c) => parseFloat(getComputedStyle(c).flexGrow) > 0);
+        if ((box.width > hug + 2 || rowFills) && !stretched && !grows) set("width", px(box.width));
+        // Taller than its content (a min-height, a fixed height), unless a row stretches it or it grows in a column.
+        const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+        const hugY = range.getBoundingClientRect().height + padY;
+        const inRow = /flex/.test(pcs.display) && /row/.test(pcs.flexDirection);
+        const stretchedY = inRow && /normal|stretch/.test(cs.alignSelf === "auto" ? pcs.alignItems : cs.alignSelf);
+        const growsY = parentColumn && /flex/.test(pcs.display) && parseFloat(cs.flexGrow) > 0;
+        if (box.height > hugY + 2 && !stretchedY && !growsY) set("height", px(box.height));
+        // A narrower child of a block flow (which becomes a stretching column) that sat centred.
+        if (!/flex|grid/.test(pcs.display) && box.width < inner - 1) {
+          const left = box.left - parent.left - parseFloat(pcs.paddingLeft) - parseFloat(pcs.borderLeftWidth);
+          if (Math.abs(left - (inner - box.width - left)) < 2) set("align-self", "center");
+          else if (left > 1) set("align-self", "flex-end");
+          else set("align-self", "flex-start");
+        }
+      }
+      // Text styles: where they differ from the parent's (and all of them on the root).
+      for (const p of PAPER_TEXT) {
+        const v = cs.getPropertyValue(p);
+        if (parentCs ? v === parentCs.getPropertyValue(p) : PAPER_TEXT_DEFAULT[p] === v) continue;
+        set(p, v);
+      }
+      const name = nameOf(el);
+      const layer = name ? ` layer-name="${esc(name)}"` : "";
+      const style = st.length ? ` style="${esc(st.join(";"))}"` : "";
+      if (media) {
+        const src = tag === "img" ? (el.currentSrc || el.src) : tag === "video" ? videoFrame(el) : "";
+        if (src) return `<img${layer} src="${esc(abs(src))}" alt="${esc(el.alt || "")}"${style}>`;
+        return `<div${layer}${style}></div>`;
+      }
+      // Form fields: their value (or the placeholder, dimmed) as text.
+      if (tag === "input" || tag === "textarea" || tag === "select") {
+        if (/^(checkbox|radio)$/.test(el.type)) return `<div${layer}${style}></div>`;
+        const val = tag === "select" ? (el.selectedOptions[0] ? el.selectedOptions[0].text : "") : el.type === "password" && el.value ? "•".repeat(Math.min(12, el.value.length)) : el.value;
+        const ph = !val && el.placeholder;
+        const phColor = ph ? getComputedStyle(el, "::placeholder").color : "";
+        return `<div${layer}${style}><span${ph ? ` style="color:${esc(phColor)}"` : ""}>${esc(val || el.placeholder || "")}</span></div>`;
+      }
+      let inner = "";
+      for (const n of el.childNodes) {
+        if (n.nodeType === 3) { const t = n.textContent.replace(/\s+/g, " "); if (t.trim() || (textOnly && t)) inner += esc(cs.whiteSpace.startsWith("pre") ? n.textContent : t); }
+        else if (n.nodeType === 1) inner += n.tagName === "BR" ? "<br>" : walk(n, cs, depth + 1);
+      }
+      if (!inner && !st.length) return "";
+      const out = inline ? "span" : /^h[1-6]$|^p$|^pre$/.test(tag) ? tag : "div";
+      return `<${out}${layer}${style}>${inner}</${out}>`;
+    };
+    // The root carries its background down from the page when it has none of its own.
+    let html = walk(root, null, 0);
+    if (getComputedStyle(root).backgroundColor === "rgba(0, 0, 0, 0)") {
+      const bg = getComputedStyle(document.body).backgroundColor !== "rgba(0, 0, 0, 0)" ? getComputedStyle(document.body).backgroundColor : getComputedStyle(document.documentElement).backgroundColor;
+      if (bg && bg !== "rgba(0, 0, 0, 0)") html = html.replace(/style="/, `style="background-color:${bg};`);
+    }
+    return { html, width: Math.round(rootBox.width), height: Math.round(Math.max(rootBox.height, root === document.body ? root.scrollHeight : 0)), nodes: count };
+  }
+  // The whole screen for Paper: from the body down while there's one visible child filling its parent
+  // (#root, the app shell), so headers and tab bars come along.
+  function paperScreenRoot() {
+    let n = document.body;
+    for (let depth = 0; depth < 10; depth++) {
+      const kids = [...n.children].filter((c) => !isOwn(c) && !/^(script|style|link|template|noscript)$/i.test(c.tagName) && shownEl(c));
+      if (kids.length !== 1) break;
+      const a = kids[0].getBoundingClientRect(), b = n === document.body ? { width: innerWidth, height: innerHeight } : n.getBoundingClientRect();
+      if (a.width < b.width * 0.95 || a.height < Math.min(b.height, innerHeight) * 0.95) break;
+      n = kids[0];
+    }
+    return n;
+  }
+  async function sendToPaper(el) {
+    const target = el || paperScreenRoot();
+    const d = describe(target);
+    const title = el ? (d.react && d.react.components && d.react.components[0] ? d.react.components[0].name : d.classes[0] || d.tag) : (document.title || "Screen") + " · " + location.pathname;
+    try {
+      const cap = paperHtml(target);
+      if (cap.html.length > 900000) return toast("That's too big to send in one go: pick a smaller part");
+      const res = await fetch(API + "/paper", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ html: cap.html, width: cap.width, height: cap.height, title, whole: !el, page: { url: here(), path: location.pathname } }) });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error || res.statusText);
+      state.asks = [...(state.asks || []), { id: out.ask.id, kind: "paper", instruction: `Send ${el ? "“" + title + "”" : "this screen"} to Paper`, status: "waiting", page: here() }];
+      toast(`Sent to Claude Code: it places ${el ? "this element" : "the screen"} in your open Paper file`);
+      render();
+    } catch (error) {
+      toast("Couldn't send it (" + error.message + ")");
+    }
+  }
+
   // ---------- design skills ----------
   // What "Do it" and Explore work from: the design skills installed in Claude Code (impeccable, Emil
   // Kowalski's, ones from the ui-skills registry…). Auto lets Claude pick the one that fits; or pick up to 3.
@@ -4500,6 +4745,7 @@
       top.append(what, st, x);
       item.append(top);
       if (a.status === "done" && a.kind === "edit") item.append(Object.assign(document.createElement("div"), { className: "ask-sub", textContent: `${a.summary ? a.summary + " · " : ""}${(a.files || []).join(", ")}. Undo apply puts it back.` }));
+      if (a.status === "done" && a.kind === "paper" && a.summary) item.append(Object.assign(document.createElement("div"), { className: "ask-sub", textContent: a.summary }));
       if (a.status === "failed") item.append(Object.assign(document.createElement("div"), { className: "ask-sub", textContent: a.needs ? `Claude asks: ${a.needs}` : a.error || "It didn't work out." }));
       if (a.status === "done" && a.kind === "variations") {
         for (const v of a.variants || []) {
@@ -4659,6 +4905,7 @@
       add("Copy CSS", "", () => copyCode(el, "css"));
       add("Copy Tailwind classes", "", () => copyCode(el, "tailwind"));
       add("Copy JSX", "", () => copyCode(el, "jsx"));
+      add("Send to Paper", "", () => sendToPaper(el));
       add("Copy style", "⌘⌥C", () => copyStyle(el));
       add("Paste style", "⌘⌥V", () => pasteStyle(el));
       add("Apply to everywhere this style is used", "", () => setReach(el, "all"));
@@ -4671,6 +4918,7 @@
     });
     for (const [key, b] of Object.entries(BASICS)) add(`Insert ${b.label.toLowerCase()}`, "click to place", () => armInsert({ label: b.label.toLowerCase(), basic: key }));
     add("History", "🕘", () => { state.showHistory = true; render(); });
+    add("Send this screen to Paper", "", () => sendToPaper(null));
     add("Check this screen", "✓", runCheck);
     add("Undo", "⌘Z", undoPreview);
     add("Redo", "⌘⇧Z", redoPreview);
@@ -4932,6 +5180,9 @@
         copyAs.append(b);
       }
       arrange.append(copyAs);
+      const toPaper = setIcon(Object.assign(document.createElement("button"), { className: "icon", title: "Send to Paper: Claude Code places it in your open Paper file as editable layers" }), "send", "Paper");
+      toPaper.addEventListener("click", () => sendToPaper(el));
+      arrange.append(toPaper);
       head.append(name, meta, crumbs, arrange, styleTools, layersTree(el));
       const states = document.createElement("div");
       states.className = "seg";
@@ -5563,7 +5814,7 @@
         for (const a of asks) {
           const before = (state.asks || []).find((o) => o.id === a.id);
           if (ownsPanel() && before && before.status !== a.status && a.page === here()) {
-            if (a.status === "done") toast(a.kind === "edit" ? `Claude finished: ${a.summary || (a.files || []).join(", ")}` : "Variations are ready in the panel");
+            if (a.status === "done") toast(a.kind === "edit" ? `Claude finished: ${a.summary || (a.files || []).join(", ")}` : a.kind === "paper" ? a.summary || "Claude Code is placing it in Paper" : "Variations are ready in the panel");
             if (a.status === "failed") toast(a.needs ? `Claude has a question: ${a.needs}` : `Claude couldn't do it: ${a.error || ""}`);
           }
         }
@@ -6612,6 +6863,8 @@
     get showComments() { return state.showComments; },
     setComments: (on) => setComments(!!on),
     comment: (selector) => startComment(document.querySelector(selector)),
+    // The Paper-ready HTML of a selector (or the screen), without sending it.
+    paperHtml: (selector) => paperHtml(selector ? document.querySelector(selector) : paperScreenRoot()),
     // The findings without the panel (the studio's check of every screen), as plain data.
     checkData: async (opts = {}) => (await checkScreen(opts)).map((i) => ({ kind: i.kind, severe: !!i.severe, what: i.what, detail: i.detail, element: nameOf(i.el), selector: (() => { try { return cssPath(i.el); } catch { return ""; } })() })),
     // Check this screen (the studio's toolbar runs it); resolves to the findings.

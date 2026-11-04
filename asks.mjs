@@ -21,9 +21,11 @@ export async function readAsks(root) {
 
 export async function addAsk(root, body) {
   const kind = body && body.kind;
-  if (kind !== "edit" && kind !== "variations" && kind !== "publish") throw Object.assign(new Error("kind is edit, variations or publish"), { status: 400 });
+  if (!["edit", "variations", "publish", "paper"].includes(kind)) throw Object.assign(new Error("kind is edit, variations, publish or paper"), { status: 400 });
   // publish: Claude publishes a saved review page (a file in .ui-tweaks/reviews) as a shareable page.
   if (kind === "publish" && !/^\.ui-tweaks\/reviews\/[a-z0-9-]+\.html$/.test(String(body.file || ""))) throw Object.assign(new Error("publish needs a review file"), { status: 400 });
+  // paper: Claude places a captured element or screen (a file in .ui-tweaks/paper) in the open Paper file.
+  if (kind === "paper" && !/^\.ui-tweaks\/paper\/p[a-z0-9]+\.html$/.test(String(body.file || ""))) throw Object.assign(new Error("paper needs a captured file"), { status: 400 });
   const instruction = String((body && body.instruction) || "").trim();
   if (!instruction && kind === "edit") throw Object.assign(new Error("Say what to change"), { status: 400 });
   const ask = {
@@ -41,6 +43,7 @@ export async function addAsk(root, body) {
     // Design skills to work from (names; the mod finds them among the installed ones), at most 3.
     ...(Array.isArray(body.skills) && body.skills.length ? { skills: body.skills.filter((n) => /^[a-z0-9][a-z0-9-]{0,60}$/.test(String(n))).slice(0, 3) } : {}),
     ...(kind === "publish" ? { file: body.file, title: String(body.title || "Design review").slice(0, 120) } : {}),
+    ...(kind === "paper" ? { file: body.file, title: String(body.title || "Screen").slice(0, 120), width: Math.round(Number(body.width)) || 0, height: Math.round(Number(body.height)) || 0, whole: !!body.whole } : {}),
     // Reference images attached in the panel (files the dev server saved in .ui-tweaks/refs).
     ...(Array.isArray(body.refs) && body.refs.length ? { refs: body.refs.filter((r) => /^\.ui-tweaks\/refs\/r[a-z0-9]+\.(png|jpg|webp|gif)$/.test(String(r))).slice(0, 6) } : {}),
     at: Date.now(),

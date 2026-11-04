@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { lineStats, unifiedDiff } from '../hooks/diff'
-import { askOutcome, askPrompt, cleanVariants, lastJson, parseReport, settle, summarize, verifyTweak } from '../hooks/register'
+import { askOutcome, askPrompt, cleanVariants, lastJson, paperPrompt, parseReport, settle, summarize, verifyTweak } from '../hooks/register'
 
 const PENDING = JSON.stringify({
   version: 1,
@@ -317,4 +317,17 @@ test('a publish ask has the main model publish the review page, and is marked do
   expect(prompts[0]).toContain('"First look"')
   const outcome = Object.entries(files).find(([p]) => p.endsWith('askpub1.json'))?.[1]
   expect(JSON.parse(outcome ?? '{}').status).toBe('done')
+})
+
+test('send to Paper: the prompt names the file, the artboard and Paper rules', () => {
+  const screen = paperPrompt('/p/.ui-tweaks/paper/pabc.html', 'Home · /', { width: 390, height: 844, whole: true, page: { url: 'http://localhost:5188/' } })
+  expect(screen).toContain('Put this screen (from http://localhost:5188/) into my open Paper file')
+  expect(screen).toContain('/p/.ui-tweaks/paper/pabc.html')
+  expect(screen).toContain('artboard named “Home · /” at 390×844px')
+  expect(screen).toContain('get_guide')
+  expect(screen).toContain('finish_working_on_nodes')
+  expect(screen).toContain('no margin')
+  const element = paperPrompt('/p/x.html', 'Card', {})
+  expect(element).toContain('the element “Card”')
+  expect(element).toContain('at its own size')
 })

@@ -196,7 +196,7 @@ You may Read the source files named in the request to understand the component. 
 Answer with exactly one line of JSON and nothing after it:
 {"variants":[{"name":"<2-4 words>","why":"<one sentence>","changes":[{"target":":scope","prop":"padding","value":"16px 20px"}]},{"name":"<2-4 words>","why":"<one sentence>","html":"<div class=\\"card\\">…</div>","changes":[]}]}`
 
-type Ask = { id: string; kind: 'edit' | 'variations' | 'publish'; instruction: string; file?: string; title?: string; refs?: string[]; mode?: 'any' | 'styles' | 'layout'; scope?: 'screen'; skills?: string[]; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
+type Ask = { id: string; kind: 'edit' | 'variations' | 'publish' | 'paper'; instruction: string; file?: string; title?: string; width?: number; height?: number; whole?: boolean; refs?: string[]; mode?: 'any' | 'styles' | 'layout'; scope?: 'screen'; skills?: string[]; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
 type AskOutcome = { status: 'running' | 'done' | 'failed'; startedAt?: number; summary?: string; needs?: string; files?: string[]; variants?: unknown[]; error?: string }
 
 /** The last line of an answer that parses as a JSON object. */
@@ -251,7 +251,7 @@ export function askPrompt(ask: Ask, root: string | null, skills: DesignSkill[] =
   const refNote = refs.length
     ? `Reference images from the person (look at each with Read before designing, and take their look, mood, colour and type cues; don't copy their content): ${refs.join(', ')}`
     : ''
-  const skillNote = skills.length && ask.kind !== 'publish' ? designSkillNote(skills, ask.kind, chosen) : ''
+  const skillNote = skills.length && ask.kind !== 'publish' && ask.kind !== 'paper' ? designSkillNote(skills, ask.kind, chosen) : ''
   if (ask.kind === 'edit') {
     return [`Design request: ${ask.instruction}`, `Screen: ${ask.page?.url ?? '?'}`, `Selected element: ${JSON.stringify(ask.element ?? {})}`, refNote, skillNote, where].filter(Boolean).join('\n')
   }
@@ -378,6 +378,20 @@ async function runAsks($: EngineInterface) {
   }
 }
 
+// What the main model gets for Send to Paper. The captured HTML is close to Paper's rules already (inline
+// styles, flex, absolute placement); the model finishes the job and writes it in pieces, as Paper wants.
+export function paperPrompt(file: string, title: string, ask: Pick<Ask, 'width' | 'height' | 'whole' | 'page'>): string {
+  const size = ask.width && ask.height ? `${ask.width}×${ask.height}px` : 'its own size'
+  const from = ask.page?.url ? ` (from ${ask.page.url})` : ''
+  return [
+    `Put ${ask.whole ? 'this screen' : `the element “${title}”`}${from} into my open Paper file, as editable layers that look exactly like it does in the app.`,
+    `The UI tweaks panel captured it as HTML at ${file}: every style is inline from what the browser computed, block flows are already flex columns, fixed and absolute things are placed against the root, layer-name attributes carry component names, and the app's images are paper-asset:// paths.`,
+    `Steps: read Paper's guide first (get_guide "paper-mcp-instructions") if you haven't this session, and get_basic_info for the file. Create a new artboard named “${title}” at ${size}, with the root's background. Then write the HTML into it with write_html, one visual group per call (a header, a row, a card), top to bottom, keeping the captured styles and text.`,
+    `Fix what Paper doesn't take as you go: no margin (turn it into the parent's padding or gap), no display:grid (rows of flex with the captured widths), no display:inline outside text spans, no tables. Keep the fonts, colours, sizes and spacing as captured; don't redesign or tidy anything.`,
+    `When it's all in, take a get_screenshot of the artboard, fix anything clipped or out of place (set the artboard to height fit-content if content runs past it), call finish_working_on_nodes, and tell me in one line that it's in Paper.`,
+  ].join('\n\n')
+}
+
 async function startNextAsk($: EngineInterface) {
   const current = await read($, askRun)
   if (current !== null) {
@@ -409,6 +423,16 @@ async function startNextAsk($: EngineInterface) {
       }),
     )
     $.ui.toast(`Publishing the review "${title}"…`)
+    return
+  }
+  // An element or screen to place in Paper: the main model does it (it has the Paper tools), in a turn of its own.
+  if (next.kind === 'paper') {
+    const file = next.file ? inProject(next.file) : null
+    if (!file) return void (await writeOutcome($, next.id, { status: 'failed', error: 'No captured file.' }))
+    const title = next.title ?? 'Screen'
+    await writeOutcome($, next.id, { status: 'done', summary: 'Claude Code is placing it in your open Paper file.' })
+    $.clock.after(50, () => void $.prompt.submit({ text: paperPrompt(file, title, next) }))
+    $.ui.toast(`Sending "${title}" to Paper…`)
     return
   }
   if (next.kind === 'edit') {

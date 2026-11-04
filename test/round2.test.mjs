@@ -53,3 +53,15 @@ test("lanAddress answers without a port", async () => {
   const out = await lanAddress(0);
   assert.equal(out.reachable, false);
 });
+
+test("concept asks need a description and a pictured reference screen", async () => {
+  const root = await tmp();
+  const reference = { snapshot: "/__ui-tweaks/snapshots/sabc1.html", url: "/?screen=events", name: "Events", size: [393, 852] };
+  const ask = await addAsk(root, { kind: "concept", instruction: "An event leaderboard", reference, from: "a7", fromName: "Events" });
+  assert.equal(ask.kind, "concept");
+  assert.deepEqual(ask.reference.size, [393, 852]);
+  assert.equal(ask.from, "a7");
+  await assert.rejects(addAsk(root, { kind: "concept", instruction: "", reference }), /Describe/);
+  await assert.rejects(addAsk(root, { kind: "concept", instruction: "x", reference: { ...reference, snapshot: "/etc/passwd" } }), /reference screen/);
+  await assert.rejects(addAsk(root, { kind: "concept", instruction: "x", reference: { ...reference, size: [1] } }), /reference screen/);
+});

@@ -374,3 +374,15 @@ test('tokens: push creates them in Paper or as Figma variables, pull edits the C
   expect(pull).toContain('get_tokens')
   expect(paperPrompt([{ file: '/a.html', title: 'A' }], {})).toContain('use var(--name) wherever a captured value equals')
 })
+
+test('concept: a new screen, built from a reference screen saved as a page', () => {
+  const p = askPrompt({ id: 'c', kind: 'concept', instruction: 'An event leaderboard', reference: { snapshot: '/__ui-tweaks/snapshots/sabc1.html', url: '/?screen=events', name: 'Events', size: [393, 852] }, fromName: 'Events' }, '/p')
+  expect(p).toContain('Design a new screen for this app')
+  expect(p).toContain('An event leaderboard')
+  expect(p).toContain('393×852 screen, reached from “Events”')
+  expect(p).toContain('/p/.ui-tweaks/snapshots/sabc1.html')
+  expect(p).toContain('Propose 2 directions')
+  const bad = askPrompt({ id: 'c', kind: 'concept', instruction: 'x', reference: { snapshot: '../../etc/passwd' } }, '/p')
+  expect(bad).not.toContain('passwd')
+  expect(askOutcome('variations', '{"variants":[{"name":"Podium","why":"x","html":"<div class=\\"app-shell\\">Top 10</div>"}]}', []).status).toBe('done')
+})

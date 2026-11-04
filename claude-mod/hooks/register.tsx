@@ -197,7 +197,7 @@ Answer with exactly one line of JSON and nothing after it:
 {"variants":[{"name":"<2-4 words>","why":"<one sentence>","changes":[{"target":":scope","prop":"padding","value":"16px 20px"}]},{"name":"<2-4 words>","why":"<one sentence>","html":"<div class=\\"card\\">…</div>","changes":[]}]}`
 
 type Capture = { file: string; title: string; width?: number; height?: number }
-type Ask = { id: string; kind: 'edit' | 'variations' | 'publish' | 'paper' | 'paper-pull' | 'tokens'; direction?: 'push' | 'pull'; instruction: string; file?: string; files?: Capture[]; target?: 'paper' | 'figma'; title?: string; whole?: boolean; refs?: string[]; mode?: 'any' | 'styles' | 'layout' | 'states'; scope?: 'screen'; skills?: string[]; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
+type Ask = { id: string; kind: 'edit' | 'variations' | 'publish' | 'paper' | 'paper-pull' | 'tokens' | 'concept'; direction?: 'push' | 'pull'; reference?: { snapshot?: string; url?: string; name?: string; size?: number[] }; from?: string; fromName?: string; instruction: string; file?: string; files?: Capture[]; target?: 'paper' | 'figma'; title?: string; whole?: boolean; refs?: string[]; mode?: 'any' | 'styles' | 'layout' | 'states'; scope?: 'screen'; skills?: string[]; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
 type AskOutcome = { status: 'running' | 'done' | 'failed'; startedAt?: number; summary?: string; needs?: string; files?: string[]; variants?: unknown[]; error?: string }
 
 /** The last line of an answer that parses as a JSON object. */
@@ -255,7 +255,21 @@ export function askPrompt(ask: Ask, root: string | null, skills: DesignSkill[] =
   const refNote = refs.length
     ? `Reference images from the person (look at each with Read before designing, and take their look, mood, colour and type cues; don't copy their content): ${refs.join(', ')}`
     : ''
-  const skillNote = skills.length && (ask.kind === 'edit' || ask.kind === 'variations') ? designSkillNote(skills, ask.kind, chosen) : ''
+  const skillNote = skills.length && (ask.kind === 'edit' || ask.kind === 'variations' || ask.kind === 'concept') ? designSkillNote(skills, ask.kind === 'concept' ? 'variations' : ask.kind, chosen) : ''
+  if (ask.kind === 'concept') {
+    const ref = ask.reference ?? {}
+    const snap = /^\/__ui-tweaks\/snapshots\/(s[a-z0-9]+\.html)$/.exec(ref.snapshot ?? '')
+    const file = snap ? (root ? `${root}/.ui-tweaks/snapshots/${snap[1]}` : `.ui-tweaks/snapshots/${snap[1]}`) : ''
+    const [w, h] = ref.size ?? [390, 844]
+    return [
+      `Design a new screen for this app: a feature it doesn't have yet. ${ask.instruction}`,
+      `It's a ${w}×${h} screen${ask.fromName ? `, reached from “${ask.fromName}”` : ''}. Make it look like it belongs: the reference screen “${ref.name ?? ''}” (${ref.url ?? '/'}) is saved as a static page at ${file}. Read it first for the app's structure (the shell and wrappers inside <body>: root, header, tab bar), its classes, its design tokens (CSS variables in its <style>) and how its components are built; read the app's source too where it helps.`,
+      `Propose 2 directions (different ideas for the screen, not the same one twice), unless the description asks for another number (at most 4). Each "html" is the new screen's markup that goes inside <body> in place of the reference screen's: one root element, keeping the app's shell wrappers (the same root and app-shell, and the header and tab bar when screens like it have them), built from the app's existing classes and var(--token) values, with inline styles only for what no class covers. Real, specific content that fits the app (names, numbers, copy), no lorem ipsum. No scripts, event handlers, iframes, or images and URLs that aren't in the reference. Each has "name" (2-4 words) and "why" (the idea in one sentence); "changes" stays [].`,
+      refNote,
+      skillNote,
+      where,
+    ].filter(Boolean).join('\n')
+  }
   if (ask.kind === 'edit') {
     return [`Design request: ${ask.instruction}`, `Screen: ${ask.page?.url ?? '?'}`, `Selected element: ${JSON.stringify(ask.element ?? {})}`, refNote, skillNote, where].filter(Boolean).join('\n')
   }
@@ -532,11 +546,12 @@ async function startNextAsk($: EngineInterface) {
   const { skills, chosen } = await prepareSkills($, next)
   const startedAt = await $.clock.now()
   await writeOutcome($, next.id, { status: 'running', startedAt })
-  await update($, askRun, () => ({ id: next.id, kind: next.kind as 'edit' | 'variations', startedAt, instruction: next.instruction }))
+  // A concept runs like variations: the same agent and JSON answer, nothing edited.
+  await update($, askRun, () => ({ id: next.id, kind: (next.kind === 'edit' ? 'edit' : 'variations') as 'edit' | 'variations', startedAt, instruction: next.instruction }))
   const started = await $.agent.spawn({
     subagentType: next.kind === 'edit' ? DESIGNER : VARIATOR,
     model: 'sonnet',
-    description: next.kind === 'edit' ? 'Design change' : 'Design variations',
+    description: next.kind === 'edit' ? 'Design change' : next.kind === 'concept' ? 'Concept screen' : 'Design variations',
     prompt: askPrompt(next, projectRoot, skills, chosen),
     ...(projectRoot ? { cwd: projectRoot } : {}),
   })
@@ -547,7 +562,7 @@ async function startNextAsk($: EngineInterface) {
     return
   }
   await update($, askRun, r => (r ? { ...r, agentId: started.agentId } : r))
-  $.ui.toast(next.kind === 'edit' ? `Claude is designing: ${next.instruction.slice(0, 60)}` : 'Claude is sketching variations…')
+  $.ui.toast(next.kind === 'edit' ? `Claude is designing: ${next.instruction.slice(0, 60)}` : next.kind === 'concept' ? `Claude is designing a new screen: ${next.instruction.slice(0, 50)}` : 'Claude is sketching variations…')
 }
 
 /** What the panel shows for a finished ask, from the agent's answer and the files it changed. */

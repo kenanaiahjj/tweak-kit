@@ -21,7 +21,10 @@ export async function readAsks(root) {
 
 export async function addAsk(root, body) {
   const kind = body && body.kind;
-  if (!["edit", "variations", "publish", "paper", "paper-pull", "tokens"].includes(kind)) throw Object.assign(new Error("kind is edit, variations, publish, paper, paper-pull or tokens"), { status: 400 });
+  if (!["edit", "variations", "publish", "paper", "paper-pull", "tokens", "concept"].includes(kind)) throw Object.assign(new Error("kind is edit, variations, publish, paper, paper-pull, tokens or concept"), { status: 400 });
+  // concept: a new screen for a feature the app doesn't have, designed to look like a reference screen.
+  const ref = body.reference || {};
+  if (kind === "concept" && (!/^\/__ui-tweaks\/snapshots\/s[a-z0-9]+\.html$/.test(String(ref.snapshot || "")) || !Array.isArray(ref.size) || ref.size.length !== 2)) throw Object.assign(new Error("A concept needs a reference screen with its picture"), { status: 400 });
   // tokens: the project's design tokens into the design tool (push) or its changes back into the CSS (pull).
   if (kind === "tokens" && (!["push", "pull"].includes(body.direction) || body.file !== ".ui-tweaks/paper/tokens.json")) throw Object.assign(new Error("tokens needs a direction and the saved tokens"), { status: 400 });
   // publish: Claude publishes a saved review page (a file in .ui-tweaks/reviews) as a shareable page.
@@ -34,6 +37,7 @@ export async function addAsk(root, body) {
   if (kind === "paper-pull" && body.file && !captured(body.file)) throw Object.assign(new Error("paper-pull takes a captured file"), { status: 400 });
   const instruction = String((body && body.instruction) || "").trim();
   if (!instruction && kind === "edit") throw Object.assign(new Error("Say what to change"), { status: 400 });
+  if (!instruction && kind === "concept") throw Object.assign(new Error("Describe the feature"), { status: 400 });
   const ask = {
     id: `ask${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
     kind,
@@ -52,6 +56,7 @@ export async function addAsk(root, body) {
     ...(kind === "paper" ? { files: files.map((f) => ({ file: f.file, title: String(f.title || "Screen").slice(0, 120), width: Math.round(Number(f.width)) || 0, height: Math.round(Number(f.height)) || 0 })), title: String(body.title || "Screen").slice(0, 120), whole: !!body.whole } : {}),
     ...(kind === "paper-pull" ? { ...(body.file ? { file: body.file } : {}), title: String(body.title || "").slice(0, 120) } : {}),
     ...(kind === "tokens" ? { direction: body.direction, file: body.file } : {}),
+    ...(kind === "concept" ? { reference: { snapshot: ref.snapshot, url: String(ref.url || "/").slice(0, 500), name: String(ref.name || "").slice(0, 120), size: ref.size.map((n) => Math.max(200, Math.min(3000, Math.round(Number(n) || 0)))) }, ...(body.from ? { from: String(body.from).slice(0, 40) } : {}), ...(body.fromName ? { fromName: String(body.fromName).slice(0, 120) } : {}) } : {}),
     ...(kind === "paper" || kind === "paper-pull" || kind === "tokens" ? { target: body.target === "figma" ? "figma" : "paper" } : {}),
     // Reference images attached in the panel (files the dev server saved in .ui-tweaks/refs).
     ...(Array.isArray(body.refs) && body.refs.length ? { refs: body.refs.filter((r) => /^\.ui-tweaks\/refs\/r[a-z0-9]+\.(png|jpg|webp|gif)$/.test(String(r))).slice(0, 6) } : {}),

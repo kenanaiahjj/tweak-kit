@@ -795,6 +795,9 @@ export function studioPage(appPath) {
   .cv-actions button.primary { background: #fff; color: #171717; font-weight: 600; }
   .cv-bar { position: absolute; left: 12px; top: 12px; z-index: 3; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 6px 0 14px; border-radius: 12px; background: rgba(33,33,33,.92); backdrop-filter: blur(8px); box-shadow: 0 0 0 1px rgba(255,255,255,.1), 0 8px 24px rgba(0,0,0,.35); font: 12.5px system-ui, -apple-system, sans-serif; color: rgba(255,255,255,.6); }
   .cv-bar[hidden] { display: none; }
+  .cv-bar, .cv-bar * { white-space: nowrap; }
+  .cv-bar { max-width: calc(100% - 24px); }
+  .cv-bar .cv-hint { display: none; }
   .cv-bar b { color: #fff; font-weight: 600; }
   .cv-bar .cv-count { font-variant-numeric: tabular-nums; }
   .cv-bar button { height: 28px; padding: 0 10px; border: 0; border-radius: 8px; background: rgba(255,255,255,.08); color: #fff; font: 500 12px system-ui, -apple-system, sans-serif; cursor: pointer; }
@@ -803,9 +806,23 @@ export function studioPage(appPath) {
   .cv-bar .cv-legend i { width: 10px; height: 10px; border-radius: 3px; box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.45); }
   .cv-bar .cv-legend i.ex { margin-left: 8px; box-shadow: inset 0 0 0 1.5px #a78bfa; background: rgba(167,139,250,.18); }
   .cv-tag { flex: none; padding: 0 calc(6px * var(--iz)); border-radius: calc(4px * var(--iz)); background: #a78bfa; color: #1b1530; font-weight: 600; font-size: calc(11px * var(--iz)); line-height: calc(18px * var(--iz)); align-self: center; }
-  .cv-flag { position: absolute; left: calc(8px * var(--iz)); top: calc(8px * var(--iz)); z-index: 1; padding: 0 calc(8px * var(--iz)); border-radius: calc(6px * var(--iz)); background: rgba(27,21,48,.88); color: #ddd6fe; font: 600 calc(11.5px * var(--iz))/calc(22px * var(--iz)) system-ui, -apple-system, sans-serif; box-shadow: 0 0 0 calc(1px * var(--iz)) rgba(167,139,250,.6); pointer-events: none; }
+  /* Under the card, first in its actions row: it never covers the design. */
+  .cv-flag { display: inline-flex; align-items: center; height: calc(28px * var(--iz)); padding: 0 calc(10px * var(--iz)); border-radius: calc(8px * var(--iz)); background: rgba(167,139,250,.14); color: #ddd6fe; font: 600 calc(12px * var(--iz)) system-ui, -apple-system, sans-serif; box-shadow: inset 0 0 0 calc(1px * var(--iz)) rgba(167,139,250,.5); pointer-events: none; }
   .cv-flag.sent { background: rgba(16,40,26,.9); color: #a7f3c4; box-shadow: 0 0 0 calc(1px * var(--iz)) rgba(110,231,160,.55); }
   .cv-bar .cv-hint { padding: 0 8px 0 4px; color: rgba(255,255,255,.4); font-size: 12px; }
+  .cv-bar button.primary { background: #a78bfa; color: #1b1530; font-weight: 600; }
+  .cv-bar button.primary:hover { background: #b9a2fc; }
+  .cv-branch path.cv-reach { stroke: rgba(167,139,250,.7); }
+  .cv-new { width: 320px; display: grid; gap: 10px; }
+  .cv-new h4 { margin: 0; font: 600 13px system-ui, -apple-system, sans-serif; color: #fff; }
+  .cv-new p { margin: -4px 0 0; color: rgba(255,255,255,.55); font: 12px/1.45 system-ui, -apple-system, sans-serif; text-wrap: pretty; }
+  .cv-new textarea { width: 100%; min-height: 84px; padding: 9px 11px; border: 0; border-radius: 8px; background: rgba(255,255,255,.06); color: #fff; font: 13px/1.45 system-ui, -apple-system, sans-serif; resize: vertical; outline: none; box-sizing: border-box; }
+  .cv-new textarea:focus { box-shadow: inset 0 0 0 1px rgba(167,139,250,.7); }
+  .cv-new label { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: center; gap: 8px; color: rgba(255,255,255,.6); font: 12px system-ui, -apple-system, sans-serif; }
+  .cv-new select { height: 30px; min-width: 0; padding: 0 8px; border: 0; border-radius: 8px; background: rgba(255,255,255,.06); color: #fff; font: 12.5px system-ui, -apple-system, sans-serif; }
+  .cn-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
+  .cn-actions button { height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: rgba(255,255,255,.08); color: #fff; font: 500 12.5px system-ui, -apple-system, sans-serif; cursor: pointer; }
+  .cn-actions button.primary { background: #a78bfa; color: #1b1530; font-weight: 600; }
   .canvas-toggle.on { background: rgba(255,255,255,.11); color: #fff; }
 
   /* ---------- pop-ups ----------
@@ -919,7 +936,7 @@ export function studioPage(appPath) {
       <div class="viewport">
         <div class="dots"></div>
         <div class="world"></div>
-        <div class="cv-bar" hidden><b>Canvas</b><span class="cv-count"></span><button class="cv-refresh" title="Take a fresh picture of every screen">Refresh pictures</button><button class="cv-fit" title="Fit everything (⇧1)">Fit</button><span class="cv-legend"><i class="code"></i>Your app (in code)<i class="ex"></i>Exploration</span><span class="cv-hint">Double-click to work on a screen</span></div>
+        <div class="cv-bar" hidden><b>Canvas</b><span class="cv-count"></span><button class="cv-concept primary" title="A screen for a feature your app doesn't have yet: describe it, Claude designs it in your app's look">New concept</button><button class="cv-refresh" title="Take a fresh picture of every screen">Refresh pictures</button><button class="cv-fit" title="Fit everything (⇧1)">Fit</button><span class="cv-legend"><i class="code"></i>Your app (in code)<i class="ex"></i>Exploration</span><span class="cv-hint">Double-click to work on a screen</span></div>
         <div class="shield"></div>
       </div>
     </div>
@@ -936,6 +953,7 @@ export function studioPage(appPath) {
 <div class="ck-all copy-deck" hidden></div>
 <div class="gallery" hidden></div>
 <div class="phone-pop" hidden></div>
+<div class="guides-pop cv-new" hidden></div>
 <div class="rv-progress" hidden></div>
 <div class="vs-pop" hidden></div>
 <script>
@@ -2440,6 +2458,11 @@ export function studioPage(appPath) {
     frame.setAttribute("aria-hidden", "true");
     const msg = (t) => { view.innerHTML = '<div class="ex-msg">' + esc(t) + "</div>"; };
     frame.addEventListener("load", async () => {
+      // The blank page an iframe starts with fires load too: only the real page's load counts, once.
+      let blank = false;
+      try { blank = frame.contentWindow.location.href === "about:blank"; } catch {}
+      if (frame.__uitShown || blank) return;
+      frame.__uitShown = true;
       let doc, el = null;
       for (let i = 0; i < 40 && !el; i++) {
         try { doc = frame.contentDocument; el = doc && doc.querySelector(r.snapshot ? "[data-uit-target]" : r.selector); } catch { return msg("Can't show this screen here."); }
@@ -2450,6 +2473,17 @@ export function studioPage(appPath) {
       // A layout variation goes in beside the element, which is hidden (so an app that owns it never notices).
       let added = null;
       const put = () => {
+        // A concept is a whole new screen: its markup takes the place of the reference screen's page.
+        // Tagged, so a second pass (or a second load of the frame) finds it instead of swapping in another
+        // copy: two copies replacing each other would never settle.
+        if (html && r.replaceBody) {
+          if (!(added && added.isConnected)) {
+            added = doc.body.querySelector(":scope > [data-uit-concept]");
+            if (!added) { added = exMarkup(doc, html); if (added) { added.setAttribute("data-uit-concept", ""); doc.body.replaceChildren(added); } }
+          }
+          el = added || el;
+          return;
+        }
         if (html && !(added && added.isConnected)) {
           const orig = doc.querySelector(r.snapshot ? "[data-uit-target]" : r.selector) || el;
           added = orig && exMarkup(doc, html);
@@ -2745,16 +2779,20 @@ export function studioPage(appPath) {
     }
     return { x, y };
   }
-  const cvReq = (r) => ({ snapshot: r.snapshot, selector: r.selector, url: r.url, size: r.size, element: r.element, page: r.page, context: r.context, mode: r.mode, skills: r.skills, scope: r.scope, label: r.label });
+  const cvReq = (r) => ({ snapshot: r.snapshot, selector: r.selector, url: r.url, size: r.size, element: r.element, page: r.page, context: r.context, mode: r.mode, skills: r.skills, scope: r.scope, label: r.label, ...(r.reference ? { reference: r.reference, replaceBody: true } : {}) });
   // A variation onto the canvas, beside its parent (a screen, or the variation it branched from).
-  function pinVariant(v, req, parentId) {
+  // extra.concept: a new screen (not of an existing one): no parent unless it branched from a concept;
+  // it sits beside extra.anchor (the screen it's reached from, or its reference) with a dashed arrow from extra.from.
+  function pinVariant(v, req, parentId, extra = {}) {
     const parent = itemById(parentId);
-    if (!parent || !req || !req.size) return null;
-    const pr = itemRect(parent);
+    const anchor = parent || itemById(extra.anchor);
+    if (!anchor || !req || !req.size) return null;
+    const pr = itemRect(anchor);
     const [w, h] = req.size;
     const spot = freeSpot(pr.x + pr.w + CV_GAP, pr.y, w, h);
-    const item = { id: "v" + Math.random().toString(36).slice(2, 9), parent: parent.id, x: spot.x, y: spot.y, name: v.name, why: v.why || "", changes: v.changes || [], at: Date.now(), req: cvReq(req) };
+    const item = { id: "v" + Math.random().toString(36).slice(2, 9), parent: parent ? parent.id : null, x: spot.x, y: spot.y, name: v.name, why: v.why || "", changes: v.changes || [], at: Date.now(), req: cvReq(req) };
     for (const k of ["html", "state", "when", "skill"]) if (v[k]) item[k] = v[k];
+    if (extra.concept) Object.assign(item, { concept: true, from: extra.from || null, description: extra.description || "" });
     cvVariants().push(item);
     save();
     if (isCanvas()) drawCanvas();
@@ -2823,7 +2861,7 @@ export function studioPage(appPath) {
     const el = document.createElement("div");
     el.className = "cv-card cv-" + kind;
     // Your app's screens (in code) are plain; explorations say so in the header and on the card.
-    el.innerHTML = '<div class="cv-head">' + (kind === "screen" ? "" : '<span class="cv-tag">Exploration</span>') + '<span class="cv-name"></span><span class="cv-meta"></span></div><div class="cv-body"></div>' + (kind === "variant" ? '<div class="cv-flag"></div><div class="cv-actions"></div>' : "");
+    el.innerHTML = '<div class="cv-head">' + (kind === "screen" ? "" : '<span class="cv-tag">' + (it.concept ? "Concept" : "Exploration") + "</span>") + '<span class="cv-name"></span><span class="cv-meta"></span></div><div class="cv-body"></div>' + (kind === "variant" ? '<div class="cv-actions"><span class="cv-flag"></span></div>' : "");
     const card = { el, kind, id: it.id, body: el.querySelector(".cv-body"), shown: null };
     // Drag the header to move it (8px grid); its branch lines follow.
     el.querySelector(".cv-head").addEventListener("pointerdown", (e) => {
@@ -2853,7 +2891,8 @@ export function studioPage(appPath) {
     if (kind === "variant") {
       const actions = el.querySelector(".cv-actions");
       const btn = (text, title, run, cls) => { const b = Object.assign(document.createElement("button"), { textContent: text, title }); if (cls) b.className = cls; b.addEventListener("click", (e) => { e.stopPropagation(); run(); }); actions.append(b); };
-      btn(it.state ? "Build it" : it.html ? "Build it" : "Use", it.state ? "Claude adds this state to the component" + (it.when ? ", shown when " + it.when : "") : it.html ? "Claude builds this layout in the component" : "Put it on the real screen as tweaks", () => cvUse(itemById(it.id)), "primary");
+      if (it.concept) btn("Build it", "Claude builds this as a real screen in your app (route or screen state, component, how it's reached) and adds it to the canvas", () => cvBuildConcept(itemById(it.id)).catch((err) => note("Couldn't ask Claude: " + err.message)), "primary");
+      else btn(it.state ? "Build it" : it.html ? "Build it" : "Use", it.state ? "Claude adds this state to the component" + (it.when ? ", shown when " + it.when : "") : it.html ? "Claude builds this layout in the component" : "Put it on the real screen as tweaks", () => cvUse(itemById(it.id)), "primary");
       btn("More like this", "Two more that push this one further, branching off it", () => cvMore(itemById(it.id)).catch((err) => note("Couldn't ask Claude: " + err.message)));
       btn("Remove", "Take it (and what branched off it) off the canvas", () => cvRemove(it.id));
     }
@@ -2881,7 +2920,7 @@ export function studioPage(appPath) {
       }
     } else if (card.kind === "variant") {
       card.el.querySelector(".cv-name").textContent = it.name;
-      card.el.querySelector(".cv-meta").textContent = it.state ? "State" : it.html ? "Layout" : "Styles";
+      card.el.querySelector(".cv-meta").textContent = it.concept ? "New screen" : it.state ? "State" : it.html ? "Layout" : "Styles";
       card.el.title = "Exploration, not in your code" + (it.sentAt ? " (sent to code)" : "") + ": " + (it.why || it.name) + "\\nDouble-click to open its screen";
       const flag = card.el.querySelector(".cv-flag");
       flag.textContent = it.sentAt ? "Sent to code" : "Not in your code";
@@ -2894,9 +2933,9 @@ export function studioPage(appPath) {
         else card.body.append(Object.assign(document.createElement("div"), { className: "cv-wait", textContent: "Its snapshot is gone" }));
       }
     } else {
-      card.el.querySelector(".cv-name").textContent = "Claude is sketching…";
+      card.el.querySelector(".cv-name").textContent = it.concept ? "Claude is designing…" : "Claude is sketching…";
       card.el.querySelector(".cv-meta").textContent = "";
-      if (!card.shown) { card.shown = "1"; card.body.append(Object.assign(document.createElement("div"), { className: "cv-wait", textContent: "Two more, branching off this one" })); }
+      if (!card.shown) { card.shown = "1"; card.body.append(Object.assign(document.createElement("div"), { className: "cv-wait", textContent: it.concept ? (it.description ? "“" + it.description.slice(0, 60) + (it.description.length > 60 ? "…" : "") + "”" : "A new screen") : "Two more, branching off this one" })); }
     }
   }
   function drawCanvas() {
@@ -2911,7 +2950,7 @@ export function studioPage(appPath) {
     drawCvBar();
     if (!isCanvas()) return;
     // Placeholders for asks still on the way take their spot beside their parent.
-    for (const p of cvPending()) if (p.x === undefined) { const par = itemById(p.parent); if (par) { const r = itemRect(par); Object.assign(p, freeSpot(r.x + r.w + CV_GAP, r.y, r.w, r.h), { w: r.w, h: r.h }); } }
+    for (const p of cvPending()) if (p.x === undefined) { const par = itemById(p.parent) || itemById(p.anchor); if (par) { const r = itemRect(par); const [w, h] = (p.req && p.req.size) || [r.w, r.h]; Object.assign(p, freeSpot(r.x + r.w + CV_GAP, r.y, w, h), { w, h }); } }
     const items = [...canvas.artboards.map((it) => ["screen", it]), ...cvVariants().map((it) => ["variant", it]), ...cvPending().map((p) => ["pending", { ...p, req: { size: [p.w || 390, p.h || 844] } }])];
     const ids = new Set(items.map(([, it]) => it.id));
     for (const [id, c] of cv.cards) if (!ids.has(id)) { c.el.remove(); cv.cards.delete(id); }
@@ -2956,6 +2995,14 @@ export function studioPage(appPath) {
       const [d, lx, ly] = curve(itemRect(a), itemRect(b));
       flow += '<path d="' + d + '" stroke-width="' + sw + '" marker-end="url(#cv-head)"/>';
       if (f.via) flow += '<text x="' + lx + '" y="' + ly + '" style="font-size:' + 12 / z + "px;stroke-width:" + 4 / z + 'px">' + esc(f.via.length > 24 ? f.via.slice(0, 23) + "…" : f.via) + "</text>";
+    }
+    // A concept and the screen it's reached from: dashed, it isn't a real tap yet.
+    for (const v of [...cvVariants(), ...cvPending()]) {
+      if (!v.concept || !v.from || v.parent) continue;
+      const f = itemById(v.from);
+      if (!f) continue;
+      const [d] = curve(itemRect(f), { x: v.x, y: v.y, w: v.w || itemRect(v).w, h: v.h || itemRect(v).h });
+      branch += '<path class="cv-reach" d="' + d + '" stroke-width="' + sw + '" stroke-dasharray="' + 6 / z + " " + 5 / z + '" marker-end="url(#cv-head)"/>';
     }
     cv.layer.querySelector(".cv-branch").innerHTML = branch;
     cv.layer.querySelector(".cv-flow").innerHTML = flow;
@@ -3003,8 +3050,62 @@ export function studioPage(appPath) {
     };
     go();
   }
+  // A concept: a new screen for a feature, designed in the look of a reference screen (its picture).
+  async function askConcept({ description, reference, from, anchor, parent, instruction }) {
+    const fromItem = itemById(from);
+    const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "concept", instruction: (instruction || description).slice(0, 20000), reference, from: from || undefined, fromName: fromItem ? fromItem.name || fromItem.url : undefined, page: { url: (fromItem && fromItem.url) || reference.url } }) });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error || res.statusText);
+    cvPending().push({ id: out.ask.id, parent: parent || null, at: Date.now(), concept: true, from: from || null, anchor: anchor || from, description, req: { snapshot: reference.snapshot, size: reference.size, url: reference.url, reference, replaceBody: true } });
+    save();
+    drawCanvas();
+    pollCanvas();
+  }
+  async function cvBuildConcept(it) {
+    if (!it) return;
+    const from = itemById(it.from);
+    const ref = (it.req && it.req.reference) || {};
+    const instruction = "Build this new screen in the app, as designed in a concept: “" + it.name + "”" + (it.why ? " (" + it.why + ")" : "") + ". The feature: " + (it.description || it.name) + ". Target markup from a live preview, built from the app's own classes and tokens:\\n" + it.html + "\\n\\nBuild it the way the project is structured: a route, or a screen in the app's screen state with the same kind of dev ?screen= / ?fixture= hook the other screens have; a component in the project's style; real data, handlers and existing components where they exist (mock data in the style of the dev fixtures where they don't)." + (from ? " It's reached from the screen “" + (from.name || from.url) + "” (" + from.url + "): add the way in there (a button, row or tab, whatever fits)." : "") + " Then add it to .ui-tweaks/canvas.json as a new artboard named “" + it.name + "” with the URL that opens it and the device “" + ((from || {}).device || "i16") + "”, keeping everything else in the file.";
+    const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "edit", instruction: instruction.slice(0, 24000), element: null, page: { url: (from && from.url) || ref.url || "/" } }) });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error || res.statusText);
+    it.sentAt = Date.now();
+    save();
+    drawCanvas();
+    note("Claude is building “" + it.name + "” in your app; it appears on the canvas as a screen when it's done (Undo apply reverts it).");
+  }
+  function openConceptForm(button) {
+    const pop = $(".cv-new");
+    if (!pop.hidden) { pop.hidden = true; return; }
+    const pictured = canvas.artboards.filter((a) => a.snap);
+    if (!pictured.length) return note("The screens' pictures are still being taken; try again in a moment.");
+    const opt = (a, sel) => '<option value="' + esc(a.id) + '"' + (sel ? " selected" : "") + ">" + esc(a.name || a.url) + "</option>";
+    const sel = cv.sel && pictured.find((a) => a.id === cv.sel) ? cv.sel : (current() && current().snap ? current().id : pictured[0].id);
+    pop.innerHTML = '<h4>New concept</h4><p>A screen for a feature your app doesn\u2019t have yet. Claude designs two directions in your app\u2019s look.</p><textarea rows="4" placeholder="e.g. An event leaderboard: top athletes by points, my rank pinned at the bottom, filter by sport"></textarea><label>Looks like<select class="cn-ref">' + pictured.map((a) => opt(a, a.id === sel)).join("") + '</select></label><label>Reached from<select class="cn-from"><option value="">Nowhere yet</option>' + canvas.artboards.map((a) => opt(a, a.id === sel)).join("") + '</select></label><div class="cn-actions"><button class="cn-cancel">Cancel</button><button class="cn-go primary">Design it</button></div>';
+    anchorPop(pop, button, 320);
+    pop.hidden = false;
+    const ta = pop.querySelector("textarea");
+    ta.focus();
+    ta.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) pop.querySelector(".cn-go").click(); if (e.key === "Escape") pop.hidden = true; });
+    pop.querySelector(".cn-cancel").addEventListener("click", () => { pop.hidden = true; });
+    pop.querySelector(".cn-go").addEventListener("click", async () => {
+      const description = ta.value.trim();
+      if (!description) return ta.focus();
+      const refA = canvas.artboards.find((a) => a.id === pop.querySelector(".cn-ref").value);
+      const from = pop.querySelector(".cn-from").value || null;
+      const reference = { snapshot: refA.snap, url: refA.url, name: refA.name || refA.url, size: size(refA) };
+      try {
+        await askConcept({ description, reference, from, anchor: from || refA.id });
+        pop.hidden = true;
+        note("Claude is designing “" + description.slice(0, 50) + (description.length > 50 ? "…" : "") + "”; two directions appear on the canvas.");
+      } catch (e) { note("Couldn't ask Claude: " + e.message); }
+    });
+  }
   async function cvMore(it) {
     if (!it || !it.req) return;
+    if (it.concept) {
+      return askConcept({ description: it.description || it.name, reference: it.req.reference, from: it.from, anchor: it.id, parent: it.id, instruction: (it.description ? it.description + "\\n\\n" : "") + "Variations on the concept “" + it.name + "” (" + (it.why || "") + "): push that idea further in different ways. Start from its markup and return full screens: " + JSON.stringify({ html: it.html }) });
+    }
     const r = it.req;
     const instruction = ("Variations on “" + it.name + "” (" + (it.why || "") + "). Push that idea further in different ways" + (it.html ? ". Start from its layout and return full variations (html and changes): " + JSON.stringify({ html: it.html, changes: it.changes }) : ". Start from its changes and return full change sets: " + JSON.stringify(it.changes))).slice(0, 20000);
     const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "variations", instruction, mode: r.mode === "states" ? undefined : r.mode, scope: r.scope, skills: r.skills, element: r.element, page: r.page, context: r.context, count: 2 }) });
@@ -3027,7 +3128,8 @@ export function studioPage(appPath) {
         if (s && s.status === "done") {
           drop();
           const parent = itemById(p.parent);
-          for (const v of s.variants || []) if (parent) pinVariant(v, parent.req, parent.id);
+          const req = p.concept ? (parent ? parent.req : p.req) : parent && parent.req;
+          for (const v of s.variants || []) if (req) pinVariant(v, req, parent ? parent.id : null, p.concept ? { concept: true, from: p.from, anchor: p.anchor, description: p.description } : {});
         } else if ((s && s.status === "failed") || (!s && Date.now() - p.at > 120000)) {
           drop();
           note("No new variations: " + ((s && s.error) || "the request isn't in the queue any more."));
@@ -3058,6 +3160,8 @@ export function studioPage(appPath) {
     if (isCanvas() && first) setTimeout(fitCanvas, 0);
   });
   $(".cv-bar .cv-fit").addEventListener("click", fitCanvas);
+  $(".cv-bar .cv-concept").addEventListener("click", (e) => openConceptForm(e.currentTarget));
+  addEventListener("pointerdown", (e) => { const pop = $(".cv-new"); if (!pop.hidden && !e.target.closest(".cv-new, .cv-concept")) pop.hidden = true; });
   $(".cv-bar .cv-refresh").addEventListener("click", () => { queuePictures(true); note("Taking a fresh picture of every screen, one at a time…"); });
 
   // ---------- review pages ----------

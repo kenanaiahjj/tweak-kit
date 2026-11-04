@@ -4625,8 +4625,16 @@
       if (f.type === "checkbox" || f.type === "radio") f.checked ? f.setAttribute("checked", "") : f.removeAttribute("checked");
       else if (f.tagName !== "SELECT" && f.type !== "file" && f.type !== "password") f.setAttribute("value", f.value);
     }
+    // Videos become their current frame: a snapshot is a picture, and a playing video in every card is heavy.
+    const vids = [...document.querySelectorAll("video")].map((v) => videoFrame(v));
     const clone = document.documentElement.cloneNode(true);
     el.removeAttribute("data-uit-target");
+    [...clone.querySelectorAll("video")].forEach((v, i) => {
+      const img = document.createElement("img");
+      if (vids[i]) img.src = vids[i];
+      for (const a of ["class", "style", "width", "height"]) if (v.getAttribute(a) != null) img.setAttribute(a, v.getAttribute(a));
+      v.replaceWith(img);
+    });
     for (const [f, v, c] of saved) { v === null ? f.removeAttribute("value") : f.setAttribute("value", v); if (f.type === "checkbox" || f.type === "radio") c === null ? f.removeAttribute("checked") : f.setAttribute("checked", c); }
     for (const n of clone.querySelectorAll("script, noscript, ui-tweaks-overlay, iframe")) n.remove();
     const head = clone.querySelector("head") || clone;

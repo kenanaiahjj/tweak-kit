@@ -760,6 +760,30 @@ export function studioPage(appPath) {
   .focus-zoom, .zoom { font-variant-numeric: tabular-nums; }
   .sep { display: none; }
 
+  /* ---------- pop-ups ----------
+     One surface: #212121, a 1px hairline, 14px corners, one shadow. List menus have 6px padding (rows inside
+     at 8px corners, concentric); content pop-ups 12px. Panels open 8px under the top bar and stop 12px
+     short of the docked panel; menus open 6px under their button. */
+  .overview-pop, .vs-pop, .ex-pop, .rv-pop, .guides-pop, .phone-pop, .ck-all, .gallery { border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 16px 40px rgba(0,0,0,.5); }
+  .ex-pop, .vs-pop { padding: 6px; }
+  .rv-pop, .guides-pop, .phone-pop { padding: 12px; }
+  .phone-pop { width: 252px; }
+  .overview-pop { top: calc(var(--tb-bottom, 90px) + 8px); left: 12px; right: calc(var(--panel-w, 336px) + 12px); max-height: calc(100vh - var(--tb-bottom, 90px) - 24px); padding: 12px; }
+  .ck-all { top: calc(var(--tb-bottom, 90px) + 8px); right: calc(var(--panel-w, 336px) + 12px); max-height: calc(100vh - var(--tb-bottom, 90px) - 24px); }
+  .gallery { top: calc(var(--tb-bottom, 90px) + 8px); right: calc(var(--panel-w, 336px) + 12px); bottom: 12px; }
+  .vs-pop { top: calc(var(--tb-bottom, 90px) + 6px); right: auto; }
+  /* Inside them: header actions 28px / 8px corners like the top bar, and the overview's header stays put. */
+  .ov-head { position: sticky; top: -12px; z-index: 2; margin: -12px -12px 0; padding: 12px; background: #212121; }
+  .overview-pop.flow .ov-head { margin-bottom: 10px; }
+  .ov-head button { height: 28px; border-radius: 8px; padding: 0 12px; }
+  .ov-seg { padding: 2px; border-radius: 8px; }
+  .ov-seg button { height: 24px !important; border-radius: 6px; padding: 0 10px; }
+  .ov-card .ov-shot { font-size: 12px; color: rgba(255,255,255,.3); }
+  .ex-pop .ex-forget { font-size: 12px; }
+  .vs-pop .vs-close { width: 100%; }
+  .cd-foot button { height: 32px; padding: 0 14px; }
+  .ck-all-head { min-height: 52px; padding: 10px 12px 10px 16px; }
+
   /* ---------- layout audit ----------
      Two deliberate rows. Row 1 is 46px to its hairline, the same as the panel header, so one rule runs
      across the window; row 2 sits 6px under it. Controls are 30px, 8px corners, 2px apart in a group and
@@ -922,6 +946,28 @@ export function studioPage(appPath) {
   view.vsMode = "interact"; // the studio opens in Interact: the app works as usual until V (or Inspect) picks elements
   view.mode = "focus"; // one screen at a time, at its real size (the canvas view is gone)
   const saveView = () => { try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch {} };
+
+  // ---------- pop-up placement ----------
+  // The top bar's height and the docked panel's width, live, as CSS variables: panels open under the bar
+  // and left of the panel; menus open under their button, kept on screen and clear of the panel.
+  function measureChrome() {
+    const tb = document.querySelector(".toolbar"), panelCol = document.getElementById("ui-tweaks-root");
+    const root = document.documentElement.style;
+    if (tb) root.setProperty("--tb-bottom", Math.round(tb.getBoundingClientRect().bottom) + "px");
+    root.setProperty("--panel-w", (panelCol ? Math.round(panelCol.getBoundingClientRect().width) : 0) + "px");
+  }
+  function anchorPop(pop, button, width) {
+    const r = button.getBoundingClientRect();
+    const panelW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--panel-w")) || 0;
+    const maxLeft = innerWidth - panelW - width - 12;
+    pop.style.left = Math.max(12, Math.min(r.left, maxLeft)) + "px";
+    pop.style.top = Math.round(r.bottom + 6) + "px";
+  }
+  addEventListener("resize", measureChrome);
+  requestAnimationFrame(() => {
+    measureChrome();
+    try { const ro = new ResizeObserver(measureChrome); ro.observe(document.querySelector(".toolbar")); ro.observe(document.getElementById("ui-tweaks-root")); } catch {}
+  });
 
   function note(text) {
     const n = $(".note");
@@ -1513,7 +1559,7 @@ export function studioPage(appPath) {
         if (url) sketches.set(a.id, (s = { at: Date.now(), url }));
       }
       if (s) shot.innerHTML = '<img alt="" src="' + s.url + '">';
-      else shot.textContent = "Open it once to see it here";
+      else shot.textContent = "Not opened yet";
       card.innerHTML = "";
       card.append(shot);
       const meta = document.createElement("div");
@@ -1718,8 +1764,7 @@ export function studioPage(appPath) {
     pop.hidden = !pop.hidden;
     if (!pop.hidden) {
       const r = e.currentTarget.getBoundingClientRect();
-      pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 268)) + "px";
-      pop.style.top = r.bottom + 6 + "px";
+      anchorPop(pop, { getBoundingClientRect: () => r }, 260);
       drawGuides();
     }
   });
@@ -1871,8 +1916,7 @@ export function studioPage(appPath) {
     pop.hidden = !pop.hidden;
     if (pop.hidden) return;
     const r = e.currentTarget.getBoundingClientRect();
-    pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 308)) + "px";
-    pop.style.top = r.bottom + 6 + "px";
+    anchorPop(pop, { getBoundingClientRect: () => r }, 300);
     const list = loadExplorations();
     const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " d ago"; };
     pop.innerHTML = list.map((x, i) => {
@@ -1995,7 +2039,7 @@ export function studioPage(appPath) {
     const pop = $(".phone-pop");
     if (!pop.hidden) { pop.hidden = true; return; }
     const r = e.currentTarget.getBoundingClientRect();
-    pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 270)) + "px";
+    anchorPop(pop, e.currentTarget, 260);
     pop.innerHTML = '<div class="qr">…</div>';
     pop.hidden = false;
     let lan = null;
@@ -2231,8 +2275,7 @@ export function studioPage(appPath) {
     if (pop.hidden) {
       if (t && !t.showComments) t.setComments(true);
       await loadCm();
-      pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 308)) + "px";
-      pop.style.top = r.bottom + 6 + "px";
+      anchorPop(pop, { getBoundingClientRect: () => r }, 300);
       const screenFor = (c) => canvas.artboards.find((a) => urlPath(a.url) === c.url);
       pop.innerHTML = (cm.list.length ? cm.list.map((c, i) => {
         const a = screenFor(c);
@@ -2638,8 +2681,7 @@ export function studioPage(appPath) {
     pop.hidden = !pop.hidden;
     if (!pop.hidden) {
       const r = e.currentTarget.getBoundingClientRect();
-      pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 328)) + "px";
-      pop.style.top = r.bottom + 6 + "px";
+      anchorPop(pop, { getBoundingClientRect: () => r }, 320);
       drawReview();
     }
   });
@@ -2749,8 +2791,7 @@ export function studioPage(appPath) {
       note("Review ready: " + screens.length + " screens" + (there ? ", " + changed + " changed" : "") + ". Open it from Review.");
       const pop = $(".rv-pop");
       const r = $(".review-toggle").getBoundingClientRect();
-      pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 328)) + "px";
-      pop.style.top = r.bottom + 6 + "px";
+      anchorPop(pop, { getBoundingClientRect: () => r }, 320);
       pop.hidden = false;
       drawReview();
     } catch (e) { note("Couldn't make the review: " + e.message); }
@@ -3064,6 +3105,7 @@ export function studioPage(appPath) {
   $(".vs-toggle").addEventListener("click", () => {
     const pop = $(".vs-pop");
     pop.hidden = !pop.hidden;
+    if (!pop.hidden) anchorPop(pop, $(".vs-toggle"), pop.offsetWidth || 340);
     if (!pop.hidden) { drawVersions(); loadRefs(); const i = pop.querySelector("input"); if (i) i.focus(); }
   });
   addEventListener("keydown", (e) => { if (e.key === "Escape") $(".vs-pop").hidden = true; });

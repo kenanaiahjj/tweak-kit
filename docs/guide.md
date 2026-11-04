@@ -165,6 +165,8 @@ Nothing to do: the kit writes a `.gitignore` inside `.ui-tweaks/` that ignores e
 - Frames show the app edge to edge (no simulated status bar or notch, so nothing clips the app's header); the iPhone Duo draws its fold line. **Guides** draws columns (Auto picks 4 on phones, 8 on tablets, 12 on desktops; or choose 4, 8 or 12) and a baseline grid (a line every 4 or 8px, to check spacing and type sit on that rhythm); hold **\\** in the app to see the screen without your previews; **📷** (on hold: hidden for now, along with the Review page) copies a picture of it to the clipboard, ready to paste into Slack, a doc or a deck (Shift-click also saves a PNG). Chrome asks which tab to capture each time; pick this one.
 
 **Versions: another branch side by side**
+- **Widths** shows the screen you're editing with the same screen at phone (390), tablet (768) and laptop (1280) widths beside it, at their real sizes. They follow the screen as you navigate, and your edits preview on all of them, so you see at once whether a change holds up at every breakpoint. Widths and a version comparison take turns: turning one on hides the other.
+- **Flow map** (in **▦**): every tap that took the app to another screen, recorded as you click through in Interact, drawn as screens with arrows labelled with what you tapped. A screen is its URL plus its main heading, so apps that switch screens in place get a card per screen. Click a card to open that screen. It's saved in `.ui-tweaks/flows.json` and kept in git, so the team sees the same map; **Clear the map** starts over.
 - **⑂ Versions** lists your branches (local, then remote); pick one, or type a commit or tag, to show that version of the app next to the screen you're editing. Each screen has a badge on top saying which version it is: your checkout on the left in blue (**Editing**, noting uncommitted changes), the other branch on the right in amber (**Comparing · view only**), each with its commit, and each frame outlined in its colour.
 - The other version runs from its own checkout (a git worktree in `~/.cache/ui-tweak-kit/worktrees`, outside your project), so your files, branch and uncommitted work are never touched, and nothing that scans your project sees a second copy of the code. It reuses your `node_modules` when the lockfile matches (opening takes seconds) and installs that version's dependencies when it doesn't; `.env` files are copied over. Then it starts that version's own dev server on a free port, with your project's Vite config as the branch has it. Vite, Next.js and plain HTML projects work.
 - Both sides follow along: the same screen, device and width, and the other side copies your navigation and scrolling (the page, or a scrolling panel in the same place). Next.js projects follow the screen but not the scrolling. **Interact / Inspect** (C and V; in the toolbar): Interact (where the studio starts) lets you use both apps, to compare how they behave; Inspect is the usual editing, where clicks pick elements. With **⇆ Mirror clicks** on (the default), your clicks and typing on the left are repeated on the right, so both walk through the same flow: it finds the same element in the same place, or a control with the same text if the layout moved, and tells you when the other version has nothing to match. Turn it off to click through each side on its own. **⟲ Match** reloads both sides at the screen's own starting state (its URL, `?fixture=` and `?screen=`): use it when an app that switches screens without changing the URL has drifted apart on the two sides. Find screens also asks Claude to keep `?screen=` in the URL as you move around in development, so the other side can follow.
@@ -262,6 +264,8 @@ Select an element, optionally type a direction in **Ask Claude** ("bolder", "mor
 - **Motion** (panel section): an element's transition (which properties, duration, delay, easing) and animation, with named easing curves (Smooth out, Snappy, In-out, Overshoot, and the CSS ones) and **▶ Replay**, which restarts its animations and plays the hover transition there and back. It flags durations that are long for a control, slow-start easing and `transition: all`. **＋ Add transition** gives an element without one a 200ms ease-out on colour, shadow, transform and opacity.
 - **Images** (panel section, for an `<img>` or a background image): **Replace…**, or drop a file on the picture. The file is saved in the project (`public/images/` when there's a `public/` folder or a `package.json`, else `images/`), the page shows it at once, and on Send the source gets the new path (a plain `src="…"` is written directly; an imported image goes to Haiku). Alt text is edited there too.
 - **Make component** (element header): Claude turns the element into a reusable component in its own file, following the project's conventions, with props for what differs between uses; it uses it here and replaces copies of the same markup elsewhere. Undo apply reverts it.
+- **Keyboard** (part of every check): anything that looks clickable but Tab never reaches, controls whose focus ring is turned off with nothing in its place, and Tab jumping back up the screen. **Show tab order** (in the check, or ⌘K) numbers every stop Tab makes. **Fix with Claude** fixes these too.
+- **Worst-case data** (in the check, or ⌘K): every text on the screen swapped for its worst case (long names, unbroken emails, huge numbers, Greek, Japanese and Arabic names), on the page only, and the screen checked again, so text that spills out of a card, gets cut off or runs into other text shows up. **Real data** puts it back. Nothing is a tweak and nothing is written.
 - **Comments:** **Comment** in the element header (or **M** with an element selected) pins a note to it; ⌘Enter posts. **M** with nothing selected shows or hides the pins. A pin opens its note, with **Select**, **Delete** and **Resolve**. In the studio, **💬** shows how many are open, lists them by screen (a row goes to that screen and shows its pins) and **Hide pins**. They're saved in `.ui-tweaks/comments.json`, which is kept in git so the team sees them.
 - **⌘K** opens the command palette: type to find any action (select parent, duplicate, add auto layout, copy as code, insert, send…), any section or property ("padding-left" jumps to that field), or another screen in the studio. ↑/↓ and Enter run it.
 - **⌘⇧Z** (or Ctrl+Y, or ↷ in the bar) redoes what ⌘Z undid: styles, text, moves, removals, inserts and props alike.
@@ -300,13 +304,20 @@ Press **Send to Claude**. The toast tells you what happened, e.g. "Applied 3 dir
 
 **One commit per Send (optional).** With `uiTweaks({ commit: true })` (or `serve.mjs --commit`), what a Send writes directly is committed as `UI tweak: .card padding-top`. Only files that had no uncommitted changes are committed, so your work in progress is never swept in; otherwise the files are written and left uncommitted, and the toast says why. Haiku's edits and **Undo apply** are not committed.
 
-### Send to Paper
+### Send to Paper (and Figma)
 
-Bring what's in your app into [Paper](https://paper.design) as editable layers: a single element (the **send** icon in its header, or **Send to Paper** in the right-click menu), or the whole screen with nothing selected (**Send this screen to Paper** in the menu).
+Bring what's in your app into [Paper](https://paper.design) as editable layers:
 
-The panel captures it exactly as it renders, with every style inline from what the browser computed and no classes or scripts. It converts it to what Paper takes: block flows become flex columns, grids become flex rows with their cell widths, and fixed or absolute things are placed against their parent. Layers are named after components and classes. Images from your project become local files Paper can read, and a video shows its current frame.
+- **One element:** the **send** icon in its header, or **Send to Paper** in the ⌘K menu. **Shift-click** the icon (or **Send to Paper with its states**) to also send its hover, focus and pressed looks and the other colour scheme, each one that looks different as its own artboard ("Primary button · Hover", "Primary button · Dark").
+- **The screen:** with nothing selected, **Send this screen to Paper** in the ⌘K menu.
+- **Every screen:** in the studio's **▦** overview, **Send all to Paper**. Each screen loads on its own (like Check all) and they're placed side by side, in order.
+- **Figma:** the same actions have a **Send to Figma** version. Claude builds frames in your open Figma file with Figma's MCP tools, which need to be authorized in Claude Code (`/mcp`).
 
-Your Claude Code session (with the `ui-tweaks` mod) then places it in **the Paper file you have open**, as a new artboard at the captured size, using Paper's MCP tools: it turns any leftover margins into padding or gap, checks a screenshot, and tells you when it's in. Paper's desktop app needs to be open with its MCP server connected to Claude Code.
+The panel captures each exactly as it renders, with every style inline from what the browser computed and no classes or scripts. It converts it to what Paper takes: block flows become flex columns, grids become flex rows with their cell widths, and absolute things are placed against their parent. Layers are named after components and classes. Images from your project become local files Paper can read, and a video shows its current frame.
+
+Your Claude Code session (with the `ui-tweaks` mod) then places it in **the file you have open**, as a new artboard at the captured size: it turns any leftover margins into padding or gap, checks a screenshot, and tells you when it's in. Paper's desktop app needs to be open with its MCP server connected to Claude Code.
+
+**Pull changes back.** Once you've designed on it, **Pull changes back from Paper** (on the sent item in the panel's request list) has Claude read that artboard (the one you have selected, or the one with its name), compare it with the capture it was sent as, and change the source to match: only what differs, in your CSS, tokens and components. **Pull changes from Paper** (or Figma) in the ⌘K menu does the same for whatever you have selected there, without a capture to compare against.
 
 ### Design system page
 
@@ -369,7 +380,7 @@ An override applies to every element that JSX line renders. For a button rendere
 
 ## Files it creates
 
-All inside `<project>/.ui-tweaks/`, which ignores itself in git (except `canvas.json` and `comments.json`):
+All inside `<project>/.ui-tweaks/`, which ignores itself in git (except `canvas.json`, `comments.json` and `flows.json`):
 
 | File | What |
 | --- | --- |
@@ -378,7 +389,8 @@ All inside `<project>/.ui-tweaks/`, which ignores itself in git (except `canvas.
 | `history.json`, `history/slot-N.json` | Undo history: file copies for the last 10 applies |
 | `lock.json` | Which session is applying right now |
 | `comments.json` | Comments pinned to elements (kept in git) |
-| `paper/` | Elements and screens captured for Send to Paper (last 20), and their inline images |
+| `paper/` | Elements and screens captured for Send to Paper or Figma (last 40), and their inline images |
+| `flows.json` | The flow map: which tap leads from which screen to which (kept in git) |
 | `server.json` | The dev server's address (also registered in `~/.ui-tweaks/servers/`), so the mod finds the project even when its session started in another folder |
 
 ## Setting it up for a team

@@ -30,20 +30,35 @@ test("localizeImages: app files and data images become paper-asset paths, others
   assert.ok((await fs.stat(files[0])).isFile());
 });
 
-test("sendToPaper saves the capture and queues a paper ask", async () => {
+test("sendToPaper saves each capture and queues one paper ask", async () => {
   const root = await tmp();
   const ask = await sendToPaper(root, { html: '<div style="display:flex">Hi</div>', title: "Card", width: 320.4, height: 200, page: { url: "http://localhost/" } }, "http://localhost");
   assert.equal(ask.kind, "paper");
-  assert.match(ask.file, /^\.ui-tweaks\/paper\/p[a-z0-9]+\.html$/);
-  assert.equal(ask.width, 320);
+  assert.equal(ask.target, "paper");
+  assert.equal(ask.files.length, 1);
+  assert.match(ask.files[0].file, /^\.ui-tweaks\/paper\/p[a-z0-9]+\.html$/);
+  assert.equal(ask.files[0].width, 320);
   assert.equal(ask.title, "Card");
-  assert.equal(await fs.readFile(path.join(root, ask.file), "utf8"), '<div style="display:flex">Hi</div>');
-  assert.equal((await readAsks(root)).length, 1);
+  assert.equal(await fs.readFile(path.join(root, ask.files[0].file), "utf8"), '<div style="display:flex">Hi</div>');
+  const many = await sendToPaper(root, { screens: [{ html: "<div>A</div>", title: "A" }, { html: "<div>B</div>", title: "B" }, { html: " " }], whole: true, target: "figma" }, "http://localhost");
+  assert.equal(many.files.length, 2);
+  assert.equal(many.target, "figma");
+  assert.equal(many.instruction, "Send 2 screens to Figma");
+  assert.equal((await readAsks(root)).length, 2);
   await assert.rejects(sendToPaper(root, { html: "  " }, "http://localhost"), /Nothing to send/);
+  await assert.rejects(sendToPaper(root, { screens: Array.from({ length: 31 }, () => ({ html: "<div></div>" })) }, "http://localhost"), /Thirty/);
 });
 
-test("paper asks need a captured file", async () => {
+test("paper asks need captured files; pulls take one optionally", async () => {
   const root = await tmp();
-  await assert.rejects(addAsk(root, { kind: "paper", file: "../x.html" }), /captured file/);
-  await assert.rejects(addAsk(root, { kind: "paper", file: ".ui-tweaks/paper/../../x.html" }), /captured file/);
+  await assert.rejects(addAsk(root, { kind: "paper", files: [{ file: "../x.html" }] }), /captured files/);
+  await assert.rejects(addAsk(root, { kind: "paper", files: [{ file: ".ui-tweaks/paper/pabc.html" }, { file: ".ui-tweaks/paper/../../x.html" }] }), /captured files/);
+  await assert.rejects(addAsk(root, { kind: "paper" }), /captured files/);
+  const pull = await addAsk(root, { kind: "paper-pull", target: "figma", title: "Home", file: ".ui-tweaks/paper/pabc.html" });
+  assert.equal(pull.target, "figma");
+  assert.equal(pull.file, ".ui-tweaks/paper/pabc.html");
+  const bare = await addAsk(root, { kind: "paper-pull" });
+  assert.equal(bare.target, "paper");
+  assert.equal(bare.file, undefined);
+  await assert.rejects(addAsk(root, { kind: "paper-pull", file: "/etc/passwd" }), /captured file/);
 });

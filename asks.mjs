@@ -21,11 +21,15 @@ export async function readAsks(root) {
 
 export async function addAsk(root, body) {
   const kind = body && body.kind;
-  if (!["edit", "variations", "publish", "paper"].includes(kind)) throw Object.assign(new Error("kind is edit, variations, publish or paper"), { status: 400 });
+  if (!["edit", "variations", "publish", "paper", "paper-pull"].includes(kind)) throw Object.assign(new Error("kind is edit, variations, publish, paper or paper-pull"), { status: 400 });
   // publish: Claude publishes a saved review page (a file in .ui-tweaks/reviews) as a shareable page.
   if (kind === "publish" && !/^\.ui-tweaks\/reviews\/[a-z0-9-]+\.html$/.test(String(body.file || ""))) throw Object.assign(new Error("publish needs a review file"), { status: 400 });
   // paper: Claude places a captured element or screen (a file in .ui-tweaks/paper) in the open Paper file.
-  if (kind === "paper" && !/^\.ui-tweaks\/paper\/p[a-z0-9]+\.html$/.test(String(body.file || ""))) throw Object.assign(new Error("paper needs a captured file"), { status: 400 });
+  const captured = (f) => /^\.ui-tweaks\/paper\/p[a-z0-9]+\.html$/.test(String(f || ""));
+  const files = kind === "paper" && Array.isArray(body.files) ? body.files.filter((f) => f && captured(f.file)).slice(0, 30) : [];
+  if (kind === "paper" && (!files.length || files.length !== body.files.length)) throw Object.assign(new Error("paper needs captured files"), { status: 400 });
+  // paper-pull: Claude brings what was changed in the design tool back into the source (from the original capture, when there is one).
+  if (kind === "paper-pull" && body.file && !captured(body.file)) throw Object.assign(new Error("paper-pull takes a captured file"), { status: 400 });
   const instruction = String((body && body.instruction) || "").trim();
   if (!instruction && kind === "edit") throw Object.assign(new Error("Say what to change"), { status: 400 });
   const ask = {
@@ -43,7 +47,9 @@ export async function addAsk(root, body) {
     // Design skills to work from (names; the mod finds them among the installed ones), at most 3.
     ...(Array.isArray(body.skills) && body.skills.length ? { skills: body.skills.filter((n) => /^[a-z0-9][a-z0-9-]{0,60}$/.test(String(n))).slice(0, 3) } : {}),
     ...(kind === "publish" ? { file: body.file, title: String(body.title || "Design review").slice(0, 120) } : {}),
-    ...(kind === "paper" ? { file: body.file, title: String(body.title || "Screen").slice(0, 120), width: Math.round(Number(body.width)) || 0, height: Math.round(Number(body.height)) || 0, whole: !!body.whole } : {}),
+    ...(kind === "paper" ? { files: files.map((f) => ({ file: f.file, title: String(f.title || "Screen").slice(0, 120), width: Math.round(Number(f.width)) || 0, height: Math.round(Number(f.height)) || 0 })), title: String(body.title || "Screen").slice(0, 120), whole: !!body.whole } : {}),
+    ...(kind === "paper-pull" ? { ...(body.file ? { file: body.file } : {}), title: String(body.title || "").slice(0, 120) } : {}),
+    ...(kind === "paper" || kind === "paper-pull" ? { target: body.target === "figma" ? "figma" : "paper" } : {}),
     // Reference images attached in the panel (files the dev server saved in .ui-tweaks/refs).
     ...(Array.isArray(body.refs) && body.refs.length ? { refs: body.refs.filter((r) => /^\.ui-tweaks\/refs\/r[a-z0-9]+\.(png|jpg|webp|gif)$/.test(String(r))).slice(0, 6) } : {}),
     at: Date.now(),
@@ -87,7 +93,9 @@ async function readStatus(root) {
   return Promise.all(
     asks.map(async (a) => {
       const result = await readJson(path.join(dir(root), "asks", `${a.id}.json`), null);
-      return { id: a.id, kind: a.kind, instruction: a.instruction, at: a.at, page: a.page && a.page.url, selector: a.element && a.element.selector, status: (result && result.status) || "waiting", ...(result || {}) };
+      // A send to a design tool keeps what Pull changes back needs: where, which capture, and its name.
+      const design = a.kind === "paper" ? { target: a.target, title: a.title, capture: a.files && a.files[0] && a.files[0].file } : {};
+      return { id: a.id, kind: a.kind, instruction: a.instruction, at: a.at, page: a.page && a.page.url, selector: a.element && a.element.selector, ...design, status: (result && result.status) || "waiting", ...(result || {}) };
     }),
   );
 }

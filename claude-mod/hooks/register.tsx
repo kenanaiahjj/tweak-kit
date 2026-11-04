@@ -196,7 +196,8 @@ You may Read the source files named in the request to understand the component. 
 Answer with exactly one line of JSON and nothing after it:
 {"variants":[{"name":"<2-4 words>","why":"<one sentence>","changes":[{"target":":scope","prop":"padding","value":"16px 20px"}]},{"name":"<2-4 words>","why":"<one sentence>","html":"<div class=\\"card\\">…</div>","changes":[]}]}`
 
-type Ask = { id: string; kind: 'edit' | 'variations' | 'publish' | 'paper'; instruction: string; file?: string; title?: string; width?: number; height?: number; whole?: boolean; refs?: string[]; mode?: 'any' | 'styles' | 'layout'; scope?: 'screen'; skills?: string[]; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
+type Capture = { file: string; title: string; width?: number; height?: number }
+type Ask = { id: string; kind: 'edit' | 'variations' | 'publish' | 'paper' | 'paper-pull'; instruction: string; file?: string; files?: Capture[]; target?: 'paper' | 'figma'; title?: string; whole?: boolean; refs?: string[]; mode?: 'any' | 'styles' | 'layout'; scope?: 'screen'; skills?: string[]; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
 type AskOutcome = { status: 'running' | 'done' | 'failed'; startedAt?: number; summary?: string; needs?: string; files?: string[]; variants?: unknown[]; error?: string }
 
 /** The last line of an answer that parses as a JSON object. */
@@ -251,7 +252,7 @@ export function askPrompt(ask: Ask, root: string | null, skills: DesignSkill[] =
   const refNote = refs.length
     ? `Reference images from the person (look at each with Read before designing, and take their look, mood, colour and type cues; don't copy their content): ${refs.join(', ')}`
     : ''
-  const skillNote = skills.length && ask.kind !== 'publish' && ask.kind !== 'paper' ? designSkillNote(skills, ask.kind, chosen) : ''
+  const skillNote = skills.length && (ask.kind === 'edit' || ask.kind === 'variations') ? designSkillNote(skills, ask.kind, chosen) : ''
   if (ask.kind === 'edit') {
     return [`Design request: ${ask.instruction}`, `Screen: ${ask.page?.url ?? '?'}`, `Selected element: ${JSON.stringify(ask.element ?? {})}`, refNote, skillNote, where].filter(Boolean).join('\n')
   }
@@ -378,17 +379,45 @@ async function runAsks($: EngineInterface) {
   }
 }
 
-// What the main model gets for Send to Paper. The captured HTML is close to Paper's rules already (inline
-// styles, flex, absolute placement); the model finishes the job and writes it in pieces, as Paper wants.
-export function paperPrompt(file: string, title: string, ask: Pick<Ask, 'width' | 'height' | 'whole' | 'page'>): string {
-  const size = ask.width && ask.height ? `${ask.width}×${ask.height}px` : 'its own size'
+// What the main model gets for Send to Paper (or Figma). The captured HTML is close to Paper's rules already
+// (inline styles, flex, absolute placement); the model finishes the job and writes it in pieces.
+export function paperPrompt(files: Capture[], ask: Pick<Ask, 'whole' | 'page' | 'target' | 'title'>): string {
+  const figma = ask.target === 'figma'
+  const tool = figma ? 'Figma' : 'Paper'
   const from = ask.page?.url ? ` (from ${ask.page.url})` : ''
+  const sizeOf = (f: Capture) => (f.width && f.height ? `${f.width}×${f.height}px` : 'its captured size')
+  const first = files[0]?.title ?? 'Screen'
+  const what = files.length > 1 ? (ask.whole ? `these ${files.length} screens` : `these ${files.length} versions of “${ask.title ?? first}” (its states and colour schemes)`) : ask.whole ? 'this screen' : `the element “${first}”`
+  const list = files.map((f, i) => `${i + 1}. “${f.title}”, ${sizeOf(f)}: ${f.file}`).join('\n')
+  const steps = figma
+    ? `Steps: load the figma:figma-use and figma:figma-generate-design skills first and follow them. Work in the Figma file I have open. For each capture, build a frame named as listed, at its size, laid out left to right in this order with 80px between them, matching the HTML exactly with auto layout (flex), its fills, strokes, radii, effects and text styles; use the file's variables and styles where one matches a captured value exactly. If Figma's MCP server isn't connected or authorized, say so (it's authorized with /mcp) and stop.`
+    : `Steps: read Paper's guide first (get_guide "paper-mcp-instructions") if you haven't this session, and get_basic_info for the file. For each capture, create an artboard named as listed, at its size, with the root's background, laid out left to right in this order. Then write its HTML into it with write_html, one visual group per call (a header, a row, a card), top to bottom, keeping the captured styles and text.`
   return [
-    `Put ${ask.whole ? 'this screen' : `the element “${title}”`}${from} into my open Paper file, as editable layers that look exactly like it does in the app.`,
-    `The UI tweaks panel captured it as HTML at ${file}: every style is inline from what the browser computed, block flows are already flex columns, fixed and absolute things are placed against the root, layer-name attributes carry component names, and the app's images are paper-asset:// paths.`,
-    `Steps: read Paper's guide first (get_guide "paper-mcp-instructions") if you haven't this session, and get_basic_info for the file. Create a new artboard named “${title}” at ${size}, with the root's background. Then write the HTML into it with write_html, one visual group per call (a header, a row, a card), top to bottom, keeping the captured styles and text.`,
-    `Fix what Paper doesn't take as you go: no margin (turn it into the parent's padding or gap), no display:grid (rows of flex with the captured widths), no display:inline outside text spans, no tables. Keep the fonts, colours, sizes and spacing as captured; don't redesign or tidy anything.`,
-    `When it's all in, take a get_screenshot of the artboard, fix anything clipped or out of place (set the artboard to height fit-content if content runs past it), call finish_working_on_nodes, and tell me in one line that it's in Paper.`,
+    `Put ${what}${from} into my open ${tool} file, as editable layers that look exactly like they do in the app.`,
+    `The UI tweaks panel captured ${files.length > 1 ? 'them' : 'it'} as HTML: every style is inline from what the browser computed, block flows and grids are already flex, absolute things are placed against their parent (which is relative), layer-name attributes carry component and class names, and the app's images are paper-asset:// paths to local files.\n${list}`,
+    steps,
+    `Fix what ${tool} doesn't take as you go: no margin (turn it into the parent's padding or gap), no display:grid, no display:inline outside text spans, no tables. Keep the fonts, colours, sizes and spacing as captured; don't redesign or tidy anything.`,
+    figma
+      ? `When it's all in, screenshot the frames, fix anything clipped or out of place, and tell me in one line that it's in Figma.`
+      : `When it's all in, take a get_screenshot of each artboard, fix anything clipped or out of place (set an artboard to height fit-content if content runs past it), call finish_working_on_nodes, and tell me in one line that it's in Paper.`,
+  ].join('\n\n')
+}
+
+// Pull changes back: what was designed in Paper (or Figma) goes into the source.
+export function pullPrompt(ask: Pick<Ask, 'page' | 'target' | 'title' | 'file'>, root: string, original: string | null): string {
+  const figma = ask.target === 'figma'
+  const tool = figma ? 'Figma' : 'Paper'
+  const which = ask.title ? `the ${figma ? 'frame' : 'artboard'} I have selected in ${tool}, or else the one named “${ask.title}”` : `the ${figma ? 'frame' : 'artboard'} I have selected in ${tool}`
+  const read = figma
+    ? `Load the figma:figma-design-to-code skill and read the design with Figma's tools (get_design_context, get_variable_defs, get_screenshot) for exact values. If Figma's MCP server isn't connected or authorized, say so (it's authorized with /mcp) and stop.`
+    : `Read Paper's guide first (get_guide "paper-mcp-instructions") if you haven't this session, then read the design with get_selection, get_jsx, get_computed_styles and get_screenshot for exact values; never read sizes or colours from a screenshot.`
+  return [
+    `Bring the design changes from ${which} into the app's source${ask.page?.url ? ` (the screen at ${ask.page.url})` : ''}. The project is ${root}.`,
+    read,
+    original
+      ? `What the app looked like when it was sent to ${tool} is captured at ${original} (HTML with every style inline). Compare the design with it: the differences are what was designed. Change only those in the source, nothing that's the same.`
+      : `There's no capture of how it looked before, so compare the design with the running screen's source and change only what differs.`,
+    `Make the changes the way the project is written: its existing CSS files, tokens (CSS variables) and components, editing rules rather than adding inline styles, and keeping data, props and handlers. A changed text that comes from data stays data. Then tell me in a short list what you changed, and anything you left because it couldn't map to the code.`,
   ].join('\n\n')
 }
 
@@ -427,12 +456,20 @@ async function startNextAsk($: EngineInterface) {
   }
   // An element or screen to place in Paper: the main model does it (it has the Paper tools), in a turn of its own.
   if (next.kind === 'paper') {
-    const file = next.file ? inProject(next.file) : null
-    if (!file) return void (await writeOutcome($, next.id, { status: 'failed', error: 'No captured file.' }))
-    const title = next.title ?? 'Screen'
-    await writeOutcome($, next.id, { status: 'done', summary: 'Claude Code is placing it in your open Paper file.' })
-    $.clock.after(50, () => void $.prompt.submit({ text: paperPrompt(file, title, next) }))
-    $.ui.toast(`Sending "${title}" to Paper…`)
+    const files = (next.files ?? []).map((f) => ({ ...f, file: inProject(f.file) }))
+    if (!files.length) return void (await writeOutcome($, next.id, { status: 'failed', error: 'No captured file.' }))
+    const tool = next.target === 'figma' ? 'Figma' : 'Paper'
+    await writeOutcome($, next.id, { status: 'done', summary: `Claude Code is placing ${files.length > 1 ? `all ${files.length}` : 'it'} in your open ${tool} file.` })
+    $.clock.after(50, () => void $.prompt.submit({ text: paperPrompt(files, next) }))
+    $.ui.toast(`Sending ${files.length > 1 ? `${files.length} captures` : `"${next.title ?? files[0]?.title ?? 'Screen'}"`} to ${tool}…`)
+    return
+  }
+  // Changes made in the design tool, back into the source: the main model again (it has the design tools).
+  if (next.kind === 'paper-pull') {
+    const tool = next.target === 'figma' ? 'Figma' : 'Paper'
+    await writeOutcome($, next.id, { status: 'done', summary: `Claude Code is bringing the ${tool} changes into the code.` })
+    $.clock.after(50, () => void $.prompt.submit({ text: pullPrompt(next, projectRoot ?? '.', next.file ? inProject(next.file) : null) }))
+    $.ui.toast(`Pulling changes from ${tool}…`)
     return
   }
   if (next.kind === 'edit') {

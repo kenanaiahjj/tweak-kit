@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { lineStats, unifiedDiff } from '../hooks/diff'
-import { askOutcome, askPrompt, cleanVariants, lastJson, paperPrompt, parseReport, settle, summarize, verifyTweak } from '../hooks/register'
+import { askOutcome, askPrompt, cleanVariants, lastJson, paperPrompt, parseReport, pullPrompt, settle, summarize, verifyTweak } from '../hooks/register'
 
 const PENDING = JSON.stringify({
   version: 1,
@@ -319,15 +319,30 @@ test('a publish ask has the main model publish the review page, and is marked do
   expect(JSON.parse(outcome ?? '{}').status).toBe('done')
 })
 
-test('send to Paper: the prompt names the file, the artboard and Paper rules', () => {
-  const screen = paperPrompt('/p/.ui-tweaks/paper/pabc.html', 'Home · /', { width: 390, height: 844, whole: true, page: { url: 'http://localhost:5188/' } })
+test('send to Paper: the prompt names the files, the artboards and Paper rules', () => {
+  const screen = paperPrompt([{ file: '/p/.ui-tweaks/paper/pabc.html', title: 'Home · /', width: 390, height: 844 }], { whole: true, page: { url: 'http://localhost:5188/' } })
   expect(screen).toContain('Put this screen (from http://localhost:5188/) into my open Paper file')
-  expect(screen).toContain('/p/.ui-tweaks/paper/pabc.html')
-  expect(screen).toContain('artboard named “Home · /” at 390×844px')
+  expect(screen).toContain('1. “Home · /”, 390×844px: /p/.ui-tweaks/paper/pabc.html')
   expect(screen).toContain('get_guide')
   expect(screen).toContain('finish_working_on_nodes')
   expect(screen).toContain('no margin')
-  const element = paperPrompt('/p/x.html', 'Card', {})
-  expect(element).toContain('the element “Card”')
-  expect(element).toContain('at its own size')
+  const states = paperPrompt([{ file: '/a.html', title: 'Card' }, { file: '/b.html', title: 'Card · Hover' }], { title: 'Card' })
+  expect(states).toContain('these 2 versions of “Card”')
+  expect(states).toContain('2. “Card · Hover”, its captured size: /b.html')
+  const figma = paperPrompt([{ file: '/a.html', title: 'Card' }], { target: 'figma' })
+  expect(figma).toContain('open Figma file')
+  expect(figma).toContain('figma:figma-generate-design')
+  expect(figma).not.toContain('get_guide')
+})
+
+test('pull from Paper: compares with the original capture and edits the source', () => {
+  const p = pullPrompt({ title: 'Home', page: { url: 'http://localhost:5188/' } }, '/proj', '/proj/.ui-tweaks/paper/pabc.html')
+  expect(p).toContain('the artboard I have selected in Paper, or else the one named “Home”')
+  expect(p).toContain('The project is /proj.')
+  expect(p).toContain('captured at /proj/.ui-tweaks/paper/pabc.html')
+  expect(p).toContain('get_jsx')
+  const f = pullPrompt({ target: 'figma' }, '/proj', null)
+  expect(f).toContain('frame I have selected in Figma')
+  expect(f).toContain("There's no capture")
+  expect(f).toContain('figma:figma-design-to-code')
 })

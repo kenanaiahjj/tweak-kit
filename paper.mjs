@@ -5,7 +5,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { addAsk } from "./asks.mjs";
 
-const KEEP = 20;
+const KEEP = 40;
 const MAX = 1_000_000;
 const TYPES = { png: "png", jpeg: "jpg", jpg: "jpg", webp: "webp", gif: "gif", "svg+xml": "svg", avif: "avif" };
 
@@ -52,26 +52,39 @@ async function localPath(root, url, origin, assetsDir) {
   return null;
 }
 
+const name = (t, fallback) => String(t || fallback).slice(0, 120);
+
+/**
+ * Saves one capture or several (every screen, or an element's states) and queues one ask for them.
+ * target is "paper" or "figma": which design tool Claude places them in.
+ */
 export async function sendToPaper(root, body, origin) {
-  const html = String((body && body.html) || "");
-  if (!html.trim()) throw Object.assign(new Error("Nothing to send"), { status: 400 });
-  if (html.length > MAX) throw Object.assign(new Error("That's too big to send in one go: pick a smaller part"), { status: 413 });
+  const list = Array.isArray(body && body.screens) ? body.screens : [body || {}];
+  const screens = list.filter((x) => x && String(x.html || "").trim());
+  if (!screens.length) throw Object.assign(new Error("Nothing to send"), { status: 400 });
+  if (screens.length > 30) throw Object.assign(new Error("Thirty at most in one go"), { status: 413 });
+  for (const x of screens) if (String(x.html).length > MAX) throw Object.assign(new Error(`“${name(x.title, "A screen")}” is too big to send in one go: pick a smaller part`), { status: 413 });
   const dir = path.join(root, ".ui-tweaks", "paper");
   await fs.mkdir(dir, { recursive: true });
-  const id = `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  const out = await localizeImages(root, html, origin, path.join(dir, "assets"));
-  await fs.writeFile(path.join(dir, `${id}.html`), out);
+  const files = [];
+  for (const x of screens) {
+    const id = `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    await fs.writeFile(path.join(dir, `${id}.html`), await localizeImages(root, String(x.html), origin, path.join(dir, "assets")));
+    files.push({ file: `.ui-tweaks/paper/${id}.html`, title: name(x.title, "Screen"), width: x.width, height: x.height });
+  }
+  const keep = Math.max(KEEP, files.length);
   const old = (await fs.readdir(dir)).filter((n) => /^p[a-z0-9]+\.html$/.test(n)).sort();
-  for (const n of old.slice(0, Math.max(0, old.length - KEEP))) await fs.rm(path.join(dir, n), { force: true });
-  const title = String(body.title || "Screen").slice(0, 120);
+  for (const n of old.slice(0, Math.max(0, old.length - keep))) await fs.rm(path.join(dir, n), { force: true });
+  const target = body.target === "figma" ? "figma" : "paper";
+  const tool = target === "figma" ? "Figma" : "Paper";
+  const title = name(body.title || files[0].title, "Screen");
   return addAsk(root, {
     kind: "paper",
-    file: `.ui-tweaks/paper/${id}.html`,
+    target,
+    files,
     title,
-    width: body.width,
-    height: body.height,
     whole: !!body.whole,
     page: body.page || null,
-    instruction: `Send ${body.whole ? "the screen" : `“${title}”`} to Paper`,
+    instruction: files.length > 1 ? `Send ${files.length} ${body.whole ? "screens" : `versions of “${title}”`} to ${tool}` : `Send ${body.whole ? "the screen" : `“${title}”`} to ${tool}`,
   });
 }

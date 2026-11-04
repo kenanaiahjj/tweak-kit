@@ -1661,6 +1661,7 @@
     .off-token .btn { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
     .ck-pin { position: fixed; pointer-events: auto; min-width: 18px; height: 18px; margin: -9px 0 0 -9px; padding: 0 4px; border-radius: 9px; color: #fff; font: 700 10px/18px system-ui, -apple-system, sans-serif; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.4), 0 0 0 1.5px #fff; cursor: pointer; z-index: 2; }
     .ck-pin.ck-bad { background: #e5484d; }
+    .kb-pin { position: fixed; pointer-events: none; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 5px; background: #0d99ff; color: #fff; font: 700 10px/18px system-ui, -apple-system, sans-serif; text-align: center; font-variant-numeric: tabular-nums; box-shadow: 0 1px 4px rgba(0,0,0,.35), 0 0 0 1.5px #fff; z-index: 2; }
     .ck-pin.ck-warn { background: #d97706; }
     .ck-pin:hover, .ck-pin.on { transform: scale(1.2); z-index: 3; }
     .ck-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
@@ -1871,6 +1872,8 @@
     .arrange button.icon:hover { background: var(--hover); color: var(--text); }
     .arrange button.icon.danger:hover { background: rgba(229,72,77,.16); color: #ff8a8d; }
     .copy-as { margin-left: auto; display: inline-flex; align-items: center; gap: 1px; padding: 2px; border-radius: 8px; background: var(--bg2); }
+    .ask-pull { margin-top: 6px; height: 24px; padding: 0 9px; border: 0; border-radius: 6px; background: var(--bg2); color: var(--text); font-size: 11.5px; cursor: pointer; }
+    .ask-pull:hover { background: var(--hover); }
     .copy-as > span { padding: 0 6px 0 5px; color: var(--dim); font-size: 11px; }
     .copy-as button { flex: none; height: 22px; padding: 0 7px; border: 0; border-radius: 6px; background: transparent; color: var(--label); font-size: 11px; cursor: pointer; }
     .copy-as button:hover { background: var(--hover); color: var(--text); }
@@ -1990,7 +1993,7 @@
   <div class="pad p-t hidden"></div><div class="pad p-r hidden"></div><div class="pad p-b hidden"></div><div class="pad p-l hidden"></div>
   <div class="sel-box hidden"></div>
   <div class="tag hidden"></div>
-  <div class="multi-layer"></div><div class="sp-layer"></div><div class="cm-layer"></div><div class="cm-bubble hidden"></div><div class="ck-layer"></div>
+  <div class="multi-layer"></div><div class="sp-layer"></div><div class="cm-layer"></div><div class="cm-bubble hidden"></div><div class="ck-layer"></div><div class="kb-layer"></div>
   <div class="drag-ghost hidden"></div><div class="drop-line hidden"></div><div class="guide gv hidden"></div><div class="guide gh hidden"></div><div class="drag-tip hidden"></div>
   ${["nw", "n", "ne", "e", "se", "s", "sw", "w"].map((d) => `<div class="handle hidden" data-dir="${d}"></div>`).join("")}
   <div class="measure hidden"></div><div class="measure hidden"></div><div class="measure hidden"></div><div class="measure hidden"></div>
@@ -2136,6 +2139,7 @@
     drawnIdle = !active;
     if (state.showComments || pinsDrawn || bubble.id) drawPins();
     if (state.showCheck || checkPinsDrawn) { drawCheckPins(); checkPinsDrawn = !!state.showCheck; }
+    if (state.showTabOrder || tabPinsDrawn) { drawTabOrder(); tabPinsDrawn = !!state.showTabOrder; }
     requestAnimationFrame(loop);
   });
 
@@ -2350,7 +2354,7 @@
   // ---------- check this screen ----------
   // One pass over what's on screen: text contrast, tap targets, missing labels and hand-written values a
   // token could hold. Each finding is pinned on the page and listed in the panel; a click selects it.
-  const CHECK_KINDS = { layout: "Layout", contrast: "Contrast", tap: "Tap targets", label: "Labels", token: "Off-token values" };
+  const CHECK_KINDS = { layout: "Layout", contrast: "Contrast", tap: "Tap targets", label: "Labels", keyboard: "Keyboard", token: "Off-token values" };
   const shownEl = (el) => {
     if (!el.getClientRects().length) return false;
     const cs = getComputedStyle(el);
@@ -2408,6 +2412,37 @@
         if (r.width && r.height) texts.push({ el, r });
       }
     }
+    // Text past the edge of the box it sits in (a card, a pill, a tab): shown outside it, or cut off by it.
+    const boxOf = (el) => {
+      for (let p = el, d = 0; p && p !== document.body && d < 6; p = p.parentElement, d++) {
+        const cs = getComputedStyle(p);
+        if (cs.backgroundColor !== "rgba(0, 0, 0, 0)" || cs.backgroundImage !== "none" || parseFloat(cs.borderLeftWidth) > 0 || cs.boxShadow !== "none" || /hidden|clip/.test(cs.overflowX)) return { p, clips: /hidden|clip/.test(cs.overflowX) };
+      }
+      return null;
+    };
+    const spilled = new Set();
+    for (const t of texts) {
+      if (spilled.has(t.el)) continue;
+      const b = boxOf(t.el);
+      if (!b || b.p === document.documentElement) continue;
+      const br = b.p.getBoundingClientRect();
+      // The box itself (a pill, a badge) past the box it sits in.
+      const outer = b.p !== t.el || b.p.parentElement ? boxOf(b.p.parentElement) : null;
+      if (outer && outer.p !== document.documentElement && !spilled.has(b.p)) {
+        const or = outer.p.getBoundingClientRect();
+        const past = Math.max(br.right - or.right, or.left - br.left);
+        if (past > 2 && or.width >= 8) {
+          spilled.add(b.p);
+          issues.push({ kind: "layout", severe: true, el: b.p, what: outer.clips ? "cut off by its box" : "spills out of its box", detail: `${Math.round(past)}px past ${nameOf(outer.p)}` });
+        }
+      }
+      const out = Math.max(t.r.right - br.right, br.left - t.r.left);
+      if (out <= 2 || br.width < 8) continue;
+      const cs = getComputedStyle(t.el);
+      if (cs.textOverflow === "ellipsis") continue;
+      spilled.add(t.el);
+      issues.push({ kind: "layout", severe: true, el: t.el, what: b.clips ? "text cut off by its box" : "text spills out of its box", detail: `${Math.round(out)}px past ${nameOf(b.p)}` });
+    }
     // Text over text: two runs of text whose boxes cover a fair part of each other.
     const overlapped = new Set();
     for (let i = 0; i < texts.length; i++) {
@@ -2445,6 +2480,7 @@
       else if (el.matches('button, a[href], [role="button"], [role="link"]') && !accessibleName(el)) issues.push({ kind: "label", severe: true, el, what: `${el.tagName === "A" ? "link" : "button"} without a name`, detail: "screen readers announce nothing: add text or aria-label" });
       else if (el.matches('input:not([type="hidden"]):not([type="submit"]):not([type="button"]), select, textarea') && !labelled(el)) issues.push({ kind: "label", severe: !el.getAttribute("placeholder"), el, what: el.getAttribute("placeholder") ? "placeholder as the only label" : "field without a label", detail: "add a <label> or aria-label" });
     }
+    issues.push(...keyboardIssues(shown));
     // Off-token values on text and controls (the elements people see as the design), grouped per element.
     const scan = await loadTokenScan();
     if (scan && scan.tokens && scan.tokens.length) {
@@ -2457,7 +2493,165 @@
     issues.sort((a, b) => a.el.getBoundingClientRect().top - b.el.getBoundingClientRect().top || a.el.getBoundingClientRect().left - b.el.getBoundingClientRect().left);
     return issues;
   }
-  let checkPinsDrawn = false;
+  // ---------- keyboard ----------
+  const FOCUSABLE = 'a[href], button, input:not([type="hidden"]), select, textarea, summary, iframe, [tabindex], [contenteditable=""], [contenteditable="true"]';
+  // What Tab visits, in order: positive tabindex first (ascending), then the page order.
+  function tabOrder(shown = null) {
+    const list = [...document.body.querySelectorAll(FOCUSABLE)].filter((el) => !isOwn(el) && !el.disabled && el.tabIndex >= 0 && !el.closest("[inert], [aria-hidden='true']") && (shown ? shown.includes(el) : shownEl(el)));
+    const pos = list.filter((el) => el.tabIndex > 0).sort((a, b) => a.tabIndex - b.tabIndex);
+    return [...pos, ...list.filter((el) => el.tabIndex === 0)];
+  }
+  // Rules that hide the focus ring, and rules that give focus a look of their own.
+  let focusRules = null;
+  function focusRuleSets() {
+    if (focusRules && focusRules.version === sheetVersion) return focusRules;
+    const hide = [], show = [];
+    for (const sheet of document.styleSheets) {
+      if (sheet.ownerNode && isOwn(sheet.ownerNode)) continue;
+      let rules;
+      try { rules = sheet.cssRules; } catch { continue; }
+      const all = [];
+      collectRules(rules, sheet, [], all);
+      for (const { rule } of all) {
+        const st = rule.style;
+        if (!st || !rule.selectorText) continue;
+        const hides = /^(none|0px|0)$/.test(st.outlineStyle) || /^(none|0|0px)$/.test(st.outline) || st.outlineWidth === "0px" || st.outlineWidth === "0";
+        for (const part of rule.selectorText.split(",")) {
+          const focusy = /:focus(-visible|-within)?\b/.test(part);
+          const plain = part.replace(/:focus(-visible|-within)?\b/g, "").trim() || "*";
+          if (hides) hide.push(plain);
+          if (focusy && !hides && /outline|box-shadow|border|background|color|text-decoration/.test(st.cssText)) show.push({ sel: plain, within: /:focus-within/.test(part) });
+          else if (focusy && hides && /box-shadow|border|background|text-decoration/.test(st.cssText)) show.push({ sel: plain, within: false });
+        }
+      }
+    }
+    return (focusRules = { version: sheetVersion, hide, show });
+  }
+  const matchesAny = (el, sels) => sels.some((sel) => { try { return el.matches(sel); } catch { return false; } });
+  function keyboardIssues(shown) {
+    const out = [];
+    const order = tabOrder(shown);
+    const reach = new Set(order);
+    // Looks clickable (a pointer cursor, a click handler) but Tab never gets there.
+    for (const el of shown) {
+      if (reach.has(el) || el.closest(FOCUSABLE) || el.querySelector(FOCUSABLE) || el.closest("label")) continue;
+      const cs = getComputedStyle(el);
+      const handler = el.hasAttribute("onclick") || el.matches('[role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="checkbox"], [role="switch"]');
+      if ((cs.cursor === "pointer" && (!el.parentElement || getComputedStyle(el.parentElement).cursor !== "pointer")) || handler) {
+        out.push({ kind: "keyboard", severe: true, el, what: "can't be reached with Tab", detail: "it looks clickable: use a <button> or <a href>, or add tabindex=\"0\" and Enter/Space handling" });
+      }
+    }
+    // No visible focus: the ring is turned off and nothing takes its place.
+    const { hide, show } = focusRuleSets();
+    for (const el of order) {
+      if (!matchesAny(el, hide)) continue;
+      const own = show.some((x) => { try { return x.within ? !!el.closest(x.sel) : el.matches(x.sel); } catch { return false; } });
+      if (!own) out.push({ kind: "keyboard", severe: true, el, what: "no visible focus", detail: "its outline is turned off and no :focus style replaces it, so keyboard users can't see where they are" });
+    }
+    // Tab jumps back up the screen: the reading order and the Tab order disagree.
+    for (let i = 1; i < order.length; i++) {
+      const a = order[i - 1].getBoundingClientRect(), b = order[i].getBoundingClientRect();
+      if (b.bottom < a.top - 8 && !(order[i].tabIndex === 0 && order[i - 1].tabIndex > 0)) out.push({ kind: "keyboard", severe: order[i].tabIndex > 0 || order[i - 1].tabIndex > 0, el: order[i], what: `Tab ${i + 1} jumps back up`, detail: `it comes after ${nameOf(order[i - 1])}, below it, so focus moves against the reading order` });
+    }
+    return out;
+  }
+  // Tab order on the screen: a numbered pin on everything Tab visits (⌘K: Show tab order).
+  function drawTabOrder() {
+    const list = state.showTabOrder ? tabOrder() : [];
+    reuse(".kb-layer", list.length, "kb-pin").forEach((p, i) => {
+      const r = list[i].getBoundingClientRect();
+      p.textContent = String(i + 1);
+      p.title = `Tab ${i + 1}: ${nameOf(list[i])}`;
+      p.style.left = Math.max(10, Math.min(innerWidth - 10, r.left + 2)) + "px";
+      p.style.top = Math.max(10, r.top + 2) + "px";
+    });
+  }
+  function toggleTabOrder(on = !state.showTabOrder) {
+    state.showTabOrder = on;
+    drawTabOrder();
+    if (on) toast(`${tabOrder().length} stops for Tab on this screen`);
+  }
+
+  // ---------- flow map ----------
+  // A click that takes the app to another screen is a step on the studio's flow map: from (URL and main
+  // heading, for apps that switch screens in place), via (what was clicked), to. Only real clicks while
+  // using the app (not picking), and never during worst-case data.
+  function screenKey() {
+    const h = [...document.body.querySelectorAll("h1, h2, [role=heading]")].find((n) => !isOwn(n) && shownEl(n) && n.textContent.trim());
+    return { url: location.pathname + location.search + location.hash, heading: h ? h.textContent.trim().replace(/\s+/g, " ").slice(0, 80) : "" };
+  }
+  let flowClick = null;
+  document.addEventListener("click", (e) => {
+    if (!e.isTrusted || (state.isOpen && state.isPicking) || worst.on || !(e.target instanceof Element) || isOwn(e.target)) return;
+    if (STUDIO && !IS_PRIMARY) return; // the frames beside it (other widths) would record it twice
+    const el = e.target.closest(INTERACTIVE) || e.target;
+    const via = String(el.getAttribute("aria-label") || el.getAttribute("title") || el.innerText || el.textContent || (el.querySelector("img[alt]") || {}).alt || "").trim().replace(/\s+/g, " ").slice(0, 80);
+    const from = screenKey();
+    const shot = (k) => { try { STUDIO && STUDIO.__studio && STUDIO.__studio.flowShot && STUDIO.__studio.flowShot(k.url + " | " + k.heading); } catch {} };
+    shot(from);
+    // A later click takes over: the screen change is its doing, not this one's.
+    const token = (flowClick = {});
+    let sent = false;
+    for (const wait of [250, 700, 1500]) setTimeout(() => {
+      if (sent || flowClick !== token) return;
+      const to = screenKey();
+      if (to.url === from.url && to.heading === from.heading) return;
+      sent = true;
+      setTimeout(() => shot(screenKey()), 600); // once the new screen has settled
+      fetch(API + "/flows", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from, to, via }) }).catch(() => {});
+    }, wait);
+  }, true);
+
+  // ---------- worst-case data ----------
+  // Every text on the screen swapped for its worst case (long names, unbroken emails, huge numbers, other
+  // scripts), on the page only: nothing is a tweak and nothing is written. Off puts the real text back.
+  const WORST = {
+    word: ["Wolfeschlegelsteinhausenbergerdorff", "Hubert Blaine Wolfeschlegelsteinhausenbergerdorff Sr.", "Maximiliana Alexandrina de los Santos-Villanueva"],
+    script: ["Χαράλαμπος Παπαδοπουλόπουλος", "アレクサンドラ・ヴィクトリア・ミラー", "عبد الرحمن بن محمد الشمري", "Nguyễn Thị Minh Khai Phương"],
+    email: "maximiliana.alexandrina.delossantosvillanueva@extraordinarily-long-company-domain.example.com",
+  };
+  const worst = { on: false, nodes: new Map() };
+  function worstText(t, i) {
+    const s = t.trim();
+    if (/^\S+@\S+\.\S+$/.test(s)) return t.replace(s, WORST.email);
+    if (/^[^A-Za-z]*\d[\d\s,.:%$€£¥+\-/]*$/.test(s)) return t.replace(/\d[\d,.]*/g, (m) => (m.length > 6 ? "9,999,999,999" : "9,999,999"));
+    const words = s.split(/\s+/).length;
+    if (words <= 4) return t.replace(s, i % 4 === 3 ? WORST.script[i % WORST.script.length] : s + " " + WORST.word[i % WORST.word.length]);
+    return t.replace(s, s + " " + s);
+  }
+  function worstCase(on = !worst.on) {
+    if (on === worst.on) return;
+    worst.on = on;
+    if (on) {
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      let n, i = 0;
+      while ((n = walker.nextNode())) {
+        const p = n.parentElement;
+        if (!p || isOwn(p) || !n.textContent.trim() || p.closest("script, style, noscript, template, svg, textarea, code, pre") || !shownEl(p)) continue;
+        const to = worstText(n.textContent, i++);
+        if (to === n.textContent) continue;
+        worst.nodes.set(n, { from: n.textContent, to });
+        n.textContent = to;
+      }
+      for (const f of document.querySelectorAll("input:not([type]), input[type=text], input[type=email], input[type=search]")) {
+        if (isOwn(f) || !shownEl(f) || !f.value) continue;
+        worst.nodes.set(f, { from: f.value, to: f.type === "email" ? WORST.email : f.value + " " + WORST.word[0], field: true });
+        f.value = worst.nodes.get(f).to;
+      }
+      toast(`Worst case on: ${worst.nodes.size} texts and fields swapped (on the page only). Checking the screen…`);
+      runCheck();
+    } else {
+      for (const [n, w] of worst.nodes) {
+        if (w.field) { if (n.value === w.to) n.value = w.from; }
+        else if (n.isConnected && n.textContent === w.to) n.textContent = w.from;
+      }
+      worst.nodes.clear();
+      toast("Worst case off: the real text is back");
+    }
+    render();
+  }
+
+  let checkPinsDrawn = false, tabPinsDrawn = false;
   function drawCheckPins() {
     const list = state.showCheck && state.check && !state.check.running ? state.check.issues.filter((i) => i.el.isConnected && !state.check.hidden.has(i.kind)) : [];
     reuse(".ck-layer", list.length, "ck-pin").forEach((p, i) => {
@@ -2515,15 +2709,24 @@
     }
     box.append(kinds);
     if (c.at && c.at !== here()) box.append(lbl("This was another screen: check again for this one."));
-    const fixable = c.issues.filter((i) => (i.kind === "label" || i.kind === "contrast" || i.kind === "layout") && !c.hidden.has(i.kind) && i.el.isConnected);
+    // Stress the screen, and see the keyboard's path through it.
+    const tools = document.createElement("div");
+    tools.className = "crumbs ck-tools";
+    const wc = Object.assign(document.createElement("button"), { textContent: worst.on ? "Real data" : "Worst-case data", title: worst.on ? "Put the real text back" : "Swap every text for its worst case (long names, unbroken emails, huge numbers, other scripts) on the page only, then check again" });
+    wc.addEventListener("click", () => worstCase());
+    const to = Object.assign(document.createElement("button"), { textContent: state.showTabOrder ? "Hide tab order" : "Show tab order", title: "Number everything Tab visits, in order" });
+    to.addEventListener("click", () => { toggleTabOrder(); render(); });
+    tools.append(wc, to);
+    box.append(tools);
+    const fixable = c.issues.filter((i) => (i.kind === "label" || i.kind === "contrast" || i.kind === "layout" || i.kind === "keyboard") && !c.hidden.has(i.kind) && i.el.isConnected);
     if (fixable.length) {
-      const fix = Object.assign(document.createElement("button"), { className: "btn primary ck-fix", textContent: `Fix ${fixable.length} with Claude`, title: "Claude fixes the layout, contrast and label findings in the source (Undo apply reverts it)" });
+      const fix = Object.assign(document.createElement("button"), { className: "btn primary ck-fix", textContent: `Fix ${fixable.length} with Claude`, title: "Claude fixes the layout, contrast, label and keyboard findings in the source (Undo apply reverts it)" });
       fix.addEventListener("click", () => {
         const lines = fixable.map((i) => {
           const d = describe(i.el);
           return `- ${CHECK_KINDS[i.kind]}: ${nameOf(i.el)} ${i.what}, ${i.detail}. Selector: ${d.selector}${d.react && d.react.jsxSource ? `, JSX at ${d.react.jsxSource}` : ""}`;
         });
-        ask("edit", null, `Fix these findings from a check of the screen ${here()} at ${innerWidth}px wide, keeping the design's look (for layout, make it fit the width without hiding content; for contrast, adjust the colour as little as needed, preferring the project's tokens; for labels, add real text, alt or aria-label that says what it is):\n${lines.join("\n")}`);
+        ask("edit", null, `Fix these findings from a check of the screen ${here()} at ${innerWidth}px wide, keeping the design's look (for layout, make it fit the width without hiding content; for contrast, adjust the colour as little as needed, preferring the project's tokens; for labels, add real text, alt or aria-label that says what it is; for keyboard, make it a real button or link (or focusable with Enter and Space), give focus a visible style that fits the design, and put the Tab order in reading order):\n${lines.join("\n")}`);
       });
       box.append(fix);
     }
@@ -4343,19 +4546,20 @@
     }
     return bottom > top ? bottom - top : 0;
   }
+  // Layer names: a component's name on its root element, else the first class (or id), made readable.
+  function paperName(el) {
+    const compOf = (n) => { const r = n && n !== document.body ? reactInfo(n) : null; return (r && r.components && r.components[0] && r.components[0].name) || ""; };
+    const comp = compOf(el);
+    if (comp && comp !== compOf(el.parentElement)) return comp;
+    const raw = (el.classList[0] || el.id || "").replace(/[-_]+/g, " ").trim();
+    return raw ? raw[0].toUpperCase() + raw.slice(1) : "";
+  }
   function paperHtml(root) {
     const rootBox = root.getBoundingClientRect();
     const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     const abs = (u) => { try { return new URL(u, location.href).href; } catch { return u; } };
     const px = (n) => Math.round(n * 100) / 100 + "px";
-    // Layer names: a component's name on its root element, else the first class (or id), made readable.
-    const compOf = (n) => { const r = n && n !== document.body ? reactInfo(n) : null; return (r && r.components && r.components[0] && r.components[0].name) || ""; };
-    const nameOf = (el) => {
-      const comp = compOf(el);
-      if (comp && comp !== compOf(el.parentElement)) return comp;
-      const raw = (el.classList[0] || el.id || "").replace(/[-_]+/g, " ").trim();
-      return raw ? raw[0].toUpperCase() + raw.slice(1) : "";
-    };
+    const nameOf = paperName;
     let count = 0;
     const placed = (n) => { const p = getComputedStyle(n).position; return p === "absolute" || p === "fixed"; };
     // Absolute things are placed against their parent's padding box (the parent is made relative).
@@ -4529,21 +4733,87 @@
     }
     return n;
   }
-  async function sendToPaper(el) {
+  // An element's other looks, for a designer: each state with rules of its own (forced on the element, the
+  // way the panel previews states), and the other colour scheme. Each one that looks different is captured.
+  async function captureStates(el, base) {
+    const out = [];
+    for (const [st, label] of [["hover", "Hover"], ["focus-visible", "Focus"], ["active", "Pressed"]]) {
+      const lines = [];
+      for (const sheet of document.styleSheets) {
+        let rules;
+        try { rules = sheet.cssRules; } catch { continue; }
+        const all = [];
+        collectRules(rules, sheet, [], all);
+        for (const { rule } of all) {
+          if (!rule.selectorText || !rule.selectorText.includes(`:${st}`)) continue;
+          const parts = rule.selectorText.split(",").filter((p) => p.includes(`:${st}`)).map((p) => p.trim().split(`:${st}`).join(FORCE(st)));
+          if (parts.length) lines.push(`${parts.join(", ")} { ${rule.style.cssText} }`);
+        }
+      }
+      if (!lines.length) continue;
+      const tag = Object.assign(document.createElement("style"), { textContent: lines.join("\n") });
+      const had = el.getAttribute("data-ui-tweak-force");
+      el.setAttribute("data-ui-tweak-force", st);
+      document.head.append(tag);
+      try {
+        const cap = paperHtml(el);
+        if (cap.html !== base.html) out.push({ ...cap, label });
+      } finally {
+        tag.remove();
+        had === null ? el.removeAttribute("data-ui-tweak-force") : el.setAttribute("data-ui-tweak-force", had);
+      }
+    }
+    out.push(...(await captureOtherScheme(el, base)));
+    return out;
+  }
+  // The other colour scheme (dark when it's light): switched for a moment, captured, switched back.
+  async function captureOtherScheme(el, base) {
+    const was = forcedScheme;
+    const now = forcedScheme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const other = now === "dark" ? "light" : "dark";
+    setScheme(other);
+    try {
+      await new Promise((r) => setTimeout(r, 350)); // the app re-renders for its theme
+      const cap = paperHtml(el);
+      return cap.html !== base.html ? [{ ...cap, label: other === "dark" ? "Dark" : "Light" }] : [];
+    } finally {
+      setScheme(was);
+    }
+  }
+  // opts.target: "paper" (default) or "figma"; opts.states: also each state and the other colour scheme.
+  async function sendToPaper(el, opts = {}) {
     const target = el || paperScreenRoot();
+    const tool = opts.target === "figma" ? "Figma" : "Paper";
     const d = describe(target);
-    const title = el ? (d.react && d.react.components && d.react.components[0] ? d.react.components[0].name : d.classes[0] || d.tag) : (document.title || "Screen") + " · " + location.pathname;
+    const label = el && (el.innerText || "").trim().replace(/\s+/g, " ");
+    const title = el ? paperName(el) || (label && label.length <= 40 ? label : d.tag) : (document.title || "Screen") + " · " + location.pathname;
     try {
       const cap = paperHtml(target);
-      if (cap.html.length > 900000) return toast("That's too big to send in one go: pick a smaller part");
-      const res = await fetch(API + "/paper", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ html: cap.html, width: cap.width, height: cap.height, title, whole: !el, page: { url: here(), path: location.pathname } }) });
+      const screens = [{ ...cap, title }];
+      if (opts.states) for (const x of await captureStates(target, cap)) screens.push({ ...x, title: title + " · " + x.label });
+      if (screens.some((x) => x.html.length > 900000)) return toast("That's too big to send in one go: pick a smaller part");
+      const res = await fetch(API + "/paper", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ screens: screens.map(({ html, width, height, title }) => ({ html, width, height, title })), target: opts.target === "figma" ? "figma" : "paper", title, whole: !el, page: { url: here(), path: location.pathname } }) });
       const out = await res.json();
       if (!res.ok) throw new Error(out.error || res.statusText);
-      state.asks = [...(state.asks || []), { id: out.ask.id, kind: "paper", instruction: `Send ${el ? "“" + title + "”" : "this screen"} to Paper`, status: "waiting", page: here() }];
-      toast(`Sent to Claude Code: it places ${el ? "this element" : "the screen"} in your open Paper file`);
+      state.asks = [...(state.asks || []), { id: out.ask.id, kind: "paper", instruction: out.ask.instruction, status: "waiting", page: here() }];
+      toast(`Sent to Claude Code: it places ${screens.length > 1 ? `all ${screens.length}` : el ? "this element" : "the screen"} in your open ${tool} file`);
       render();
     } catch (error) {
       toast("Couldn't send it (" + error.message + ")");
+    }
+  }
+  // Pull changes back: what was designed in Paper (or Figma) on a capture goes into the source.
+  async function pullFromDesign(opts = {}) {
+    const tool = opts.target === "figma" ? "Figma" : "Paper";
+    try {
+      const res = await fetch(API + "/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "paper-pull", target: opts.target === "figma" ? "figma" : "paper", file: opts.capture || undefined, title: opts.title || "", page: { url: opts.page || here(), path: location.pathname }, instruction: `Bring the ${tool} changes${opts.title ? ` to “${opts.title}”` : ""} into the code` }) });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error || res.statusText);
+      state.asks = [...(state.asks || []), { id: out.ask.id, kind: "paper-pull", instruction: out.ask.instruction, status: "waiting", page: here() }];
+      toast(`Sent to Claude Code: it reads ${opts.title ? "that design" : `what you have selected in ${tool}`} and changes the code to match`);
+      render();
+    } catch (error) {
+      toast("Couldn't ask for it (" + error.message + ")");
     }
   }
 
@@ -4745,7 +5015,13 @@
       top.append(what, st, x);
       item.append(top);
       if (a.status === "done" && a.kind === "edit") item.append(Object.assign(document.createElement("div"), { className: "ask-sub", textContent: `${a.summary ? a.summary + " · " : ""}${(a.files || []).join(", ")}. Undo apply puts it back.` }));
-      if (a.status === "done" && a.kind === "paper" && a.summary) item.append(Object.assign(document.createElement("div"), { className: "ask-sub", textContent: a.summary }));
+      if (a.status === "done" && (a.kind === "paper" || a.kind === "paper-pull") && a.summary) item.append(Object.assign(document.createElement("div"), { className: "ask-sub", textContent: a.summary }));
+      if (a.status === "done" && a.kind === "paper") {
+        const tool = a.target === "figma" ? "Figma" : "Paper";
+        const pull = Object.assign(document.createElement("button"), { className: "ask-pull", textContent: `Pull changes back from ${tool}`, title: `Once you've designed on it in ${tool}: Claude reads the ${tool === "Figma" ? "frame" : "artboard"} (the one selected, or “${a.title || ""}”), compares it with this capture and changes the code to match` });
+        pull.addEventListener("click", () => pullFromDesign({ target: a.target, title: a.title, capture: a.capture, page: a.page }));
+        item.append(pull);
+      }
       if (a.status === "failed") item.append(Object.assign(document.createElement("div"), { className: "ask-sub", textContent: a.needs ? `Claude asks: ${a.needs}` : a.error || "It didn't work out." }));
       if (a.status === "done" && a.kind === "variations") {
         for (const v of a.variants || []) {
@@ -4906,6 +5182,8 @@
       add("Copy Tailwind classes", "", () => copyCode(el, "tailwind"));
       add("Copy JSX", "", () => copyCode(el, "jsx"));
       add("Send to Paper", "", () => sendToPaper(el));
+      add("Send to Paper with its states", "hover, focus, pressed, dark", () => sendToPaper(el, { states: true }));
+      add("Send to Figma", "", () => sendToPaper(el, { target: "figma" }));
       add("Copy style", "⌘⌥C", () => copyStyle(el));
       add("Paste style", "⌘⌥V", () => pasteStyle(el));
       add("Apply to everywhere this style is used", "", () => setReach(el, "all"));
@@ -4918,7 +5196,12 @@
     });
     for (const [key, b] of Object.entries(BASICS)) add(`Insert ${b.label.toLowerCase()}`, "click to place", () => armInsert({ label: b.label.toLowerCase(), basic: key }));
     add("History", "🕘", () => { state.showHistory = true; render(); });
+    add(worst.on ? "Real data" : "Worst-case data", "long names, huge numbers, other scripts", () => worstCase());
+    add(state.showTabOrder ? "Hide tab order" : "Show tab order", "Tab", () => toggleTabOrder());
     add("Send this screen to Paper", "", () => sendToPaper(null));
+    add("Send this screen to Figma", "", () => sendToPaper(null, { target: "figma" }));
+    add("Pull changes from Paper", "what's selected in Paper", () => pullFromDesign({ title: "" }));
+    add("Pull changes from Figma", "what's selected in Figma", () => pullFromDesign({ target: "figma", title: "" }));
     add("Check this screen", "✓", runCheck);
     add("Undo", "⌘Z", undoPreview);
     add("Redo", "⌘⇧Z", redoPreview);
@@ -5180,8 +5463,8 @@
         copyAs.append(b);
       }
       arrange.append(copyAs);
-      const toPaper = setIcon(Object.assign(document.createElement("button"), { className: "icon", title: "Send to Paper: Claude Code places it in your open Paper file as editable layers" }), "send", "Paper");
-      toPaper.addEventListener("click", () => sendToPaper(el));
+      const toPaper = setIcon(Object.assign(document.createElement("button"), { className: "icon", title: "Send to Paper: Claude Code places it in your open Paper file as editable layers. Shift-click: with its hover, focus and pressed states and the other colour scheme" }), "send", "Paper");
+      toPaper.addEventListener("click", (e) => sendToPaper(el, { states: e.shiftKey }));
       arrange.append(toPaper);
       head.append(name, meta, crumbs, arrange, styleTools, layersTree(el));
       const states = document.createElement("div");
@@ -5814,7 +6097,7 @@
         for (const a of asks) {
           const before = (state.asks || []).find((o) => o.id === a.id);
           if (ownsPanel() && before && before.status !== a.status && a.page === here()) {
-            if (a.status === "done") toast(a.kind === "edit" ? `Claude finished: ${a.summary || (a.files || []).join(", ")}` : a.kind === "paper" ? a.summary || "Claude Code is placing it in Paper" : "Variations are ready in the panel");
+            if (a.status === "done") toast(a.kind === "edit" ? `Claude finished: ${a.summary || (a.files || []).join(", ")}` : a.kind === "paper" || a.kind === "paper-pull" ? a.summary || "Sent to Claude Code" : "Variations are ready in the panel");
             if (a.status === "failed") toast(a.needs ? `Claude has a question: ${a.needs}` : `Claude couldn't do it: ${a.error || ""}`);
           }
         }
@@ -6863,6 +7146,9 @@
     get showComments() { return state.showComments; },
     setComments: (on) => setComments(!!on),
     comment: (selector) => startComment(document.querySelector(selector)),
+    // Worst-case data on the page (true/false, or toggles), and the Tab order (true shows its pins).
+    worstCase: (on) => worstCase(on === undefined ? undefined : !!on),
+    tabOrder: (show) => { if (show !== undefined) toggleTabOrder(!!show); return tabOrder().map((el) => nameOf(el)); },
     // The Paper-ready HTML of a selector (or the screen), without sending it.
     paperHtml: (selector) => paperHtml(selector ? document.querySelector(selector) : paperScreenRoot()),
     // The findings without the panel (the studio's check of every screen), as plain data.

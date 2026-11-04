@@ -30,7 +30,7 @@ export function tweaksDir(root) {
 }
 
 // .ui-tweaks/ stays out of git, except the canvas layout, which is part of the project.
-const GITIGNORE = "*\n!.gitignore\n!canvas.json\n!comments.json\n";
+const GITIGNORE = "*\n!.gitignore\n!canvas.json\n!comments.json\n!flows.json\n";
 
 // ---------- the canvas ----------
 // .ui-tweaks/canvas.json: the studio's artboards (a screen + state + device each), notes and arrows.
@@ -141,6 +141,35 @@ export async function changeComments(root, method, body = {}, id = null) {
   }
   await writeComments(root, comments);
   return comments;
+}
+
+// ---------- flow map ----------
+// .ui-tweaks/flows.json: which tap leads from which screen to which, recorded as you click through the app
+// (kept in git, like comments). A screen is its URL plus its main heading, for apps that switch screens in place.
+async function readFlows(root) {
+  try {
+    return JSON.parse(await fs.readFile(path.join(tweaksDir(root), "flows.json"), "utf8")).flows || [];
+  } catch {
+    return [];
+  }
+}
+const screenOf = (x) => ({ url: clip((x && x.url) || "/", 500), heading: clip(x && x.heading, 80) });
+/** Records a step (from, to, via), counting repeats; DELETE clears the map. Returns the list. */
+export async function changeFlows(root, method, body = {}) {
+  let flows = await readFlows(root);
+  if (method === "DELETE") flows = [];
+  else {
+    const from = screenOf(body.from), to = screenOf(body.to), via = clip(body.via, 80).trim();
+    if (from.url + from.heading === to.url + to.heading) throw Object.assign(new Error("A step goes to another screen."), { status: 400 });
+    const same = flows.find((f) => f.from.url === from.url && f.from.heading === from.heading && f.to.url === to.url && f.to.heading === to.heading && f.via === via);
+    if (same) { same.count = (same.count || 1) + 1; same.at = Date.now(); }
+    else flows.push({ from, to, via, count: 1, at: Date.now() });
+    flows = flows.slice(-400);
+  }
+  await fs.mkdir(tweaksDir(root), { recursive: true });
+  await fs.writeFile(path.join(tweaksDir(root), ".gitignore"), GITIGNORE);
+  await fs.writeFile(path.join(tweaksDir(root), "flows.json"), JSON.stringify({ flows }, null, 2) + "\n");
+  return flows;
 }
 
 /** Appends outcomes to .ui-tweaks/log.json (newest last, last 300 kept). */
@@ -275,6 +304,28 @@ export function studioPage(appPath) {
   .width-slider { width: 120px; accent-color: var(--accent); flex: none; }
   .overview-pop { position: fixed; top: 44px; left: 12px; right: 300px; max-height: 72vh; overflow: auto; z-index: 20; background: var(--bar); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 16px 48px rgba(0,0,0,.5); padding: 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
   .overview-pop[hidden] { display: none; }
+  .ov-head { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; }
+  .overview-pop.flow { display: block; }
+  .overview-pop.flow .ov-head { margin-bottom: 10px; }
+  .ov-seg { display: inline-flex; padding: 2px; border-radius: 8px; background: rgba(255,255,255,.06); }
+  .ov-seg button { height: 22px !important; background: transparent !important; color: rgba(255,255,255,.6) !important; }
+  .ov-seg button.on { background: rgba(255,255,255,.14) !important; color: #fff !important; }
+  .fm { position: relative; min-width: 100%; }
+  .fm-lines { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+  .fm-lines path { fill: none; stroke: rgba(255,255,255,.4); stroke-width: 1.5; }
+  .fm-lines text { fill: rgba(255,255,255,.85); font: 500 11px system-ui, -apple-system, sans-serif; text-anchor: middle; paint-order: stroke; stroke: #212121; stroke-width: 4px; stroke-linejoin: round; }
+  .fm-card { position: absolute; display: flex; flex-direction: column; padding: 0; border: 0; border-radius: 10px; overflow: hidden; background: #2a2a2a; box-shadow: 0 0 0 1px rgba(255,255,255,.1), 0 6px 20px rgba(0,0,0,.35); cursor: pointer; transition: box-shadow .15s; text-align: left; }
+  .fm-card:hover { box-shadow: 0 0 0 1.5px #0d99ff, 0 6px 20px rgba(0,0,0,.35); }
+  .fm-card.off { cursor: default; opacity: .7; }
+  .fm-shot { flex: 1; min-height: 0; background: #1a1a1a; overflow: hidden; }
+  .fm-shot img { width: 100%; display: block; }
+  .fm-name { flex: none; padding: 7px 9px; font: 500 11.5px/1.3 system-ui, -apple-system, sans-serif; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fm-empty { max-width: 420px; padding: 24px 4px; color: rgba(255,255,255,.6); font: 13px/1.5 system-ui, -apple-system, sans-serif; text-wrap: pretty; }
+  .fm-empty b { display: block; margin-bottom: 4px; color: #fff; font-weight: 600; }
+  .ov-head b { flex: 1; font-weight: 600; font-size: 12.5px; color: rgba(255,255,255,.8); }
+  .ov-head button { height: 26px; padding: 0 10px; border: 0; border-radius: 7px; background: rgba(255,255,255,.08); color: #fff; font: 500 12px system-ui, -apple-system, sans-serif; cursor: pointer; transition: background-color .15s; }
+  .ov-head button:hover { background: rgba(255,255,255,.14); }
+  .ov-head button:active { transform: scale(0.96); }
   .ov-card { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; cursor: pointer; background: #1b1b1b; text-align: left; padding: 0; color: var(--text); }
   .ov-card:hover, .ov-card.on { border-color: var(--accent); }
   .ov-card .ov-shot { height: 190px; background: #111; display: grid; place-items: center; overflow: hidden; color: #555; font-size: 11px; }
@@ -335,6 +386,10 @@ export function studioPage(appPath) {
   .vs-label b { color: var(--text); font-weight: 600; }
   .viewport.versus .vs-label { display: block; }
   .vs-ab .ab-frame { background: #fff; }
+  .wd-ab .ab-frame { background: #fff; box-shadow: 0 0 0 calc(1px * var(--iz)) rgba(255,255,255,.14), 0 16px 48px rgba(0,0,0,.5); }
+  .wd-label { position: absolute; left: 0; right: 0; bottom: 100%; padding-bottom: calc(10px * var(--iz)); font: 500 calc(12px * var(--iz))/1.3 system-ui, -apple-system, sans-serif; color: var(--dim); white-space: nowrap; }
+  .wd-label b { color: var(--text); font-weight: 600; margin-right: .4em; }
+  .viewport:not(.widths) .wd-ab { display: none; }
   .vs-wait { position: absolute; inset: 0; display: grid; place-items: center; background: #1b1b1b; color: var(--dim); font-size: calc(14px * var(--iz)); text-align: center; padding: 24px; white-space: pre-wrap; }
   .vs-wait[hidden] { display: none; }
   .vs-pop { position: fixed; top: 44px; right: 348px; width: 340px; max-height: 70vh; display: flex; flex-direction: column; z-index: 20; background: var(--bar); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 16px 48px rgba(0,0,0,.5); overflow: hidden; }
@@ -637,6 +692,7 @@ export function studioPage(appPath) {
       <span class="tb-group focus-tools">
         <select class="focus-device" title="Device"></select>
         <button class="focus-turn" data-icon="rotate" title="Rotate">⟲</button>
+        <button class="wd-toggle" data-icon="widths" title="Every width at once: this screen at phone, tablet and laptop widths side by side; your edits show on all of them">Widths</button>
         <span class="ws"><input type="range" class="width-slider" min="280" max="1920" step="1" title="Width: drag to watch the layout respond (ticks are your breakpoints); pick a device to reset" /><span class="ws-ticks"></span></span>
       </span>
       <span class="tb-group focus-tools">
@@ -655,7 +711,7 @@ export function studioPage(appPath) {
       </span>
       <span class="tb-group">
         <button class="cm-toggle" data-icon="comment" title="Comments pinned to elements (M on a screen: pin one to the selected element)">💬</button>
-        <button class="ck-all-toggle" data-icon="check-circle" data-label="Check all" title="Check every screen: layout (also at 320px wide), contrast, tap targets, labels and off-token values, with the worst screens first">✓ All screens</button>
+        <button class="ck-all-toggle" data-icon="check-circle" data-label="Check all" title="Check every screen: layout (also at 320px wide), contrast, tap targets, labels, keyboard and off-token values, with the worst screens first">✓ All screens</button>
         <button class="ex-toggle" data-icon="sparkles" data-label="Explorations" hidden title="Your explorations: reopen the variations Claude made for an element">✦ Explorations</button>
         <button class="vs-toggle" data-icon="branch" data-label="Versions" title="Compare with another branch or commit, side by side">⑂ Versions</button>
         <span class="vs-modes"><button data-mode="interact" title="Interact (C): use the app; clicks go to it, not the panel">Interact</button><button data-mode="inspect" title="Inspect (V): click elements to select and tweak them">Inspect</button></span>
@@ -803,15 +859,17 @@ export function studioPage(appPath) {
   // Each screen keeps its zoom until you change its size.
   let focusPan = { x: 0, y: 0, id: null };
   const focusZoom = new Map(); // artboard id -> { z, size }
-  const fitZoom = (w, h) => Math.min(1, (viewport.clientWidth - 48) / w, (viewport.clientHeight - (versusOn() ? 110 : 48)) / h);
-  // With another version open, the canvas holds both screens and the gap between them.
+  const fitZoom = (w, h) => Math.min(1, (viewport.clientWidth - 48) / w, (viewport.clientHeight - (versusOn() || widthsOn() ? 110 : 48)) / h);
+  // With another version open, the canvas holds both screens and the gap between them; with Widths on,
+  // the screen and the other widths beside it.
   const VS_GAP = 64;
-  const spanW = (w) => (versusOn() ? w * 2 + VS_GAP : w);
+  const spanW = (w) => (versusOn() ? w * 2 + VS_GAP : widthsOn() ? w + otherWidths(w).reduce((t, x) => t + x.w + VS_GAP, 0) : w);
+  const spanH = (w, h) => (widthsOn() ? Math.max(h, ...otherWidths(w).map((x) => x.h)) : h);
   function zoomOf(a) {
     const [w, h] = size(a);
-    const key = w + "x" + h + (versusOn() ? ":vs" : "");
+    const key = w + "x" + h + (versusOn() ? ":vs" : widthsOn() ? ":wd" : "");
     let z = focusZoom.get(a.id);
-    if (!z || z.size !== key) focusZoom.set(a.id, (z = { z: Math.max(0.05, fitZoom(spanW(w), h)), size: key, auto: true }));
+    if (!z || z.size !== key) focusZoom.set(a.id, (z = { z: Math.max(0.05, fitZoom(spanW(w), spanH(w, h))), size: key, auto: true }));
     return z.z;
   }
   function layoutFocus() {
@@ -820,10 +878,11 @@ export function studioPage(appPath) {
     const [w, h] = size(a);
     const z = zoomOf(a);
     placeVersus(a);
-    const sw = spanW(w) * z, sh = h * z;
-    const vw = viewport.clientWidth, vh = viewport.clientHeight, pad = versusOn() ? 60 : 24;
+    placeWidths(a);
+    const sw = spanW(w) * z, sh = spanH(w, h) * z;
+    const vw = viewport.clientWidth, vh = viewport.clientHeight, pad = versusOn() || widthsOn() ? 60 : 24;
     const clamp = (v, size, room) => (size + pad * 2 <= room ? (room - size) / 2 : Math.min(pad, Math.max(room - size - pad, v)));
-    const id = a.id + ":" + w + "x" + h + (versusOn() ? ":vs" : "");
+    const id = a.id + ":" + w + "x" + h + (versusOn() ? ":vs" : widthsOn() ? ":wd" : "");
     if (focusPan.id !== id) focusPan = { x: (vw - sw) / 2, y: sh + pad * 2 <= vh ? (vh - sh) / 2 : pad, id };
     focusPan.x = clamp(focusPan.x, sw, vw);
     focusPan.y = clamp(focusPan.y, sh, vh);
@@ -965,6 +1024,14 @@ export function studioPage(appPath) {
   addEventListener("keyup", (e) => { if (e.code === "Space") setHand(false); });
   // The app's frames forward pinch-zoom and Space to the canvas (the overlay calls these).
   window.__studio = {
+    // The flow map's pictures: the screen on show, sketched as it is now, under its step key (URL | heading).
+    flowShot(key) {
+      if (flowShots.has(key)) return;
+      const a = current(), f = a && frames.get(a.id);
+      if (!f) return;
+      const [w, h] = size(a);
+      setTimeout(() => { const url = sketch(f, w, h); if (url) flowShots.set(key, url); }, 0);
+    },
     wheel(e, frame) {
       const r = viewport.getBoundingClientRect(), f = frame.getBoundingClientRect();
       const scale = f.width / frame.offsetWidth;
@@ -1282,6 +1349,7 @@ export function studioPage(appPath) {
 
   // Screens at a glance: a sketch of each screen that has been opened, drawn from its page.
   const sketches = new Map(); // artboard id -> { at, url }
+  const flowShots = new Map(); // flow map screen (URL | heading) -> sketch
   function sketch(f, w, h) {
     try {
       const d = f.iframe.contentDocument;
@@ -1301,6 +1369,15 @@ export function studioPage(appPath) {
   function drawOverview() {
     const pop = $(".overview-pop");
     pop.innerHTML = "";
+    // Every screen into a design tool, in this order, as editable layers.
+    const headRow = document.createElement("div");
+    headRow.className = "ov-head";
+    headRow.innerHTML = '<span class="ov-seg"><button data-view="grid"' + (view.flowMap ? "" : ' class="on"') + '>Screens</button><button data-view="flow"' + (view.flowMap ? ' class="on"' : "") + ' title="Which tap leads where, recorded as you click through the app in Interact">Flow map</button></span><b>' + canvas.artboards.length + ' screens</b><button data-target="paper" title="Each screen loads on its own and is captured; Claude Code places them side by side in your open Paper file">Send all to Paper</button><button data-target="figma" title="The same, into your open Figma file (needs the Figma MCP server authorized in Claude Code)">Send all to Figma</button>';
+    for (const b of headRow.querySelectorAll("button[data-target]")) b.addEventListener("click", () => { pop.hidden = true; sendAll(b.dataset.target); });
+    for (const b of headRow.querySelectorAll("button[data-view]")) b.addEventListener("click", () => { view.flowMap = b.dataset.view === "flow"; saveView(); drawOverview(); });
+    pop.append(headRow);
+    pop.classList.toggle("flow", !!view.flowMap);
+    if (view.flowMap) return void drawFlowMap(pop);
     for (const a of canvas.artboards) {
       const f = frames.get(a.id);
       const [w, h] = size(a);
@@ -1327,6 +1404,108 @@ export function studioPage(appPath) {
         setMode("focus", a.id);
       });
       pop.append(card);
+    }
+  }
+  // The flow map: every screen reached by a recorded tap, in columns by how many taps from the first one,
+  // with an arrow per tap labelled with what was tapped. A card opens its screen when it's one of yours.
+  async function drawFlowMap(pop) {
+    let flows = [];
+    try { flows = (await fetch("/__ui-tweaks/flows", { cache: "no-store" }).then((r) => r.json())).flows || []; } catch {}
+    if (!view.flowMap || pop.hidden) return;
+    const area = document.createElement("div");
+    area.className = "fm";
+    pop.append(area);
+    if (!flows.length) {
+      area.innerHTML = '<div class="fm-empty"><b>No steps yet</b>Switch to Interact (C) and click through your app: every tap that opens another screen is drawn here, with what you tapped. It is saved in .ui-tweaks/flows.json, so the team sees the same map.</div>';
+      return;
+    }
+    const key = (x) => x.url + " | " + x.heading;
+    const nodes = new Map();
+    for (const f of flows) for (const x of [f.from, f.to]) if (!nodes.has(key(x))) nodes.set(key(x), { ...x, out: [], col: -1 });
+    for (const f of flows) nodes.get(key(f.from)).out.push(f);
+    // Columns: taps from the first screen recorded (then from any screen not reached yet).
+    const queue = [];
+    const start = (n) => { if (n.col < 0) { n.col = 0; queue.push(n); } };
+    start(nodes.get(key(flows[0].from)));
+    const walk = () => { while (queue.length) { const n = queue.shift(); for (const f of n.out) { const t = nodes.get(key(f.to)); if (t.col < 0) { t.col = n.col + 1; queue.push(t); } } } };
+    walk();
+    for (const n of nodes.values()) if (n.col < 0) { start(n); walk(); }
+    const CW = 150, CH = 150, GX = 130, GY = 40, PAD = 16;
+    const cols = [];
+    for (const n of nodes.values()) (cols[n.col] ||= []).push(n);
+    cols.forEach((list, c) => list.forEach((n, r) => { n.x = PAD + c * (CW + GX); n.y = PAD + 18 + r * (CH + GY); }));
+    const W = PAD * 2 + cols.length * (CW + GX) - GX, H = PAD * 2 + 18 + Math.max(...cols.map((l) => l.length)) * (CH + GY) - GY + 30;
+    area.style.width = W + "px";
+    area.style.height = H + "px";
+    const shotFor = (a) => { const f = a && frames.get(a.id); let s = a && sketches.get(a.id); if (!s && f && f.seen) { const [w, h] = size(a); const url = sketch(f, w, h); if (url) sketches.set(a.id, (s = { at: Date.now(), url })); } return s; };
+    const boardFor = (n) => canvas.artboards.find((a) => urlPath(a.url) === n.url) || canvas.artboards.find((a) => urlPath(a.url).split("?")[0] === n.url.split("?")[0]);
+    let svg = '<svg class="fm-lines" width="' + W + '" height="' + H + '"><defs><marker id="fm-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L8 4L0 8z" fill="rgba(255,255,255,.55)"/></marker></defs>';
+    const seen = new Map();
+    for (const f of flows) {
+      const a = nodes.get(key(f.from)), b = nodes.get(key(f.to));
+      const pair = key(f.from) + ">" + key(f.to);
+      const k = seen.get(pair) || 0;
+      seen.set(pair, k + 1);
+      const lift = k * 16;
+      let d, lx, ly;
+      if (b.col > a.col) {
+        const x1 = a.x + CW, y1 = a.y + CH / 2 + lift, x2 = b.x, y2 = b.y + CH / 2 + lift, mx = (x1 + x2) / 2;
+        d = "M" + x1 + " " + y1 + " C" + mx + " " + y1 + " " + mx + " " + y2 + " " + (x2 - 2) + " " + y2;
+        lx = mx; ly = (y1 + y2) / 2 - 6;
+      } else {
+        // Back (or across the same column): a loop under the cards.
+        const x1 = a.x + CW / 2 + lift, y1 = a.y + CH, x2 = b.x + CW / 2 - lift, y2 = b.y + CH, dip = Math.max(y1, y2) + 34 + lift;
+        d = "M" + x1 + " " + y1 + " C" + x1 + " " + dip + " " + x2 + " " + dip + " " + x2 + " " + (y2 + 2);
+        lx = (x1 + x2) / 2; ly = dip - 8;
+      }
+      svg += '<path d="' + d + '" marker-end="url(#fm-head)"/>';
+      if (f.via) svg += '<text x="' + lx + '" y="' + ly + '">' + esc(f.via.length > 22 ? f.via.slice(0, 21) + "…" : f.via) + (f.count > 1 ? " ×" + f.count : "") + "</text>";
+    }
+    area.innerHTML = svg + "</svg>";
+    for (const n of nodes.values()) {
+      const a = boardFor(n);
+      const card = document.createElement("button");
+      card.className = "fm-card" + (a ? "" : " off");
+      Object.assign(card.style, { left: n.x + "px", top: n.y + "px", width: CW + "px", height: CH + "px" });
+      const own = flowShots.get(n.url + " | " + n.heading);
+      const s = own ? { url: own } : shotFor(a);
+      card.innerHTML = '<div class="fm-shot">' + (s ? '<img alt="" src="' + s.url + '">' : "") + '</div><div class="fm-name"></div>';
+      card.querySelector(".fm-name").textContent = n.heading || (a && a.name) || n.url;
+      card.title = n.url + (n.heading ? " · " + n.heading : "") + (a ? "\\nOpen this screen" : "\\nNot one of your screens: add it with ＋ to work on it");
+      if (a) card.addEventListener("click", () => { pop.hidden = true; select(a.id); setMode("focus", a.id); });
+      area.append(card);
+    }
+    const clear = Object.assign(document.createElement("button"), { className: "fm-clear", textContent: "Clear the map" });
+    clear.addEventListener("click", async () => { if (!confirm("Clear the recorded flow map?")) return; await fetch("/__ui-tweaks/flows", { method: "DELETE" }).catch(() => {}); drawOverview(); });
+    pop.querySelector(".ov-head").append(clear);
+  }
+  // Each screen loads in a hidden frame at its size (as Check all does), its panel captures it for Paper.
+  let sendingAll = false;
+  async function sendAll(target) {
+    if (sendingAll) return note("Already capturing the screens…");
+    sendingAll = true;
+    const tool = target === "figma" ? "Figma" : "Paper";
+    const screens = [];
+    try {
+      for (const [i, a] of canvas.artboards.entries()) {
+        note("Capturing " + (i + 1) + " of " + canvas.artboards.length + ": " + (a.name || a.url) + "…");
+        const [w, h] = size(a);
+        const frame = await loadHidden(a.url, w, h);
+        try {
+          const cap = await Promise.race([Promise.resolve().then(() => frame.contentWindow.__uiTweaks.paperHtml()), sleep(15000).then(() => null)]);
+          if (cap && cap.html && cap.html.length <= 900000) screens.push({ html: cap.html, width: cap.width, height: cap.height, title: a.name || a.url });
+        } catch {}
+        frame.remove();
+      }
+      if (!screens.length) return note("Couldn't capture any screen.");
+      const res = await fetch("/__ui-tweaks/paper", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ screens: screens.slice(0, 30), target, whole: true, title: document.title }) });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error || res.statusText);
+      note("Sent " + Math.min(30, screens.length) + " screens to Claude Code: it places them in your open " + tool + " file" + (screens.length > 30 ? " (the first 30)" : "") + (screens.length < canvas.artboards.length ? "; " + (canvas.artboards.length - screens.length) + " couldn't be captured" : ""));
+    } catch (error) {
+      note("Couldn't send them (" + error.message + ")");
+    } finally {
+      sendingAll = false;
     }
   }
   $(".fz-out").addEventListener("click", () => { const a = current(); a && zoomFocus(zoomOf(a) / 1.25); });
@@ -1588,7 +1767,7 @@ export function studioPage(appPath) {
   // Each screen loads in a hidden frame of its own size (and again at 320px wide, for layout only); its panel
   // runs the same check as ✓ in the panel. The report lists screens with the most failures first.
   const ckAll = { running: false, cancel: false, results: [] };
-  const CK_KINDS = { layout: "Layout", contrast: "Contrast", tap: "Tap targets", label: "Labels", token: "Off-token" };
+  const CK_KINDS = { layout: "Layout", contrast: "Contrast", tap: "Tap targets", label: "Labels", keyboard: "Keyboard", token: "Off-token" };
   function loadHidden(url, w, h) {
     return new Promise((resolve) => {
       const frame = document.createElement("iframe");
@@ -2235,12 +2414,59 @@ export function studioPage(appPath) {
     } catch (e) { note("Couldn't make the review: " + e.message); }
   }
 
+  // ---------- every width at once ----------
+  // The screen you're editing, then the same screen at phone, tablet and laptop widths beside it. They load
+  // the same URL and follow it as you navigate; your previews show on them too (every frame in the studio
+  // mirrors the edits of the one that holds the panel), so you see at once if a change breaks a breakpoint.
+  const WIDTHS = [["Phone", 390, 844], ["Tablet", 768, 1024], ["Laptop", 1280, 800]];
+  // Widths and a version comparison take turns: Widths hides the comparison (its server keeps running).
+  const widthsOn = () => !!view.widths && isFocus();
+  const otherWidths = (w) => WIDTHS.filter(([, x]) => Math.abs(x - w) > 60).map(([name, x, h]) => ({ name, w: x, h }));
+  const wdFrames = [];
+  function placeWidths(a) {
+    const on = widthsOn();
+    viewport.classList.toggle("widths", on);
+    $(".wd-toggle").classList.toggle("on", !!view.widths);
+    const [w] = size(a);
+    const list = on ? otherWidths(w) : [];
+    while (wdFrames.length < list.length) {
+      const el = document.createElement("div");
+      el.className = "ab wd-ab";
+      el.innerHTML = '<div class="wd-label"></div><div class="ab-frame"><iframe title="Another width"></iframe><div class="ab-layer"></div></div>';
+      world.append(el);
+      wdFrames.push({ el, label: el.querySelector(".wd-label"), frame: el.querySelector(".ab-frame"), iframe: el.querySelector("iframe"), layer: el.querySelector(".ab-layer"), src: null });
+    }
+    const f = frames.get(a.id);
+    const want = f ? pathOf(f) : a.url;
+    let x = a.x + w + VS_GAP;
+    wdFrames.forEach((wf, i) => {
+      const it = list[i];
+      wf.el.classList.toggle("hidden", !it);
+      if (!it) { if (wf.src) { wf.src = null; wf.iframe.src = "about:blank"; } return; }
+      Object.assign(wf.el.style, { left: x + "px", top: a.y + "px" });
+      Object.assign(wf.frame.style, { width: it.w + "px", height: it.h + "px" });
+      const label = "<b>" + it.name + "</b> " + it.w + "×" + it.h;
+      if (wf.label.__html !== label) { wf.label.__html = label; wf.label.innerHTML = label; }
+      if (wf.src !== want) { wf.src = want; wf.iframe.src = want; }
+      x += it.w + VS_GAP;
+    });
+  }
+  // Follow the edited screen as it navigates.
+  setInterval(() => { if (widthsOn()) { const a = current(); if (a) placeWidths(a); } }, 700);
+  $(".wd-toggle").addEventListener("click", () => {
+    const comparing = versusOn();
+    view.widths = !view.widths;
+    if (comparing) note("Widths on: the version comparison is hidden until you turn Widths off");
+    saveView();
+    fitFocus();
+  });
+
   // ---------- another version, side by side ----------
   // A branch or commit runs from its own checkout on its own dev server (see versions.mjs); its frame sits
   // to the right of the screen you're editing, the same size, and follows its scrolling and navigation.
   let versus = null; // { ref, status, url, sha, subject, when, error }
   let refsInfo = null;
-  const versusOn = () => !!(versus && view.versus);
+  const versusOn = () => !!(versus && view.versus && !view.widths);
   const vs = (() => {
     const el = document.createElement("div");
     el.className = "ab vs-ab hidden";
@@ -2421,6 +2647,7 @@ export function studioPage(appPath) {
     if (!$(".vs-pop").hidden) drawVersions();
   }
   async function openVersion(ref) {
+    view.widths = false; // the comparison takes the space Widths used
     const was = versusOn();
     view.versus = ref;
     saveView();
@@ -2745,6 +2972,16 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
           listener: await readListener(root),
         });
       }
+      if (url.pathname === `${PREFIX}/flows`) {
+        if (req.method === "GET") return send(res, 200, { flows: await readFlows(root) });
+        if (req.method === "POST" || req.method === "DELETE") {
+          try {
+            return send(res, 200, { flows: await changeFlows(root, req.method, req.method === "POST" ? JSON.parse((await readBody(req, 20_000)) || "{}") : {}) });
+          } catch (error) {
+            return send(res, error.status || 400, { error: error.message });
+          }
+        }
+      }
       if (url.pathname === `${PREFIX}/comments`) {
         if (req.method === "GET") return send(res, 200, { comments: await readComments(root) });
         if (["POST", "PATCH", "DELETE"].includes(req.method)) {
@@ -2820,7 +3057,7 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
       if (req.method === "POST" && url.pathname === `${PREFIX}/paper`) {
         try {
           const origin = `http://${req.headers.host || "localhost"}`;
-          return send(res, 200, { ok: true, ask: await sendToPaper(root, JSON.parse(await readBody(req, 2_000_000)), origin) });
+          return send(res, 200, { ok: true, ask: await sendToPaper(root, JSON.parse(await readBody(req, 40_000_000)), origin) });
         } catch (error) {
           return send(res, error.status || 500, { error: error.message });
         }

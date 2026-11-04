@@ -68,8 +68,8 @@
     sel.innerHTML = D.versions.map((v, i) => `<option value="${i}">${esc(v.label)}${i === D.versions.length - 1 ? " (latest)" : ""}</option>`).slice().reverse().join("");
     sel.value = String(S.vi);
     const v = version();
-    const changed = v.screens.filter((s) => statusOf(s) !== "same").length;
-    $(".hf-meta").textContent = [when(v.at), v.branch && v.commit ? v.branch + " @ " + v.commit + (v.dirty ? " + changes" : "") : "", prevVersion() ? (changed ? changed + " changed since " + prevVersion().label : "No changes since " + prevVersion().label) : v.screens.length + " screens"].filter(Boolean).join(" · ");
+    const changed = v.screens.filter((s) => statusOf(s) === "changed").length, added = v.screens.filter((s) => statusOf(s) === "new").length;
+    $(".hf-meta").textContent = [when(v.at), v.branch && v.commit ? v.branch + " @ " + v.commit + (v.dirty ? " + changes" : "") : "", prevVersion() ? (changed || added ? [changed && changed + " changed", added && added + " new"].filter(Boolean).join(", ") + " since " + prevVersion().label : "No changes since " + prevVersion().label) : v.screens.length + " screens"].filter(Boolean).join(" · ");
     $(".hf-meta").title = v.note || "";
     const app = $(".hf-app");
     app.hidden = !v.appUrl;

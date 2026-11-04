@@ -6,6 +6,8 @@ import { adoptToken, createToken, scanTokens, setToken } from "./tokens.mjs";
 import { systemPage } from "./system-page.mjs";
 import { addAsk, askStatus, cancelAsk } from "./asks.mjs";
 import { queueTokens, sendToPaper } from "./paper.mjs";
+import { exportHandoff, handoffData, readIndex, saveHandoff } from "./handoff.mjs";
+import { handoffPage } from "./handoff-page.mjs";
 import net from "node:net";
 import { jsxAt, toTailwind } from "./code.mjs";
 import { findRoutes as findAppRoutes } from "./routes.mjs";
@@ -823,6 +825,19 @@ export function studioPage(appPath) {
   .cn-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
   .cn-actions button { height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: rgba(255,255,255,.08); color: #fff; font: 500 12.5px system-ui, -apple-system, sans-serif; cursor: pointer; }
   .cn-actions button.primary { background: #a78bfa; color: #1b1530; font-weight: 600; }
+  .ho-pop { width: 340px; }
+  .ho-label { grid-template-columns: 64px minmax(0, 1fr) !important; }
+  .ho-label input { height: 30px; min-width: 0; padding: 0 10px; border: 0; border-radius: 8px; background: rgba(255,255,255,.06); color: #fff; font: 12.5px system-ui, -apple-system, sans-serif; outline: none; }
+  .ho-label input:focus { box-shadow: inset 0 0 0 1px rgba(167,139,250,.7); }
+  .ho-list { display: grid; gap: 2px; margin: 2px -6px 0; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.08); }
+  .ho-row { display: flex; align-items: center; gap: 4px; padding: 6px; border-radius: 8px; }
+  .ho-row:hover { background: rgba(255,255,255,.04); }
+  .ho-row > div { flex: 1; min-width: 0; display: grid; }
+  .ho-row b { font: 600 12.5px system-ui, -apple-system, sans-serif; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ho-row span { font: 11.5px system-ui, -apple-system, sans-serif; color: rgba(255,255,255,.5); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ho-row a, .ho-row button { flex: none; height: 26px; padding: 0 8px; border: 0; border-radius: 7px; background: rgba(255,255,255,.07); color: rgba(255,255,255,.85); font: 500 12px/26px system-ui, -apple-system, sans-serif; text-decoration: none; cursor: pointer; }
+  .ho-row a:hover, .ho-row button:hover { background: rgba(255,255,255,.14); color: #fff; }
+  .ho-empty { padding: 4px 6px; color: rgba(255,255,255,.45); font-size: 12px; }
   .canvas-toggle.on { background: rgba(255,255,255,.11); color: #fff; }
 
   /* ---------- pop-ups ----------
@@ -926,6 +941,7 @@ export function studioPage(appPath) {
       </span>
       <span class="tb-group">
         <button class="vs-toggle" data-icon="branch" data-label="Versions" title="Compare with another branch or commit, side by side">⑂ Versions</button>
+        <button class="ho-toggle" data-icon="handoff" data-label="Handoff" title="Handoff: a read-only version of every screen for developers, PMs and QA (inspect, click through, search, compare versions)">Handoff</button>
         <button class="vs-mirror" data-icon="mirror" hidden title="Mirror clicks: repeat your clicks and typing on the other version, so both walk through the same flow">⇆ Mirror clicks</button>
         <button class="vs-match" data-icon="match" hidden title="Match: both sides drifted apart? Reload both at this screen's starting state (its URL, fixture and screen)">⟲ Match</button>
       </span>
@@ -954,6 +970,7 @@ export function studioPage(appPath) {
 <div class="gallery" hidden></div>
 <div class="phone-pop" hidden></div>
 <div class="guides-pop cv-new" hidden></div>
+<div class="guides-pop cv-new ho-pop" hidden></div>
 <div class="rv-progress" hidden></div>
 <div class="vs-pop" hidden></div>
 <script>
@@ -3164,6 +3181,79 @@ export function studioPage(appPath) {
   addEventListener("pointerdown", (e) => { const pop = $(".cv-new"); if (!pop.hidden && !e.target.closest(".cv-new, .cv-concept")) pop.hidden = true; });
   $(".cv-bar .cv-refresh").addEventListener("click", () => { queuePictures(true); note("Taking a fresh picture of every screen, one at a time…"); });
 
+  // ---------- handoff ----------
+  // A version of every screen for developers, PMs and QA: each screen loads on its own (as Check all does)
+  // and its panel snapshots it; the dev server keeps the version and says which screens changed.
+  let hoBusy = false;
+  async function drawHandoffPop(button) {
+    const pop = $(".ho-pop");
+    let versions = [];
+    try { versions = (await fetch("/__ui-tweaks/handoff/versions", { cache: "no-store" }).then((r) => r.json())).versions || []; } catch {}
+    const last = versions[versions.length - 1];
+    pop.innerHTML = '<h4>Handoff</h4><p>A read-only version of every screen for developers, PMs and QA: inspect measurements and colours, click through it, search it, and compare with the last version.</p><label class="ho-label">Version<input class="ho-name" maxlength="60" /></label><div class="cn-actions"><button class="cn-go primary ho-save">' + (hoBusy ? "Capturing…" : "Save a version") + '</button></div><div class="ho-list"></div>';
+    pop.querySelector(".ho-name").value = "Version " + (versions.length + 1);
+    pop.querySelector(".ho-save").disabled = hoBusy;
+    const list = pop.querySelector(".ho-list");
+    for (const v of versions.slice().reverse().slice(0, 6)) {
+      const row = document.createElement("div");
+      row.className = "ho-row";
+      row.innerHTML = '<div><b></b><span></span></div><a class="ho-open" target="_blank" rel="noopener">Open</a><a class="ho-dl" title="One self-contained file: send it, or host it anywhere">Download</a><button class="ho-pub" title="Your Claude Code session publishes it as a private claude.ai page with a link (best for smaller apps: the page carries every screen and image)">Link</button>';
+      row.querySelector("b").textContent = v.label;
+      row.querySelector("span").textContent = new Date(v.at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) + (v.commit ? " · " + v.commit : "") + (v === last && versions.length > 1 ? " · " + v.changed + " changed, " + v.added + " new" : " · " + v.screens + " screens");
+      row.querySelector(".ho-open").href = "/__ui-tweaks/handoff#v=" + encodeURIComponent(v.id);
+      row.querySelector(".ho-dl").href = "/__ui-tweaks/handoff/export?version=" + encodeURIComponent(v.id);
+      row.querySelector(".ho-pub").addEventListener("click", async () => {
+        try {
+          const res = await fetch("/__ui-tweaks/handoff/publish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: v.id }) });
+          const out = await res.json();
+          if (!res.ok) throw new Error(out.error || res.statusText);
+          note("Sent to Claude Code: it publishes “" + out.title + "” (" + Math.round(out.bytes / 1e5) / 10 + " MB) and posts the link there.");
+        } catch (e) { note("Couldn't publish it: " + e.message); }
+      });
+      list.append(row);
+    }
+    if (!versions.length) list.append(Object.assign(document.createElement("div"), { className: "ho-empty", textContent: "No versions yet." }));
+    pop.querySelector(".ho-save").addEventListener("click", () => saveHandoffVersion(pop.querySelector(".ho-name").value.trim(), button));
+    pop.querySelector(".ho-name").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") pop.querySelector(".ho-save").click(); });
+  }
+  async function saveHandoffVersion(label, button) {
+    if (hoBusy) return;
+    hoBusy = true;
+    drawHandoffPop(button);
+    const screens = [];
+    try {
+      for (const [i, a] of canvas.artboards.entries()) {
+        note("Capturing " + (i + 1) + " of " + canvas.artboards.length + ": " + (a.name || a.url) + "…");
+        const [w, h] = size(a);
+        const frame = await loadHidden(a.url, w, h);
+        try {
+          const t = frame.contentWindow.__uiTweaks;
+          const html = await Promise.race([Promise.resolve().then(() => t.snapshotHtml()), sleep(15000).then(() => null)]);
+          if (html) screens.push({ id: a.id, name: a.name || a.url, url: a.url, size: [w, h], x: a.x, y: a.y, heading: (t.screenKey ? t.screenKey() : {}).heading || "", html });
+        } catch {}
+        frame.remove();
+      }
+      if (!screens.length) throw new Error("no screen could be captured");
+      const res = await fetch("/__ui-tweaks/handoff", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label, screens }) });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error || res.statusText);
+      note("Saved “" + out.version.label + "”: " + screens.length + " screens" + (out.changed || out.added ? ", " + out.changed + " changed and " + out.added + " new since the last version" : "") + ".");
+    } catch (e) {
+      note("Couldn't save the version: " + e.message);
+    } finally {
+      hoBusy = false;
+      if (!$(".ho-pop").hidden) drawHandoffPop(button);
+    }
+  }
+  $(".ho-toggle").addEventListener("click", (e) => {
+    const pop = $(".ho-pop");
+    if (!pop.hidden) { pop.hidden = true; return; }
+    anchorPop(pop, e.currentTarget, 340);
+    pop.hidden = false;
+    drawHandoffPop(e.currentTarget);
+  });
+  addEventListener("pointerdown", (e) => { const pop = $(".ho-pop"); if (!pop.hidden && !e.target.closest(".ho-pop, .ho-toggle")) pop.hidden = true; });
+
   // ---------- review pages ----------
   // Every screen (or this one) captured in one pass, side by side with the other version when comparing,
   // with the screens that changed flagged; the server writes one shareable page from it.
@@ -3901,6 +3991,34 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
       if (url.pathname === `${PREFIX}/design-tokens` && req.method === "POST") {
         try {
           return send(res, 200, { ok: true, ask: await queueTokens(root, JSON.parse((await readBody(req, 10_000)) || "{}")) });
+        } catch (error) {
+          return send(res, error.status || 500, { error: error.message });
+        }
+      }
+      // Handoff: read-only versions of the screens (the viewer, its data, saving a version, sharing one).
+      if (url.pathname === `${PREFIX}/handoff` && req.method === "GET") return send(res, 200, handoffPage(), "text/html; charset=utf-8");
+      if (url.pathname === `${PREFIX}/handoff/data` && req.method === "GET") return send(res, 200, await handoffData(root));
+      if (url.pathname === `${PREFIX}/handoff/versions` && req.method === "GET") return send(res, 200, { versions: (await readIndex(root)).versions.map(({ screens, ...v }) => ({ ...v, screens: screens.length, changed: screens.filter((x) => x.status === "changed").length, added: screens.filter((x) => x.status === "new").length })) });
+      if (url.pathname === `${PREFIX}/handoff` && req.method === "POST") {
+        try {
+          return send(res, 200, { ok: true, ...(await saveHandoff(root, JSON.parse(await readBody(req, 120_000_000)))) });
+        } catch (error) {
+          return send(res, error.status || 500, { error: error.message });
+        }
+      }
+      if ((url.pathname === `${PREFIX}/handoff/publish` && req.method === "POST") || (url.pathname === `${PREFIX}/handoff/export` && req.method === "GET")) {
+        try {
+          const origin = `http://${req.headers.host || "localhost"}`;
+          const versionId = req.method === "GET" ? url.searchParams.get("version") : JSON.parse((await readBody(req, 10_000)) || "{}").version;
+          const out = await exportHandoff(root, origin, versionId || null);
+          if (req.method === "GET") {
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "text/html; charset=utf-8");
+            res.setHeader("Content-Disposition", `attachment; filename="${path.basename(out.file)}"`);
+            return res.end(await fs.readFile(path.join(root, out.file)));
+          }
+          const ask = await addAsk(root, { kind: "publish", file: out.file, title: out.title, instruction: `Publish the handoff “${out.title}”` });
+          return send(res, 200, { ok: true, ask, ...out });
         } catch (error) {
           return send(res, error.status || 500, { error: error.message });
         }

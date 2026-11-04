@@ -51,7 +51,7 @@ test("saves, lists and reads reviews; refuses an empty one", async () => {
 
 test("a publish request needs a review file", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "uit-review-ask-"));
-  await assert.rejects(addAsk(root, { kind: "publish", file: "../secrets.html" }), /review file/);
+  await assert.rejects(addAsk(root, { kind: "publish", file: "../secrets.html" }), /review or handoff file/);
   const ask = await addAsk(root, { kind: "publish", file: ".ui-tweaks/reviews/first-look-2026-10-23-1405.html", title: "First look", instruction: "Publish" });
   assert.equal(ask.kind, "publish");
   assert.equal(ask.title, "First look");

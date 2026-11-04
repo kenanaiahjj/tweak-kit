@@ -28,7 +28,7 @@ export async function addAsk(root, body) {
   // tokens: the project's design tokens into the design tool (push) or its changes back into the CSS (pull).
   if (kind === "tokens" && (!["push", "pull"].includes(body.direction) || body.file !== ".ui-tweaks/paper/tokens.json")) throw Object.assign(new Error("tokens needs a direction and the saved tokens"), { status: 400 });
   // publish: Claude publishes a saved review page (a file in .ui-tweaks/reviews) as a shareable page.
-  if (kind === "publish" && !/^\.ui-tweaks\/reviews\/[a-z0-9-]+\.html$/.test(String(body.file || ""))) throw Object.assign(new Error("publish needs a review file"), { status: 400 });
+  if (kind === "publish" && !/^\.ui-tweaks\/(reviews\/[a-z0-9-]+|handoff\/export-v[a-z0-9]+)\.html$/.test(String(body.file || ""))) throw Object.assign(new Error("publish needs a review or handoff file"), { status: 400 });
   // paper: Claude places a captured element or screen (a file in .ui-tweaks/paper) in the open Paper file.
   const captured = (f) => /^\.ui-tweaks\/paper\/p[a-z0-9]+\.html$/.test(String(f || ""));
   const files = kind === "paper" && Array.isArray(body.files) ? body.files.filter((f) => f && captured(f.file)).slice(0, 30) : [];

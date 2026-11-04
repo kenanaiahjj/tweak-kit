@@ -500,7 +500,9 @@ async function startNextAsk($: EngineInterface) {
     await writeOutcome($, next.id, { status: 'done', summary: `Asked Claude to publish "${title}"; the link appears in Claude Code.` })
     $.clock.after(50, () =>
       void $.prompt.submit({
-        text: `Publish the design review page at ${file} as a private Artifact titled "${title}", and give me its link. It's a self-contained HTML page the UI tweaks studio wrote (screens of the app, side by side with another version): publish it as it is, without rewriting or redesigning it.`,
+        text: file.includes('/handoff/')
+          ? `Publish the handoff page at ${file} as a private Artifact titled "${title}", and give me its link. It's a self-contained HTML page the UI tweaks studio wrote: the app's screens for developers, PMs and QA to inspect (measurements, colours, type), click through, search and compare between versions. Publish it as it is, without rewriting or redesigning it. If it's too large to publish, say so: it can be shared as the file itself instead.`
+          : `Publish the design review page at ${file} as a private Artifact titled "${title}", and give me its link. It's a self-contained HTML page the UI tweaks studio wrote (screens of the app, side by side with another version): publish it as it is, without rewriting or redesigning it.`,
       }),
     )
     $.ui.toast(`Publishing the review "${title}"…`)

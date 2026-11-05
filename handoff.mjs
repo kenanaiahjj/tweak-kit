@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { listRefs } from "./versions.mjs";
 import { handoffPage } from "./handoff-page.mjs";
+import { GITIGNORE } from "./ignore.mjs";
 
 export const handoffDir = (root) => path.join(root, ".ui-tweaks", "handoff");
 const hash = (t) => createHash("sha1").update(t).digest("hex").slice(0, 16);
@@ -44,6 +45,8 @@ export async function saveHandoff(root, body) {
   const dir = handoffDir(root);
   await fs.mkdir(path.join(dir, "screens"), { recursive: true });
   await fs.mkdir(path.join(dir, "styles"), { recursive: true });
+  // Versions are shared through git (see ignore.mjs): the team compares against the same history.
+  await fs.writeFile(path.join(root, ".ui-tweaks", ".gitignore"), GITIGNORE);
   const index = await readIndex(root);
   const prev = index.versions[index.versions.length - 1];
   const out = [];
@@ -54,7 +57,7 @@ export async function saveHandoff(root, body) {
     await writeOnce(path.join(dir, "screens", `${h}.html`), split.html);
     const before = prev && prev.screens.find((p) => p.id === s.id);
     const size = Array.isArray(s.size) ? s.size.slice(0, 2).map((n) => Math.max(100, Math.min(4000, Math.round(Number(n) || 0)))) : [390, 844];
-    out.push({ id: clip(s.id, 40), name: clip(s.name, 120), url: clip(s.url, 500), size, x: Math.round(Number(s.x) || 0), y: Math.round(Number(s.y) || 0), heading: clip(s.heading, 120), hash: h, status: !prev ? "first" : !before ? "new" : before.hash === h ? "same" : "changed" });
+    out.push({ id: clip(s.id, 40), name: clip(s.name, 120), url: clip(s.url, 500), size, x: Math.round(Number(s.x) || 0), y: Math.round(Number(s.y) || 0), heading: clip(s.heading, 120), ...(s.group ? { group: clip(s.group, 120), state: clip(s.state, 60), stateGroup: clip(s.stateGroup, 40) } : {}), hash: h, status: !prev ? "first" : !before ? "new" : before.hash === h ? "same" : "changed" });
   }
   let cur = {};
   try { cur = (await listRefs(root)).current || {}; } catch {}

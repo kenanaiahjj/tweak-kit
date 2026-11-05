@@ -197,8 +197,9 @@ Answer with exactly one line of JSON and nothing after it:
 {"variants":[{"name":"<2-4 words>","why":"<one sentence>","changes":[{"target":":scope","prop":"padding","value":"16px 20px"}]},{"name":"<2-4 words>","why":"<one sentence>","html":"<div class=\\"card\\">…</div>","changes":[]}]}`
 
 type Capture = { file: string; title: string; width?: number; height?: number }
-type Ask = { id: string; kind: 'edit' | 'variations' | 'publish' | 'paper' | 'paper-pull' | 'tokens' | 'concept'; direction?: 'push' | 'pull'; reference?: { snapshot?: string; url?: string; name?: string; size?: number[] }; from?: string; fromName?: string; instruction: string; file?: string; files?: Capture[]; target?: 'paper' | 'figma'; title?: string; whole?: boolean; refs?: string[]; mode?: 'any' | 'styles' | 'layout' | 'states'; scope?: 'screen'; skills?: string[]; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
-type AskOutcome = { status: 'running' | 'done' | 'failed'; startedAt?: number; summary?: string; needs?: string; files?: string[]; variants?: unknown[]; error?: string }
+type Ask = { id: string; kind: 'edit' | 'variations' | 'publish' | 'paper' | 'paper-pull' | 'tokens' | 'concept' | 'states'; direction?: 'push' | 'pull'; reference?: { snapshot?: string; url?: string; name?: string; size?: number[] }; from?: string; fromName?: string; instruction: string; file?: string; files?: Capture[]; target?: 'paper' | 'figma'; title?: string; whole?: boolean; refs?: string[]; mode?: 'any' | 'styles' | 'layout' | 'states'; scope?: 'screen'; skills?: string[]; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
+type StateItem = { group: string; name: string }
+type AskOutcome = { status: 'running' | 'done' | 'failed'; startedAt?: number; summary?: string; needs?: string; files?: string[]; variants?: unknown[]; error?: string; url?: string; states?: StateItem[]; missing?: string[]; folder?: string }
 
 /** The last line of an answer that parses as a JSON object. */
 export function lastJson(answer: string): Record<string, unknown> | null {
@@ -256,6 +257,18 @@ export function askPrompt(ask: Ask, root: string | null, skills: DesignSkill[] =
     ? `Reference images from the person (look at each with Read before designing, and take their look, mood, colour and type cues; don't copy their content): ${refs.join(', ')}`
     : ''
   const skillNote = skills.length && (ask.kind === 'edit' || ask.kind === 'variations' || ask.kind === 'concept') ? designSkillNote(skills, ask.kind === 'concept' ? 'variations' : ask.kind, chosen) : ''
+  // Every state of one component, following Jakub Krehel's state-machine skill (the kit ships a copy).
+  if (ask.kind === 'states') {
+    const skill = root ? `${root}/.ui-tweaks/skills/state-machine` : '.ui-tweaks/skills/state-machine'
+    return [
+      `Render every state of this component on a throwaway page, following the state-machine skill: read ${skill}/SKILL.md and ${skill}/switcher.md first and follow them exactly (this one component; only the states its code can reach, grouped in the product's words; real-shaped mock data fed at the data boundary without editing the component; the __state switcher as specified; nothing restyled).${ask.instruction ? ` Note from the person: ${ask.instruction}` : ''}`,
+      `The component (react.jsxSource is where its JSX is): ${JSON.stringify(ask.element ?? {})}, on the screen ${ask.page?.url ?? '?'}.`,
+      `Where the skill says a scratch route: if the app has a router, add the route; if it switches screens without URLs, open the page the way its other dev-only screens are opened (e.g. its ?screen= / ?fixture= hook), dev-only, with the page, fixtures and switcher in one folder.`,
+      `Don't remove the page: the person removes it later. Build it, check it renders if you can, and stop.`,
+      `End with exactly one line of JSON and nothing after it: {"summary":"<one sentence>","url":"<the path that opens the page, e.g. /states/audit-log or /?screen=states-audit-log>","states":[{"group":"Data","name":"empty"}],"missing":["<states the design needs that the code can't reach>"],"folder":"<the page's folder>"}. Each state name is its exact __state value, in the switcher's order.`,
+      where,
+    ].filter(Boolean).join('\n')
+  }
   if (ask.kind === 'concept') {
     const ref = ask.reference ?? {}
     const snap = /^\/__ui-tweaks\/snapshots\/(s[a-z0-9]+\.html)$/.exec(ref.snapshot ?? '')
@@ -535,7 +548,9 @@ async function startNextAsk($: EngineInterface) {
     $.ui.toast(`Pulling changes from ${tool}…`)
     return
   }
-  if (next.kind === 'edit') {
+  // A design change, or a states page: both edit files, so they take the lock and run the designer.
+  const edits = next.kind === 'edit' || next.kind === 'states'
+  if (edits) {
     if (!(await takeLock($))) return
     snapshots.clear()
     const jsx = /^(.*):\d+$/.exec(next.element?.react?.jsxSource ?? '')
@@ -549,22 +564,37 @@ async function startNextAsk($: EngineInterface) {
   const startedAt = await $.clock.now()
   await writeOutcome($, next.id, { status: 'running', startedAt })
   // A concept runs like variations: the same agent and JSON answer, nothing edited.
-  await update($, askRun, () => ({ id: next.id, kind: (next.kind === 'edit' ? 'edit' : 'variations') as 'edit' | 'variations', startedAt, instruction: next.instruction }))
+  await update($, askRun, () => ({ id: next.id, kind: (edits ? 'edit' : 'variations') as 'edit' | 'variations', startedAt, instruction: next.instruction || (next.kind === 'states' ? 'Every state' : '') }))
   const started = await $.agent.spawn({
-    subagentType: next.kind === 'edit' ? DESIGNER : VARIATOR,
+    subagentType: edits ? DESIGNER : VARIATOR,
     model: 'sonnet',
-    description: next.kind === 'edit' ? 'Design change' : next.kind === 'concept' ? 'Concept screen' : 'Design variations',
+    description: next.kind === 'edit' ? 'Design change' : next.kind === 'states' ? 'Every state' : next.kind === 'concept' ? 'Concept screen' : 'Design variations',
     prompt: askPrompt(next, projectRoot, skills, chosen),
     ...(projectRoot ? { cwd: projectRoot } : {}),
   })
   if ('deny' in started) {
     await writeOutcome($, next.id, { status: 'failed', error: `Could not start: ${String(started.deny)}` })
-    if (next.kind === 'edit') await releaseLock($)
+    if (edits) await releaseLock($)
     await update($, askRun, () => null)
     return
   }
   await update($, askRun, r => (r ? { ...r, agentId: started.agentId } : r))
-  $.ui.toast(next.kind === 'edit' ? `Claude is designing: ${next.instruction.slice(0, 60)}` : next.kind === 'concept' ? `Claude is designing a new screen: ${next.instruction.slice(0, 50)}` : 'Claude is sketching variations…')
+  $.ui.toast(next.kind === 'states' ? 'Claude is rendering every state of the component…' : next.kind === 'edit' ? `Claude is designing: ${next.instruction.slice(0, 60)}` : next.kind === 'concept' ? `Claude is designing a new screen: ${next.instruction.slice(0, 50)}` : 'Claude is sketching variations…')
+}
+
+/** A states page's report: where it opens, its states (group and __state value), what's missing, its folder. */
+export function statesReport(report: Record<string, unknown> | null): Pick<AskOutcome, 'url' | 'states' | 'missing' | 'folder'> {
+  if (!report || !Array.isArray(report.states)) return {}
+  const url = typeof report.url === 'string' && /^\/[^\s"<>]*$/.test(report.url) ? report.url.slice(0, 300) : undefined
+  const states = (report.states as unknown[])
+    .map(x => x as { group?: unknown; name?: unknown })
+    .filter(x => typeof x.name === 'string' && /^[\w.:-]{1,60}$/.test(x.name))
+    .map(x => ({ group: String(x.group ?? 'States').slice(0, 40), name: String(x.name) }))
+    .slice(0, 40)
+  if (!url || !states.length) return {}
+  const missing = Array.isArray(report.missing) ? (report.missing as unknown[]).filter(m => typeof m === 'string').map(m => String(m).slice(0, 80)).slice(0, 20) : []
+  const folder = typeof report.folder === 'string' ? report.folder.slice(0, 200) : undefined
+  return { url, states, missing, ...(folder ? { folder } : {}) }
 }
 
 /** What the panel shows for a finished ask, from the agent's answer and the files it changed. */
@@ -573,9 +603,10 @@ export function askOutcome(kind: Ask['kind'], answer: string, changed: string[])
   if (kind === 'edit') {
     const summary = typeof report?.summary === 'string' ? report.summary : ''
     const needs = typeof report?.needs === 'string' && report.needs ? report.needs : undefined
-    if (changed.length) return { status: 'done', summary, files: changed }
+    const st = statesReport(report)
+    if (changed.length) return { status: 'done', summary, files: changed, ...st }
     // A clear report with nothing to change (e.g. "these screens are already set up") is a finished ask, not a failure.
-    if (!needs && summary) return { status: 'done', summary, files: [] }
+    if (!needs && summary) return { status: 'done', summary, files: [], ...st }
     return { status: 'failed', summary, ...(needs ? { needs } : { error: 'No files changed.' }) }
   }
   const variants = cleanVariants(report?.variants)

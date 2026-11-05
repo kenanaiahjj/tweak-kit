@@ -3,6 +3,7 @@
 // and writes the outcome to .ui-tweaks/asks/<id>.json. Two files, so neither side overwrites the other.
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const KEEP = 30;
 const dir = (root) => path.join(root, ".ui-tweaks");
@@ -15,13 +16,31 @@ async function readJson(file, fallback) {
   }
 }
 
+// The state-machine skill for the designer to follow: the one installed in Claude Code when there is one,
+// else the copy that ships with the kit (skills/state-machine), put where the agent can read it.
+async function provideStateSkill(root) {
+  const to = path.join(dir(root), "skills", "state-machine");
+  const home = process.env.HOME || "";
+  const from = [path.join(root, ".claude", "skills", "state-machine"), home && path.join(home, ".claude", "skills", "state-machine"), home && path.join(home, ".agents", "skills", "state-machine"), fileURLToPath(new URL("./skills/state-machine", import.meta.url))].filter(Boolean);
+  for (const src of from) {
+    try {
+      await fs.access(path.join(src, "SKILL.md"));
+      await fs.mkdir(to, { recursive: true });
+      for (const f of await fs.readdir(src)) if (/\.md$|^LICENSE$/.test(f)) await fs.copyFile(path.join(src, f), path.join(to, f));
+      return;
+    } catch {}
+  }
+}
+
 export async function readAsks(root) {
   return (await readJson(path.join(dir(root), "asks.json"), { asks: [] })).asks || [];
 }
 
 export async function addAsk(root, body) {
   const kind = body && body.kind;
-  if (!["edit", "variations", "publish", "paper", "paper-pull", "tokens", "concept"].includes(kind)) throw Object.assign(new Error("kind is edit, variations, publish, paper, paper-pull, tokens or concept"), { status: 400 });
+  if (!["edit", "variations", "publish", "paper", "paper-pull", "tokens", "concept", "states"].includes(kind)) throw Object.assign(new Error("kind is edit, variations, publish, paper, paper-pull, tokens, concept or states"), { status: 400 });
+  // states: every state of one component on a throwaway page (Jakub Krehel's state-machine skill).
+  if (kind === "states" && !(body.element && body.element.selector)) throw Object.assign(new Error("Pick the component first"), { status: 400 });
   // concept: a new screen for a feature the app doesn't have, designed to look like a reference screen.
   const ref = body.reference || {};
   if (kind === "concept" && (!/^\/__ui-tweaks\/snapshots\/s[a-z0-9]+\.html$/.test(String(ref.snapshot || "")) || !Array.isArray(ref.size) || ref.size.length !== 2)) throw Object.assign(new Error("A concept needs a reference screen with its picture"), { status: 400 });
@@ -62,6 +81,7 @@ export async function addAsk(root, body) {
     ...(Array.isArray(body.refs) && body.refs.length ? { refs: body.refs.filter((r) => /^\.ui-tweaks\/refs\/r[a-z0-9]+\.(png|jpg|webp|gif)$/.test(String(r))).slice(0, 6) } : {}),
     at: Date.now(),
   };
+  if (kind === "states") await provideStateSkill(root);
   await fs.mkdir(path.join(dir(root), "asks"), { recursive: true });
   const asks = [...(await readAsks(root)), ask].slice(-KEEP);
   await fs.writeFile(path.join(dir(root), "asks.json"), JSON.stringify({ asks }, null, 2) + "\n");

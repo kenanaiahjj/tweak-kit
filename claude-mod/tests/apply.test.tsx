@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { lineStats, unifiedDiff } from '../hooks/diff'
-import { askOutcome, askPrompt, cleanVariants, lastJson, paperPrompt, parseReport, pullPrompt, tokensPrompt, settle, summarize, verifyTweak } from '../hooks/register'
+import { askOutcome, askPrompt, cleanVariants, lastJson, paperPrompt, parseReport, pullPrompt, statesReport, tokensPrompt, settle, summarize, verifyTweak } from '../hooks/register'
 
 const PENDING = JSON.stringify({
   version: 1,
@@ -385,4 +385,18 @@ test('concept: a new screen, built from a reference screen saved as a page', () 
   const bad = askPrompt({ id: 'c', kind: 'concept', instruction: 'x', reference: { snapshot: '../../etc/passwd' } }, '/p')
   expect(bad).not.toContain('passwd')
   expect(askOutcome('variations', '{"variants":[{"name":"Podium","why":"x","html":"<div class=\\"app-shell\\">Top 10</div>"}]}', []).status).toBe('done')
+})
+
+test('every state: the prompt follows the state-machine skill, and the report carries the page and its states', () => {
+  const p = askPrompt({ id: 's', kind: 'states', instruction: '', element: { selector: '.event-list', react: { jsxSource: 'src/main.tsx:900' } }, page: { url: '/?fixture=verified&screen=events' } }, '/p')
+  expect(p).toContain('/p/.ui-tweaks/skills/state-machine/SKILL.md')
+  expect(p).toContain('switcher.md')
+  expect(p).toContain('"states":[{"group":"Data","name":"empty"}]')
+  const r = statesReport({ summary: 'x', url: '/?screen=states-events', states: [{ group: 'Data', name: 'empty' }, { group: 'Data', name: 'loading' }, { name: 'bad value!' }], missing: ['offline'], folder: 'src/states/events' })
+  expect(r.url).toBe('/?screen=states-events')
+  expect(r.states?.length).toBe(2)
+  expect(r.missing?.[0]).toBe('offline')
+  expect(statesReport({ url: 'https://evil.example', states: [{ name: 'a' }] })).toEqual({})
+  const done = askOutcome('edit', '{"summary":"Built it","url":"/states/x","states":[{"group":"Data","name":"empty"}]}', ['main.tsx'])
+  expect(done.states?.[0]?.name).toBe('empty')
 })

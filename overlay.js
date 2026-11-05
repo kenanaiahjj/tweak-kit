@@ -4687,7 +4687,7 @@
         state.asks = [...(state.asks || []), { id: out.ask.id, kind, instruction, status: "waiting", page: here(), selector: body.element && body.element.selector }];
       }
       if (kind === "edit") state.askDraft = "";
-      toast(kind === "edit" ? "Sent to Claude. It edits the code in the background." : board ? "Claude is sketching variations on the Explore board…" : "Claude is sketching variations…");
+      toast(kind === "states" ? "Sent to Claude: it renders every state of the component on a throwaway page, then adds them to your screens." : kind === "edit" ? "Sent to Claude. It edits the code in the background." : board ? "Claude is sketching variations on the Explore board…" : "Claude is sketching variations…");
       render();
     } catch (error) {
       toast("Couldn't reach the tweaks server (" + error.message + ")");
@@ -5006,6 +5006,24 @@
     }
   }
 
+  // ---------- every state of a component ----------
+  // Jakub Krehel's state-machine skill, run by Claude: the component's reachable states on a throwaway page with
+  // mock data and a __state switcher. When it's built, the studio adds each state to the screens (and so to
+  // checks and handoffs).
+  function componentName(el) {
+    const r = reactInfo(el);
+    return (r && r.components && r.components[0] && r.components[0].name) || (el.classList[0] ? "." + el.classList[0] : el.tagName.toLowerCase());
+  }
+  function askStates(el) {
+    if (!el) return toast("Select the component first");
+    ask("states", el, `Every state of ${componentName(el)}`);
+  }
+  // A finished states page goes onto the studio's screens once (the studio checks it hasn't already).
+  function placeStates(a) {
+    if (!(a.kind === "states" && a.status === "done" && a.url && a.states && a.states.length)) return;
+    try { if (STUDIO && STUDIO.__studio && STUDIO.__studio.addStates) STUDIO.__studio.addStates({ id: a.id, name: (a.instruction || "").replace(/^Every state of /, "") || "Component", url: a.url, states: a.states, missing: a.missing || [], folder: a.folder || "" }); } catch {}
+  }
+
   // ---------- design skills ----------
   // What "Do it" and Explore work from: the design skills installed in Claude Code (impeccable, Emil
   // Kowalski's, ones from the ui-skills registry…). Auto lets Claude pick the one that fits; or pick up to 3.
@@ -5205,6 +5223,18 @@
       item.append(top);
       if (a.status === "done" && a.kind === "edit") item.append(Object.assign(document.createElement("div"), { className: "ask-sub", textContent: `${a.summary ? a.summary + " · " : ""}${(a.files || []).join(", ")}. Undo apply puts it back.` }));
       if (a.status === "done" && (a.kind === "paper" || a.kind === "paper-pull") && a.summary) item.append(Object.assign(document.createElement("div"), { className: "ask-sub", textContent: a.summary }));
+      if (a.status === "done" && a.kind === "states") {
+        const n = (a.states || []).length;
+        item.append(Object.assign(document.createElement("div"), { className: "ask-sub", textContent: n ? `${n} state${n === 1 ? "" : "s"} on a throwaway page (${a.url}), added to your screens.${a.missing && a.missing.length ? ` Missing in the code: ${a.missing.join(", ")} (Explore → States can design them).` : ""}` : a.summary || "" }));
+        if (n) {
+          const rm = Object.assign(document.createElement("button"), { className: "ask-pull", textContent: "Remove the states page", title: "Claude deletes the throwaway page, its fixtures and what opens it (nothing else), and the states leave your screens" });
+          rm.addEventListener("click", () => {
+            ask("edit", null, `Remove the throwaway states page built for ${(a.instruction || "").replace(/^Every state of /, "") || "the component"}: its folder${a.folder ? ` (${a.folder})` : ""} and the dev-only route or hook that opens it at ${a.url}, nothing else. Then search the codebase for the route and fixture names and check nothing of the setup is left.`);
+            try { STUDIO && STUDIO.__studio && STUDIO.__studio.removeStates && STUDIO.__studio.removeStates(a.id); } catch {}
+          });
+          item.append(rm);
+        }
+      }
       if (a.status === "done" && a.kind === "paper") {
         const tool = a.target === "figma" ? "Figma" : "Paper";
         const pull = Object.assign(document.createElement("button"), { className: "ask-pull", textContent: `Pull changes back from ${tool}`, title: `Once you've designed on it in ${tool}: Claude reads the ${tool === "Figma" ? "frame" : "artboard"} (the one selected, or “${a.title || ""}”), compares it with this capture and changes the code to match` });
@@ -5401,6 +5431,7 @@
     add(modes.rtl ? "Left-to-right" : "Right-to-left", "flip and check", () => rtlMode());
     add(modes.large ? "Text at 100%" : "Text at 200%", "WCAG resize", () => largeText());
     add("Headings and regions", "structure", () => { state.showOutline = true; runCheck(); });
+    if (el) add("Every state of this component", "state-machine skill", () => askStates(el));
     add("Send this screen to Paper", "", () => sendToPaper(null));
     add("Send this screen to Figma", "", () => sendToPaper(null, { target: "figma" }));
     add("Pull changes from Paper", "what's selected in Paper", () => pullFromDesign({ title: "" }));
@@ -5636,6 +5667,7 @@
         ["Matching", "Select every instance of this component (or every element with the same tag and classes): edits apply to all", (n) => selectMatching(n)],
         ["Comment", "Pin a comment to this element (M)", (n) => startComment(n)],
         ["Make component", "Claude turns this into a reusable component, uses it here and replaces copies of it in the source (Undo apply reverts it)", (n) => makeComponent(n)],
+        ["Every state", "Claude renders every state of this component (loading, empty, error, roles, limits…) on a throwaway page with mock data, following Jakub Krehel's state-machine skill; each state is added to your screens", (n) => askStates(n)],
       ]) {
         const b = document.createElement("button");
         b.textContent = label;
@@ -6345,9 +6377,10 @@
       if (asksNow !== state.asksJson) {
         state.asksJson = asksNow;
         for (const a of asks) {
+          if (ownsPanel()) placeStates(a);
           const before = (state.asks || []).find((o) => o.id === a.id);
           if (ownsPanel() && before && before.status !== a.status && a.page === here()) {
-            if (a.status === "done") toast(a.kind === "edit" ? `Claude finished: ${a.summary || (a.files || []).join(", ")}` : a.kind === "paper" || a.kind === "paper-pull" ? a.summary || "Sent to Claude Code" : "Variations are ready in the panel");
+            if (a.status === "done") toast(a.kind === "states" ? `Every state is ready: ${(a.states || []).length} added to your screens` : a.kind === "edit" ? `Claude finished: ${a.summary || (a.files || []).join(", ")}` : a.kind === "paper" || a.kind === "paper-pull" ? a.summary || "Sent to Claude Code" : "Variations are ready in the panel");
             if (a.status === "failed") toast(a.needs ? `Claude has a question: ${a.needs}` : `Claude couldn't do it: ${a.error || ""}`);
           }
         }

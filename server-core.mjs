@@ -33,7 +33,7 @@ export function tweaksDir(root) {
 }
 
 // .ui-tweaks/ stays out of git, except the canvas layout, which is part of the project.
-const GITIGNORE = "*\n!.gitignore\n!canvas.json\n!comments.json\n!flows.json\n";
+import { GITIGNORE } from "./ignore.mjs";
 
 // ---------- the canvas ----------
 // .ui-tweaks/canvas.json: the studio's artboards (a screen + state + device each), notes and arrows.
@@ -1293,6 +1293,29 @@ export function studioPage(appPath) {
   addEventListener("keyup", (e) => { if (e.code === "Space") setHand(false); });
   // The app's frames forward pinch-zoom and Space to the canvas (the overlay calls these).
   window.__studio = {
+    // Every state of a component (a states page Claude built): each state becomes a screen, in a row under the
+    // others, named "Component · state", opened with __state=<state>. Once per page.
+    addStates({ id, name, url, states, missing }) {
+      if (!id || !url || !states || !states.length || canvas.artboards.some((a) => a.statesAsk === id)) return;
+      const base = current() || canvas.artboards[0] || {};
+      const device = base.device || "i16";
+      const bottom = canvas.artboards.length ? Math.max(...canvas.artboards.map((a) => a.y + size(a)[1])) + 240 : 0;
+      const left = canvas.artboards.length ? Math.min(...canvas.artboards.map((a) => a.x)) : 0;
+      let x = left;
+      for (const st of states) {
+        const a = { id: newId(), name: name + " · " + st.name, device, url: url + (url.includes("?") ? "&" : "?") + "__state=" + encodeURIComponent(st.name), x, y: bottom, group: "states:" + name, state: st.name, stateGroup: st.group || "States", statesAsk: id };
+        canvas.artboards.push(a);
+        x += size(a)[0] + 80;
+      }
+      save();
+      render();
+      note("Added " + states.length + " states of " + name + " to your screens" + (missing && missing.length ? ". Missing in the code: " + missing.join(", ") : "") + ".");
+    },
+    removeStates(id) {
+      const before = canvas.artboards.length;
+      canvas.artboards = canvas.artboards.filter((a) => a.statesAsk !== id);
+      if (canvas.artboards.length !== before) { save(); render(); }
+    },
     // The flow map's pictures: the screen on show, sketched as it is now, under its step key (URL | heading).
     flowShot(key) {
       if (flowShots.has(key)) return;
@@ -3284,7 +3307,7 @@ export function studioPage(appPath) {
         try {
           const t = frame.contentWindow.__uiTweaks;
           const html = await Promise.race([Promise.resolve().then(() => t.snapshotHtml()), sleep(15000).then(() => null)]);
-          if (html) screens.push({ id: a.id, name: a.name || a.url, url: a.url, size: [w, h], x: a.x, y: a.y, heading: (t.screenKey ? t.screenKey() : {}).heading || "", html });
+          if (html) screens.push({ id: a.id, name: a.name || a.url, url: a.url, size: [w, h], x: a.x, y: a.y, heading: (t.screenKey ? t.screenKey() : {}).heading || "", html, ...(a.group ? { group: a.group, state: a.state, stateGroup: a.stateGroup } : {}) });
         } catch {}
         frame.remove();
       }

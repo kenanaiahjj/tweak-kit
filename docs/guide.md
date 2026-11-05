@@ -178,6 +178,7 @@ Nothing to do: the kit writes a `.gitignore` inside `.ui-tweaks/` that ignores e
 - **Handoff** (next to Versions) is for developers, PMs and QA: **Save a version** captures every screen (each loads on its own) and keeps it in `.ui-tweaks/handoff/`, labelled, with the git branch and commit, and which screens changed or are new since the last version. Add the **Live app** link (a hosted preview, e.g. on Vercel) and the viewer links to it, for clicking through the real thing. **Open** shows the viewer over the studio (**New tab** opens it on its own); **Download** is one self-contained file (images and fonts inside) to send or host anywhere; **Share** puts it on Vercel with your logged-in Vercel CLI, as its own project named after the app (`<app>-handoff`, in the team the CLI has selected; `vercel switch` changes it). It's a production deploy, so anyone with the `<app>-handoff.vercel.app` link can view it; sharing a newer version updates the same address, and the pop-up shows where it is with **Copy**. The viewer is read-only:
   - **Inspect**: a canvas of the version's screens. Click anything for its size, position, padding and margin, layout, font, size and line height, weight, colours with their token names, border, radius, shadow, contrast (AA/AAA) and, for things you tap, the hit area and label. Hold **Alt** and point at another element for the distances. Click a value to copy it; **Copy CSS**, **Copy link** (the link opens that version, screen and element), **Parent**. **Outlines** (O) draws every element's box.
   - **Search** (⌘F / Ctrl+F): text, a colour (`#0D99FF`, `rgb(…)` or a `--token`: text, fills and borders in it) or an element (a tag, a class, any selector) on every screen. Enter goes to the hit, ⇧Enter highlights them all on the canvas.
+  - **States**: a component's states (from **Every state**) are listed under its name, each card has its state badge, and the inspector links to its other states, grouped as its switcher groups them.
   - **Versions**: pick any saved version. Screens changed since the one before are marked **Changed** (or **New**), **Changed in this version** lists only those, and **Compare** shows a changed screen before and after, side by side or overlaid with a slider.
   - **Open the app ↗** (when the version has a live app link) opens the hosted app.
 - **Flow map** (in **▦**): every tap that took the app to another screen, recorded as you click through in Interact, drawn as screens with arrows labelled with what you tapped. A screen is its URL plus its main heading, so apps that switch screens in place get a card per screen. Click a card to open that screen. It's saved in `.ui-tweaks/flows.json` and kept in git, so the team sees the same map; **Clear the map** starts over.
@@ -285,6 +286,7 @@ Select an element, optionally type a direction in **Ask Claude** ("bolder", "mor
 - **Motion** (part of every check): animations no `prefers-reduced-motion` rule stops or softens, endless ones first.
 - **Structure** (part of every check): no headings, no h1 or several, skipped heading levels, no `<main>`. **Structure** in the check shows the outline a screen reader gets: headings indented by level and the regions (banner, navigation, main…); click one to select it.
 - **Worst-case data** (in the check, or ⌘K): every text on the screen swapped for its worst case (long names, unbroken emails, huge numbers, Greek, Japanese and Arabic names), on the page only, and the screen checked again, so text that spills out of a card, gets cut off or runs into other text shows up. **Real data** puts it back. Nothing is a tweak and nothing is written.
+- **Every state** (element header, or ⌘K, with a component selected): Claude renders every state the component can be in, following [Jakub Krehel's state-machine skill](https://github.com/jakubkrehel/skills) (the kit ships a copy, MIT; an installed one takes its place). It reads the component's code for the states it can reach (data: loading, empty, error, one item, many, stale; account: roles, plans; feature: flags, limits), builds a throwaway page with the real component, product-shaped mock data fed at its data boundary and a `__state` switcher, and lists states the design needs but the code can't reach (design those with Explore → States). Each state is added to your screens as "Component · state", so checks, the canvas and handoffs include them. **Remove the states page** (on the request in the panel) has Claude delete the page and its fixtures, and the states leave your screens.
 - **Comments:** **Comment** in the element header (or **M** with an element selected) pins a note to it; ⌘Enter posts. **M** with nothing selected shows or hides the pins. A pin opens its note, with **Select**, **Delete** and **Resolve**. In the studio, **💬** shows how many are open, lists them by screen (a row goes to that screen and shows its pins) and **Hide pins**. They're saved in `.ui-tweaks/comments.json`, which is kept in git so the team sees them.
 - **⌘K** opens the command palette: type to find any action (select parent, duplicate, add auto layout, copy as code, insert, send…), any section or property ("padding-left" jumps to that field), or another screen in the studio. ↑/↓ and Enter run it.
 - **⌘⇧Z** (or Ctrl+Y, or ↷ in the bar) redoes what ⌘Z undid: styles, text, moves, removals, inserts and props alike.
@@ -401,7 +403,7 @@ An override applies to every element that JSX line renders. For a button rendere
 
 ## Files it creates
 
-All inside `<project>/.ui-tweaks/`, which ignores itself in git (except `canvas.json`, `comments.json` and `flows.json`):
+All inside `<project>/.ui-tweaks/`, which ignores itself in git (except `canvas.json`, `comments.json`, `flows.json` and the handoff versions):
 
 | File | What |
 | --- | --- |
@@ -413,7 +415,8 @@ All inside `<project>/.ui-tweaks/`, which ignores itself in git (except `canvas.
 | `comments.json` | Comments pinned to elements (kept in git) |
 | `paper/` | Elements and screens captured for Send to Paper or Figma (last 40), and their inline images |
 | `flows.json` | The flow map: which tap leads from which screen to which (kept in git) |
-| `handoff/` | Handoff versions: each screen and stylesheet stored once by content, `index.json` lists the versions; `export-*.html` are the shareable files |
+| `handoff/` | Handoff versions: each screen and stylesheet stored once by content, `index.json` lists the versions (kept in git, so the team shares one history); `export-*.html` and the share folder are not |
+| `skills/` | Design skills copied for Claude's agents to read (e.g. state-machine) |
 | `server.json` | The dev server's address (also registered in `~/.ui-tweaks/servers/`), so the mod finds the project even when its session started in another folder |
 
 ## Setting it up for a team

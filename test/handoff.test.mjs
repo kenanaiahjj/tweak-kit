@@ -55,3 +55,27 @@ test("a version can carry a link to the hosted app (http and https only)", async
   const bad = await saveHandoff(root, { label: "v2", appUrl: "javascript:alert(1)", screens: [screen("a", "<p>A</p>")] });
   assert.equal(bad.version.appUrl, undefined);
 });
+
+test("a component's states keep their group and state name in a version; versions are shared in git", async () => {
+  const root = await tmp();
+  const out = await saveHandoff(root, { label: "v1", screens: [screen("a", "<p>A</p>"), screen("s1", "<p>Empty</p>", { group: "states:EventList", state: "empty", stateGroup: "Data" })] });
+  const st = out.version.screens[1];
+  assert.equal(st.group, "states:EventList");
+  assert.equal(st.state, "empty");
+  assert.equal(st.stateGroup, "Data");
+  assert.equal(out.version.screens[0].group, undefined);
+  const ignore = await fs.readFile(path.join(root, ".ui-tweaks", ".gitignore"), "utf8");
+  assert.match(ignore, /!handoff\/index\.json/);
+  assert.match(ignore, /!handoff\/screens\/\*\.html/);
+  assert.doesNotMatch(ignore, /export/);
+});
+
+test("an Every state request needs the component, and brings the state-machine skill along", async () => {
+  const root = await tmp();
+  await assert.rejects(addAsk(root, { kind: "states", instruction: "" }), /component/);
+  const ask = await addAsk(root, { kind: "states", instruction: "Every state of EventList", element: { selector: ".event-list", react: { jsxSource: "src/main.tsx:10" } } });
+  assert.equal(ask.kind, "states");
+  const skill = await fs.readFile(path.join(root, ".ui-tweaks", "skills", "state-machine", "SKILL.md"), "utf8");
+  assert.match(skill, /name: state-machine/);
+  assert.match(await fs.readFile(path.join(root, ".ui-tweaks", "skills", "state-machine", "LICENSE"), "utf8"), /Jakub Krehel/);
+});

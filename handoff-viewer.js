@@ -82,12 +82,18 @@
     const box = $(".hf-items");
     box.innerHTML = "";
     const q = S.filter.toLowerCase();
-    for (const s of version().screens) {
+    // Screens first, then each component's states under its own heading.
+    const screens = version().screens;
+    const order = [...screens.filter((s) => !s.group), ...screens.filter((s) => s.group)];
+    let heading = null;
+    for (const s of order) {
       const st = statusOf(s);
       if (S.changedOnly && st === "same") continue;
       if (q && !(s.name || s.url).toLowerCase().includes(q)) continue;
+      const g = s.group ? s.group.replace(/^states:/, "") + " · states" : "Screens";
+      if (g !== heading) { heading = g; if (s.group || screens.some((x) => x.group)) box.append(h("div", { className: "hf-list-group", textContent: g })); }
       const b = h("button", { className: "hf-item" + (S.sel && S.sel.sid === s.id ? " on" : ""), title: s.url });
-      b.append(h("span", { className: "nm", textContent: s.name || s.url }));
+      b.append(h("span", { className: "nm", textContent: s.group ? s.state || s.name : s.name || s.url }));
       if (st !== "same") b.append(h("span", { className: "hf-badge " + st, textContent: st === "new" ? "New" : "Changed" }));
       b.addEventListener("click", () => focusScreen(s.id));
       box.append(b);
@@ -108,7 +114,9 @@
       const el = h("div", { className: "hf-card" + (st === "changed" ? " changed" : "") });
       Object.assign(el.style, { left: s.x + "px", top: s.y + "px" });
       const head = h("div", { className: "hf-card-head" });
-      head.append(h("span", { className: "nm", textContent: s.name || s.url }), h("span", { className: "sz", textContent: s.reached ? "reached by tapping · " + w + "×" + hh : w + "×" + hh }));
+      head.append(h("span", { className: "nm", textContent: s.name || s.url }));
+      if (s.state) head.append(h("span", { className: "hf-badge state", textContent: s.state, title: (s.stateGroup || "State") + ": " + s.state }));
+      head.append(h("span", { className: "sz", textContent: w + "×" + hh }));
       if (st !== "same") head.append(h("span", { className: "hf-badge " + st, textContent: st === "new" ? "New" : "Changed" }));
       if (st === "changed") { const c = h("button", { textContent: "Compare", title: "This screen before and after this version" }); c.addEventListener("click", () => openCompare(s)); head.append(c); }
       const box = h("div", { className: "hf-frame" });
@@ -337,6 +345,7 @@
         const link = h("button", { textContent: "Copy link to this screen" }); link.addEventListener("click", () => copy(location.href, "the link")); a.append(link);
         if (statusOf(s) === "changed") { const cmp = h("button", { textContent: "Compare with " + prevVersion().label }); cmp.addEventListener("click", () => openCompare(s)); a.append(cmp); }
         panel.append(act);
+        statesSection(s);
       } else {
         box.innerHTML = "<b>Inspect</b>Click anything on a screen for its size, spacing, colours and type. Hold <kbd>Alt</kbd> and point at another element for the distance between them. Click a value to copy it.<br><br><kbd>" + (/Mac/.test(navigator.platform) ? "⌘" : "Ctrl") + " F</kbd> searches text, colours and elements on every screen." + (version().appUrl ? " <b style=\"display:inline;margin:0;color:inherit;font-weight:600\">Open the app ↗</b> (top right) is the real thing, to click through." : "");
         panel.append(box);
@@ -363,6 +372,7 @@
     const txt = (el.innerText || "").trim().replace(/\s+/g, " ");
     name.append(h("small", { textContent: (s.name || s.url) + (txt ? " · “" + txt.slice(0, 50) + (txt.length > 50 ? "…" : "") + "”" : "") }));
     head.append(name);
+    statesSection(s);
     // Size and place.
     const geo = sec("Layout");
     row(geo, "Size", px(r.width) + " × " + px(r.height));
@@ -435,6 +445,27 @@
     a.append(css, link, parent);
     if (statusOf(s) === "changed") { const cmp = h("button", { textContent: "Compare" }); cmp.addEventListener("click", () => openCompare(s)); a.append(cmp); }
     act.append(a);
+  }
+
+  // A component's states (a states page's screens): the others, grouped as its switcher groups them.
+  function statesSection(s) {
+    if (!s.group) return;
+    const sibs = version().screens.filter((x) => x.group === s.group);
+    const box = h("div", { className: "hf-sec" });
+    box.append(h("h4", { textContent: s.group.replace(/^states:/, "") + " · " + sibs.length + " states" }));
+    const groups = [...new Set(sibs.map((x) => x.stateGroup || "States"))];
+    for (const g of groups) {
+      if (groups.length > 1) box.append(h("div", { className: "hf-state-group", textContent: g }));
+      const row = h("div", { className: "hf-actions" });
+      for (const x of sibs.filter((y) => (y.stateGroup || "States") === g)) {
+        const b = h("button", { textContent: x.state || x.name, className: x.id === s.id ? "on" : "" });
+        if (statusOf(x) !== "same") b.append(h("span", { className: "hf-dot " + statusOf(x), title: statusOf(x) === "new" ? "New" : "Changed" }));
+        b.addEventListener("click", () => focusScreen(x.id));
+        row.append(b);
+      }
+      box.append(row);
+    }
+    panel.append(box);
   }
 
   // ---------- deep links ----------

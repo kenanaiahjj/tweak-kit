@@ -8,6 +8,7 @@ import { addAsk, askStatus, cancelAsk } from "./asks.mjs";
 import { queueTokens, sendToPaper } from "./paper.mjs";
 import { deployHandoff, exportHandoff, handoffData, readIndex, saveHandoff } from "./handoff.mjs";
 import { handoffPage } from "./handoff-page.mjs";
+import { figmaScreens, figmaToken, tokenFile } from "./figma.mjs";
 import net from "node:net";
 import { jsxAt, toTailwind } from "./code.mjs";
 import { findRoutes as findAppRoutes } from "./routes.mjs";
@@ -826,6 +827,10 @@ export function studioPage(appPath) {
   .cn-actions button { height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: rgba(255,255,255,.08); color: #fff; font: 500 12.5px system-ui, -apple-system, sans-serif; cursor: pointer; }
   .cn-actions button.primary { background: #a78bfa; color: #1b1530; font-weight: 600; }
   .ho-pop { width: 340px; }
+  .ho-src { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 2px; margin: 0 0 10px; border-radius: 8px; background: rgba(255,255,255,.06); }
+  .ho-src button { height: 28px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; opacity: .7; }
+  .ho-src button.on { background: rgba(255,255,255,.14); opacity: 1; font-weight: 600; }
+  .ho-fnote { margin: -4px 0 10px; font-size: 11.5px; line-height: 1.45; color: #fbbf24; overflow-wrap: anywhere; }
   .ho-label { grid-template-columns: 64px minmax(0, 1fr) !important; }
   .ho-label input { height: 30px; min-width: 0; padding: 0 10px; border: 0; border-radius: 8px; background: rgba(255,255,255,.06); color: #fff; font: 12.5px system-ui, -apple-system, sans-serif; outline: none; }
   .ho-label input:focus { box-shadow: inset 0 0 0 1px rgba(167,139,250,.7); }
@@ -3242,7 +3247,7 @@ export function studioPage(appPath) {
     let versions = [], shared = null;
     try { const d = await fetch("/__ui-tweaks/handoff/versions", { cache: "no-store" }).then((r) => r.json()); versions = d.versions || []; shared = d.shared; } catch {}
     const last = versions[versions.length - 1];
-    pop.innerHTML = '<h4>Handoff</h4><p>A read-only version of every screen for developers, PMs and QA: inspect measurements and colours, search it, and compare with the last version. Add your hosted app to let them click through it too.</p><label class="ho-label">Version<input class="ho-name" maxlength="60" /></label><label class="ho-label">Live app<input class="ho-app" type="url" placeholder="https://your-app.vercel.app (optional)" /></label><div class="cn-actions"><button class="cn-go primary ho-save">' + (hoBusy ? "Capturing…" : "Save a version") + '</button></div><div class="ho-shared" hidden><span>Shared</span><a target="_blank" rel="noopener"></a><button title="Copy the link">Copy</button></div><div class="ho-list"></div>';
+    pop.innerHTML = '<h4>Handoff</h4><p>A read-only version of every screen for developers, PMs and QA: inspect measurements and colours, search it, and compare with the last version. Add your hosted app to let them click through it too.</p><div class="ho-src" role="radiogroup" aria-label="Screens from"><button data-src="app" role="radio">This app</button><button data-src="figma" role="radio">A Figma file</button></div><label class="ho-label ho-figma" hidden>Figma link<input class="ho-flink" type="url" placeholder="https://www.figma.com/design/… (a page, section or frame)" /></label><p class="ho-fnote" hidden></p><label class="ho-label">Version<input class="ho-name" maxlength="60" /></label><label class="ho-label">Live app<input class="ho-app" type="url" placeholder="https://your-app.vercel.app (optional)" /></label><div class="cn-actions"><button class="cn-go primary ho-save">' + (hoBusy ? "Capturing…" : "Save a version") + '</button></div><div class="ho-shared" hidden><span>Shared</span><a target="_blank" rel="noopener"></a><button title="Copy the link">Copy</button></div><div class="ho-list"></div>';
     pop.querySelector(".ho-name").value = "Version " + (versions.length + 1);
     // Where the handoff is shared (the same address every time), and which version is up there.
     if (shared && shared.url) {
@@ -3286,10 +3291,38 @@ export function studioPage(appPath) {
     const app = pop.querySelector(".ho-app");
     try { app.value = localStorage.getItem("ui-tweaks:handoff-app") || ""; } catch {}
     app.addEventListener("keydown", (e) => e.stopPropagation());
+    // Where the screens come from: this app (each canvas screen, captured) or a Figma file (its frames).
+    let src = "app";
+    try { src = localStorage.getItem("ui-tweaks:handoff-src") === "figma" ? "figma" : "app"; } catch {}
+    const flink = pop.querySelector(".ho-flink"), fnote = pop.querySelector(".ho-fnote");
+    let figmaInfo = null;
+    const drawSrc = () => {
+      for (const b of pop.querySelectorAll(".ho-src button")) { b.classList.toggle("on", b.dataset.src === src); b.setAttribute("aria-checked", String(b.dataset.src === src)); }
+      pop.querySelector(".ho-figma").hidden = src !== "figma";
+      fnote.hidden = src !== "figma" || !figmaInfo || figmaInfo.token;
+      if (figmaInfo && !figmaInfo.token) fnote.textContent = "Needs your Figma token: in Figma, Settings → Security → Personal access tokens (File content: read). Save it in " + figmaInfo.tokenFile + " or as FIGMA_TOKEN, then try again.";
+      if (!hoBusy) pop.querySelector(".ho-save").textContent = src === "figma" ? "Save a version from Figma" : "Save a version";
+    };
+    for (const b of pop.querySelectorAll(".ho-src button")) b.addEventListener("click", () => { src = b.dataset.src; try { localStorage.setItem("ui-tweaks:handoff-src", src); } catch {} drawSrc(); });
+    flink.addEventListener("keydown", (e) => e.stopPropagation());
+    fetch("/__ui-tweaks/handoff/figma", { cache: "no-store" }).then((r) => r.json()).then((d) => {
+      figmaInfo = d;
+      let saved = "";
+      try { saved = localStorage.getItem("ui-tweaks:handoff-figma") || ""; } catch {}
+      if (!flink.value) flink.value = saved || d.link || "";
+      drawSrc();
+    }).catch(() => {});
+    drawSrc();
     pop.querySelector(".ho-save").addEventListener("click", () => {
       const url = app.value.trim();
       if (url && !/^https?:[/][/]/i.test(url)) return note("The live app link starts with https://");
       try { localStorage.setItem("ui-tweaks:handoff-app", url); } catch {}
+      if (src === "figma") {
+        const link = flink.value.trim();
+        if (!/^https:[/][/]([a-z0-9-]+[.])?figma[.]com[/]/i.test(link)) return note("Paste a Figma link: figma.com/design/… (a page, a section or a frame)");
+        try { localStorage.setItem("ui-tweaks:handoff-figma", link); } catch {}
+        return saveFigmaVersion(pop.querySelector(".ho-name").value.trim(), button, url, link);
+      }
       saveHandoffVersion(pop.querySelector(".ho-name").value.trim(), button, url);
     });
     pop.querySelector(".ho-name").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") pop.querySelector(".ho-save").click(); });
@@ -3318,6 +3351,23 @@ export function studioPage(appPath) {
       note("Saved “" + out.version.label + "”: " + screens.length + " screens" + (out.changed || out.added ? ", " + out.changed + " changed and " + out.added + " new since the last version" : "") + ".");
     } catch (e) {
       note("Couldn't save the version: " + e.message);
+    } finally {
+      hoBusy = false;
+      if (!$(".ho-pop").hidden) drawHandoffPop(button);
+    }
+  }
+  async function saveFigmaVersion(label, button, appUrl, link) {
+    if (hoBusy) return;
+    hoBusy = true;
+    drawHandoffPop(button);
+    note("Reading the Figma file (its frames, layers and styles)…");
+    try {
+      const res = await fetch("/__ui-tweaks/handoff/figma", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label, appUrl, link }) });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error || res.statusText);
+      note("Saved “" + out.version.label + "” from " + out.file + ": " + out.screens + " frames" + (out.changed || out.added ? ", " + out.changed + " changed and " + out.added + " new since the last Figma version" : "") + ".");
+    } catch (e) {
+      note("Couldn't save from Figma: " + e.message);
     } finally {
       hoBusy = false;
       if (!$(".ho-pop").hidden) drawHandoffPop(button);
@@ -4085,6 +4135,21 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
         }
       }
       if (url.pathname === `${PREFIX}/handoff/versions` && req.method === "GET") return send(res, 200, { shared: (await readIndex(root)).shared || null, versions: (await readIndex(root)).versions.map(({ screens, ...v }) => ({ ...v, screens: screens.length, changed: screens.filter((x) => x.status === "changed").length, added: screens.filter((x) => x.status === "new").length })) });
+      // A version from a Figma file instead of the app: with the person's own token (never sent anywhere else).
+      if (url.pathname === `${PREFIX}/handoff/figma` && req.method === "GET") {
+        const last = (await readIndex(root)).versions.slice().reverse().find((v) => v.source && v.source.type === "figma");
+        return send(res, 200, { token: !!(await figmaToken()), tokenFile: tokenFile(), link: last ? last.source.link : null });
+      }
+      if (url.pathname === `${PREFIX}/handoff/figma` && req.method === "POST") {
+        try {
+          const body = JSON.parse((await readBody(req, 20_000)) || "{}");
+          const { screens, file } = await figmaScreens(body.link);
+          const out = await saveHandoff(root, { label: body.label, note: body.note, appUrl: body.appUrl, screens, source: { type: "figma", ...file } });
+          return send(res, 200, { ok: true, file: file.name, screens: screens.length, ...out });
+        } catch (error) {
+          return send(res, error.status || 500, { error: error.message });
+        }
+      }
       if (url.pathname === `${PREFIX}/handoff` && req.method === "POST") {
         try {
           return send(res, 200, { ok: true, ...(await saveHandoff(root, JSON.parse(await readBody(req, 120_000_000)))) });

@@ -129,6 +129,43 @@ export async function init(root, { skipInstall = false, skipMod = false, log = c
   return { ok: true, ...p };
 }
 
+// A handoff without the app: versions from a Figma file, kept in this folder's .ui-tweaks/handoff (put it in
+// git to share the history), viewed locally or shared on Vercel.
+export async function handoffCommand(args, root = process.cwd(), log = console.log) {
+  const flag = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
+  const [sub] = args;
+  const { saveHandoff, deployHandoff, handoffData } = await import("./handoff.mjs");
+  if (sub === "figma") {
+    const link = args[1];
+    if (!link) { log("Usage: handoff figma <figma link to a page, section or frame> [--label name]"); return 1; }
+    const { figmaScreens } = await import("./figma.mjs");
+    try {
+      const { screens, file } = await figmaScreens(link, { onProgress: (t) => log("• " + t) });
+      const out = await saveHandoff(root, { label: flag("--label"), note: flag("--note"), screens, source: { type: "figma", ...file } });
+      log(`Saved “${out.version.label}” from ${file.name}: ${screens.length} frames` + (out.changed || out.added ? `, ${out.changed} changed and ${out.added} new since the last Figma version` : "") + ".");
+      for (const s of out.version.screens) for (const c of s.changes || []) log(`  ${s.name}: ${c.what}`);
+      return 0;
+    } catch (e) { log("Couldn't save from Figma: " + e.message); return 1; }
+  }
+  if (sub === "share") {
+    try { const out = await deployHandoff(root, "http://localhost", flag("--version") || null); log("Shared: " + out.url); return 0; } catch (e) { log("Couldn't share it: " + e.message); return 1; }
+  }
+  if (sub === "open") {
+    const http = await import("node:http");
+    const { handoffPage } = await import("./handoff-page.mjs");
+    const port = Number(flag("--port")) || 5610;
+    http.createServer(async (req, res) => {
+      const u = new URL(req.url, "http://x");
+      if (u.pathname === "/__ui-tweaks/handoff/data") { res.setHeader("Content-Type", "application/json"); return res.end(JSON.stringify(await handoffData(root))); }
+      if (u.pathname === "/" || u.pathname === "/__ui-tweaks/handoff") { res.setHeader("Content-Type", "text/html; charset=utf-8"); return res.end(handoffPage()); }
+      res.statusCode = 404; res.end();
+    }).listen(port, "127.0.0.1", () => log(`Handoff at http://localhost:${port} (Ctrl+C stops it)`));
+    return 0;
+  }
+  log("Usage: handoff figma <figma link> [--label name] | open [--port 5610] | share [--version id]");
+  return 1;
+}
+
 // Run as a command (npx links the bin, so compare real paths), not when imported by the tests.
 const real = (p) => { try { return realpathSync(p); } catch { return p; } };
 if (process.argv[1] && real(path.resolve(process.argv[1])) === real(fileURLToPath(import.meta.url))) {
@@ -141,7 +178,9 @@ if (process.argv[1] && real(path.resolve(process.argv[1])) === real(fileURLToPat
   } else if (cmd === "serve") {
     process.argv.splice(2, 1);
     await import("./serve.mjs");
+  } else if (cmd === "handoff") {
+    process.exitCode = await handoffCommand(rest);
   } else {
-    console.log("Usage: npx github:" + REPO + " [init] [--no-install] [--no-mod]\n       npx github:" + REPO + " studio [app url] [--root project] [--port 5600]\n       npx github:" + REPO + " serve [dir]");
+    console.log("Usage: npx github:" + REPO + " [init] [--no-install] [--no-mod]\n       npx github:" + REPO + " studio [app url] [--root project] [--port 5600]\n       npx github:" + REPO + " serve [dir]\n       npx github:" + REPO + " handoff figma <figma link> [--label name] | open [--port 5610] | share");
   }
 }

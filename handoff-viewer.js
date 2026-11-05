@@ -25,13 +25,18 @@
   };
   if (S.vi < 0) S.vi = D.versions.length - 1;
   const version = () => D.versions[S.vi];
-  const prevVersion = () => D.versions[S.vi - 1] || null;
+  // A version compares with the one before it from the same source (the app, or a Figma file).
+  const kindOf = (v) => (v && v.source && v.source.type) || "app";
+  const prevVersion = () => { for (let i = S.vi - 1; i >= 0; i--) if (kindOf(D.versions[i]) === kindOf(version())) return D.versions[i]; return null; };
   const statusOf = (s) => {
     const p = prevVersion();
     if (!p) return "same";
     const b = p.screens.find((x) => x.id === s.id);
-    return !b ? "new" : b.hash === s.hash ? "same" : "changed";
+    return !b ? "new" : (s.sig && b.sig ? b.sig === s.sig : b.hash === s.hash) ? "same" : "changed";
   };
+  const isFigma = () => kindOf(version()) === "figma";
+  // A Figma layer's box (Inspect reads it like an element of a coded screen).
+  const fgOf = (el) => (el && el.dataset && el.dataset.fgId ? el : null);
   const screenHtml = (hash) => (D.screens[hash] || "").replace(/<style data-uit-style="([0-9a-f]+)"><\/style>/g, (m, k) => "<style>" + (D.styles[k] || "") + "</style>");
   const toast = (t) => { const el = $(".hf-toast"); el.textContent = t; el.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), 2200); };
   const copy = (t, what) => { navigator.clipboard.writeText(t).then(() => toast("Copied " + (what || t)), () => toast("Couldn’t copy")); };
@@ -72,7 +77,7 @@
     sel.value = String(S.vi);
     const v = version();
     const changed = v.screens.filter((s) => statusOf(s) === "changed").length, added = v.screens.filter((s) => statusOf(s) === "new").length;
-    $(".hf-meta").textContent = [when(v.at), v.branch && v.commit ? v.branch + " @ " + v.commit + (v.dirty ? " + changes" : "") : "", prevVersion() ? (changed || added ? [changed && changed + " changed", added && added + " new"].filter(Boolean).join(", ") + " since " + prevVersion().label : "No changes since " + prevVersion().label) : v.screens.length + " screens"].filter(Boolean).join(" · ");
+    $(".hf-meta").textContent = [when(v.at), v.source && v.source.type === "figma" ? "Figma · " + v.source.name : v.branch && v.commit ? v.branch + " @ " + v.commit + (v.dirty ? " + changes" : "") : "", prevVersion() ? (changed || added ? [changed && changed + " changed", added && added + " new"].filter(Boolean).join(", ") + " since " + prevVersion().label : "No changes since " + prevVersion().label) : v.screens.length + " screens"].filter(Boolean).join(" · ");
     $(".hf-meta").title = v.note || "";
     const st = $(".hf-states-t"), nStates = v.screens.filter((x) => x.group).length;
     st.hidden = !nStates;
@@ -246,6 +251,13 @@
     for (const c of cards.values()) c.marks.innerHTML = "";
     for (const m of S.matches) { const c = cards.get(m.sid); if (c && m.el.isConnected) box(c, rectIn(c, m.el), "match" + (m === S.matchCur ? " cur" : "")); }
     if (S.outlines) for (const c of cards.values()) if (c.doc) for (const el of [...c.doc.body.querySelectorAll("*")].slice(0, 1500)) { const r = rectIn(c, el); if (r.w && r.h) box(c, r, "outline"); }
+    // Figma: the layers that changed in this version, marked on the selected screen.
+    const on = S.sel && cards.get(S.sel.sid);
+    if (on && on.doc && on.s.changes && statusOf(on.s) === "changed") for (const ch of on.s.changes) {
+      if (ch.kind === "removed") continue;
+      const el = on.doc.querySelector('[data-fg-id="' + CSS.escape(ch.id) + '"]');
+      if (el) box(on, rectIn(on, el), ch.kind === "added" ? "fgadd" : "fgchg");
+    }
     const sc = S.sel && S.sel.el && cards.get(S.sel.sid);
     if (sc && S.sel.el.isConnected) {
       const r = rectIn(sc, S.sel.el);
@@ -355,6 +367,7 @@
         const link = h("button", { textContent: "Copy link to this screen" }); link.addEventListener("click", () => copy(location.href, "the link")); a.append(link);
         if (statusOf(s) === "changed") { const cmp = h("button", { textContent: "Compare with " + prevVersion().label }); cmp.addEventListener("click", () => openCompare(s)); a.append(cmp); }
         panel.append(act);
+        changesSection(s);
         statesSection(s);
         commentsSection(s, null);
       } else {
@@ -379,10 +392,24 @@
     };
     // What it is.
     const head = sec();
-    const name = h("div", { className: "hf-el", textContent: el.tagName.toLowerCase() + (el.classList.length ? "." + [...el.classList].slice(0, 3).join(".") : "") });
+    const fg = fgOf(el);
+    const name = h("div", { className: "hf-el", textContent: fg ? fg.dataset.fgName : el.tagName.toLowerCase() + (el.classList.length ? "." + [...el.classList].slice(0, 3).join(".") : "") });
     const txt = (el.innerText || "").trim().replace(/\s+/g, " ");
-    name.append(h("small", { textContent: (s.name || s.url) + (txt ? " · “" + txt.slice(0, 50) + (txt.length > 50 ? "…" : "") + "”" : "") }));
+    name.append(h("small", { textContent: (fg ? fg.dataset.fgType.toLowerCase().replace(/_/g, " ") + " · " : "") + (s.name || s.url) + (txt ? " · “" + txt.slice(0, 50) + (txt.length > 50 ? "…" : "") + "”" : "") }));
     head.append(name);
+    // Figma's own names for it: the component and variant, the styles and variables it uses.
+    if (fg) {
+      const f = sec("Figma");
+      f.classList.add("hf-fig");
+      if (fg.dataset.fgComp) row(f, "Component", fg.dataset.fgComp);
+      for (const part of (fg.dataset.fgStyles || "").split(" · ").filter(Boolean)) { const sp = part.indexOf(" "); row(f, "Style · " + part.slice(0, sp), part.slice(sp + 1)); }
+      if (fg.dataset.fgVars) row(f, "Variables", fg.dataset.fgVars);
+      const change = (s.changes || []).find((x) => x.id === fg.dataset.fgId);
+      if (change && statusOf(s) === "changed") row(f, "Changed", change.what.replace(/^[^:]*: /, ""), { cls: "hf-warn" });
+      const open = h("a", { className: "hf-figlink", textContent: "Open this layer in Figma ↗", target: "_blank", rel: "noopener" });
+      open.href = s.url.replace(/node-id=[^&]*/, "node-id=" + fg.dataset.fgId.replace(/:/g, "-"));
+      f.append(open);
+    }
     statesSection(s);
     commentsSection(s, el);
     // Size and place.
@@ -453,10 +480,36 @@
     const link = h("button", { textContent: "Copy link" });
     link.addEventListener("click", () => copy(location.href, "a link to this element"));
     const parent = h("button", { textContent: "Parent" });
-    parent.addEventListener("click", () => { if (el.parentElement && el.parentElement !== c.doc.body) select(c.s.id, el.parentElement); });
+    parent.addEventListener("click", () => { if (el.parentElement && el.parentElement !== c.doc.body && el.parentElement.id !== "fg") select(c.s.id, el.parentElement); });
     a.append(css, link, parent);
     if (statusOf(s) === "changed") { const cmp = h("button", { textContent: "Compare" }); cmp.addEventListener("click", () => openCompare(s)); a.append(cmp); }
     act.append(a);
+  }
+
+  // ---------- what changed (Figma versions: layer by layer) ----------
+  function changesSection(s, into = panel) {
+    const list = statusOf(s) === "changed" && s.changes;
+    if (s.url && /figma[.]com/.test(s.url) && into === panel) {
+      const a = h("a", { className: "hf-figlink", textContent: "Open this frame in Figma ↗", target: "_blank", rel: "noopener", href: s.url });
+      const box = h("div", { className: "hf-sec" }, a);
+      panel.append(box);
+    }
+    if (!list || !list.length) return;
+    const box = h("div", { className: "hf-sec hf-changes" });
+    box.append(h("h4", { textContent: "Changed since " + prevVersion().label + " · " + list.length }));
+    const card = cards.get(s.id);
+    for (const ch of list) {
+      const b = h("button", { className: "hf-change " + ch.kind, textContent: ch.what, title: ch.kind === "removed" ? "Removed in this version" : "Show it on the screen" });
+      if (ch.kind === "removed") b.disabled = true;
+      b.addEventListener("click", () => {
+        const c = cards.get(s.id);
+        const el = c && c.doc && c.doc.querySelector('[data-fg-id="' + CSS.escape(ch.id) + '"]');
+        if (el) { if (into !== panel) $(".hf-compare") && $(".hf-compare").remove(); focusScreen(s.id, el); select(s.id, el); }
+      });
+      box.append(b);
+    }
+    into.append(box);
+    return card;
   }
 
   // ---------- comments ----------
@@ -627,7 +680,7 @@
   function openSearch() {
     if ($(".hf-modal.search")) return $(".hf-modal.search input").select();
     const modal = h("div", { className: "hf-modal search" });
-    modal.innerHTML = `<div class="hf-search"><div class="hf-search-in"><input placeholder="Text, a colour (#0D99FF, rgb(…), --token) or an element (button, .card)…" /></div><div class="hf-chips"><button data-k="all">All</button><button data-k="text">Text</button><button data-k="color">Colours</button><button data-k="el">Elements</button><span class="hf-grow"></span><span class="hf-count"></span></div><div class="hf-results"></div><div class="hf-search-foot"><span><kbd>↑</kbd> <kbd>↓</kbd> move</span><span><kbd>Enter</kbd> go</span><span><kbd>⇧ Enter</kbd> highlight all on the canvas</span><span><kbd>Esc</kbd> close</span></div></div>`;
+    modal.innerHTML = `<div class="hf-search"><div class="hf-search-in"><input placeholder="Text, a colour (#0D99FF, rgb(…), --token) or an element (button, .card, a Figma layer)…" /></div><div class="hf-chips"><button data-k="all">All</button><button data-k="text">Text</button><button data-k="color">Colours</button><button data-k="el">Elements</button><span class="hf-grow"></span><span class="hf-count"></span></div><div class="hf-results"></div><div class="hf-search-foot"><span><kbd>↑</kbd> <kbd>↓</kbd> move</span><span><kbd>Enter</kbd> go</span><span><kbd>⇧ Enter</kbd> highlight all on the canvas</span><span><kbd>Esc</kbd> close</span></div></div>`;
     document.body.append(modal);
     const input = $("input", modal), list = $(".hf-results", modal);
     let results = [], cur = 0, timer = null;
@@ -709,7 +762,7 @@
             if (!el.getClientRects().length) continue;
             const cs = win.getComputedStyle(el);
             const hits = [["text", cs.color, [...el.childNodes].some((x) => x.nodeType === 3 && x.textContent.trim())], ["fill", cs.backgroundColor, true], ["border", cs.borderTopColor, parseFloat(cs.borderTopWidth) > 0]].filter(([, v, applies]) => applies && v === rgb);
-            if (hits.length) out.push({ sid: c.s.id, screen, el, kind: hits.map((x) => x[0]).join(" + "), html: esc(el.tagName.toLowerCase() + (el.classList[0] ? "." + el.classList[0] : "")) + " · " + esc(((el.innerText || "").trim().replace(/\s+/g, " ")).slice(0, 50)) });
+            if (hits.length) out.push({ sid: c.s.id, screen, el, kind: hits.map((x) => x[0]).join(" + "), html: esc(el.dataset.fgName || el.tagName.toLowerCase() + (el.classList[0] ? "." + el.classList[0] : "")) + " · " + esc(((el.innerText || "").trim().replace(/\s+/g, " ")).slice(0, 50)) });
           }
         }
       }
@@ -718,9 +771,16 @@
         let list = [];
         try { list = [...doc.body.querySelectorAll(q)]; } catch {}
         if (!list.length && /^[\w-]+$/.test(q)) list = [...doc.body.querySelectorAll("*")].filter((el) => [...el.classList].some((k) => k.toLowerCase().includes(ql)));
+        // Figma layers by their name, component or style ("Button", "Primary", "Heading/H2").
+        if (doc.getElementById("fg")) list = [...new Set([...list.filter((el) => !el.matches(".fg, #fg") || el.dataset.fgName), ...[...doc.querySelectorAll("[data-fg-name]")].filter((el) => [el.dataset.fgName, el.dataset.fgComp, el.dataset.fgStyles].some((v) => v && v.toLowerCase().includes(ql)))])];
         for (const el of list) {
           if (out.length >= 300) break;
           if (!el.getClientRects().length || out.some((o) => o.el === el)) continue;
+          if (el.dataset.fgName) {
+            const t = [el.dataset.fgName, el.dataset.fgComp, el.dataset.fgStyles].filter(Boolean).join(" · "), i = t.toLowerCase().indexOf(ql);
+            out.push({ sid: c.s.id, screen, el, kind: el.dataset.fgComp ? "component" : "layer", html: i >= 0 ? mark(t, i, q.length) : esc(t) });
+            continue;
+          }
           out.push({ sid: c.s.id, screen, el, kind: "element", html: "<mark>" + esc(el.tagName.toLowerCase() + (el.classList.length ? "." + [...el.classList].slice(0, 2).join(".") : "")) + "</mark> " + esc(((el.innerText || "").trim().replace(/\s+/g, " ")).slice(0, 50)) });
         }
       }
@@ -773,6 +833,8 @@
       }
     };
     for (const b of modal.querySelectorAll(".hf-seg button")) b.addEventListener("click", () => { for (const x of modal.querySelectorAll(".hf-seg button")) x.classList.toggle("on", x === b); draw(b.dataset.v); });
+    // Figma: the list of what changed, layer by layer, beside the two pictures.
+    if (s.changes && s.changes.length) { const side = h("aside", { className: "hf-compare-changes" }); changesSection(s, side); modal.append(side); modal.classList.add("with-changes"); }
     $(".c-close", modal).addEventListener("click", () => modal.remove());
     draw("side");
   }

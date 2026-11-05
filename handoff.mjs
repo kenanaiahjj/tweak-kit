@@ -9,6 +9,7 @@ import { spawn } from "node:child_process";
 import { listRefs } from "./versions.mjs";
 import { handoffPage } from "./handoff-page.mjs";
 import { GITIGNORE } from "./ignore.mjs";
+import { diffLayers } from "./figma.mjs";
 
 export const handoffDir = (root) => path.join(root, ".ui-tweaks", "handoff");
 const hash = (t) => createHash("sha1").update(t).digest("hex").slice(0, 16);
@@ -48,22 +49,43 @@ export async function saveHandoff(root, body) {
   // Versions are shared through git (see ignore.mjs): the team compares against the same history.
   await fs.writeFile(path.join(root, ".ui-tweaks", ".gitignore"), GITIGNORE);
   const index = await readIndex(root);
-  const prev = index.versions[index.versions.length - 1];
+  // Where the screens came from: the coded app (the default) or a design file. A version compares with the
+  // last one from the same kind of source.
+  const source = body.source && body.source.type === "figma" ? { type: "figma", name: clip(body.source.name, 120), link: clip(body.source.link, 500), version: clip(body.source.version, 40), lastModified: clip(body.source.lastModified, 40) } : null;
+  const kind = (v) => (v.source && v.source.type) || "app";
+  const prev = index.versions.slice().reverse().find((v) => kind(v) === (source ? source.type : "app"));
   const out = [];
   for (const s of screens.slice(0, 200)) {
-    const split = splitStyles(s.html);
-    for (const [h, css] of Object.entries(split.styles)) await writeOnce(path.join(dir, "styles", `${h}.css`), css);
-    const h = hash(split.html);
-    await writeOnce(path.join(dir, "screens", `${h}.html`), split.html);
     const before = prev && prev.screens.find((p) => p.id === s.id);
+    // A design source (Figma) says what a screen is by its layers (sig): the same layers keep the screen
+    // already stored, even when the source renders its picture a few bytes differently.
+    const sig = typeof s.sig === "string" && /^[0-9a-f]{8,40}$/.test(s.sig) ? s.sig : null;
+    let h, changes = null;
+    if (sig && before && before.sig === sig) h = before.hash;
+    else {
+      const split = splitStyles(s.html);
+      for (const [k, css] of Object.entries(split.styles)) await writeOnce(path.join(dir, "styles", `${k}.css`), css);
+      h = hash(split.html);
+      await writeOnce(path.join(dir, "screens", `${h}.html`), split.html);
+    }
+    if (sig && Array.isArray(s.layers)) {
+      await fs.mkdir(path.join(dir, "layers"), { recursive: true });
+      await writeOnce(path.join(dir, "layers", `${sig}.json`), JSON.stringify(s.layers));
+      // What changed, layer by layer, against the screen in the version before.
+      if (before && before.sig && before.sig !== sig) {
+        const was = await fs.readFile(path.join(dir, "layers", `${before.sig}.json`), "utf8").then(JSON.parse).catch(() => null);
+        if (was) changes = diffLayers(was, s.layers);
+      }
+    }
     const size = Array.isArray(s.size) ? s.size.slice(0, 2).map((n) => Math.max(100, Math.min(4000, Math.round(Number(n) || 0)))) : [390, 844];
-    out.push({ id: clip(s.id, 40), name: clip(s.name, 120), url: clip(s.url, 500), size, x: Math.round(Number(s.x) || 0), y: Math.round(Number(s.y) || 0), heading: clip(s.heading, 120), ...(s.group ? { group: clip(s.group, 120), state: clip(s.state, 60), stateGroup: clip(s.stateGroup, 40) } : {}), hash: h, status: !prev ? "first" : !before ? "new" : before.hash === h ? "same" : "changed" });
+    const same = before && (sig && before.sig ? before.sig === sig : before.hash === h);
+    out.push({ id: clip(s.id, 40), name: clip(s.name, 120), url: clip(s.url, 500), size, x: Math.round(Number(s.x) || 0), y: Math.round(Number(s.y) || 0), heading: clip(s.heading, 120), ...(s.group ? { group: clip(s.group, 120), state: clip(s.state, 60), stateGroup: clip(s.stateGroup, 40) } : {}), hash: h, ...(sig ? { sig } : {}), ...(changes && changes.length ? { changes } : {}), status: !prev ? "first" : !before ? "new" : same ? "same" : "changed" });
   }
   let cur = {};
   try { cur = (await listRefs(root)).current || {}; } catch {}
   // The hosted app (a preview deploy) for clicking through it: http(s) only.
   const appUrl = /^https?:\/\/[^\s"<>]+$/i.test(String(body.appUrl || "").trim()) ? String(body.appUrl).trim().slice(0, 500) : null;
-  const version = { id: `v${Date.now().toString(36)}`, ...(appUrl ? { appUrl } : {}), label: clip(body.label, 60).trim() || `Version ${index.versions.length + 1}`, note: clip(body.note, 500), at: Date.now(), commit: cur.sha || null, branch: cur.name || null, dirty: !!cur.dirty, screens: out };
+  const version = { id: `v${Date.now().toString(36)}`, ...(appUrl ? { appUrl } : {}), ...(source ? { source } : {}), label: clip(body.label, 60).trim() || `Version ${index.versions.length + 1}`, note: clip(body.note, 500), at: Date.now(), commit: cur.sha || null, branch: cur.name || null, dirty: !!cur.dirty, screens: out };
   index.versions.push(version);
   await fs.writeFile(path.join(dir, "index.json"), JSON.stringify(index, null, 2) + "\n");
   return { version, changed: out.filter((s) => s.status === "changed").length, added: out.filter((s) => s.status === "new").length };

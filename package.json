@@ -24,6 +24,7 @@
     "code.mjs",
     "diff.mjs",
     "direct-apply.mjs",
+    "figma.mjs",
     "git.mjs",
     "handoff-api/",
     "handoff-page.mjs",

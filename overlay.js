@@ -4636,6 +4636,10 @@
       v.replaceWith(img);
     });
     for (const [f, v, c] of saved) { v === null ? f.removeAttribute("value") : f.setAttribute("value", v); if (f.type === "checkbox" || f.type === "radio") c === null ? f.removeAttribute("checked") : f.setAttribute("checked", c); }
+    // A select shows its chosen option in a snapshot only when that option carries the selected attribute:
+    // set on the copy (the live page's selects are left as they are).
+    const liveSelects = [...document.querySelectorAll("select")], copySelects = [...clone.querySelectorAll("select")];
+    if (liveSelects.length === copySelects.length) liveSelects.forEach((sel, i) => [...copySelects[i].options].forEach((o, j) => (sel.options[j] && sel.options[j].selected ? o.setAttribute("selected", "") : o.removeAttribute("selected"))));
     for (const n of clone.querySelectorAll("script, noscript, ui-tweaks-overlay, iframe")) n.remove();
     const head = clone.querySelector("head") || clone;
     const extra = [];

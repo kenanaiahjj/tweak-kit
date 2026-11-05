@@ -85,7 +85,9 @@ export async function handoffData(root, only = null) {
       }
     }
   }
-  return { project: path.basename(root), versions, screens, styles };
+  // Where comments live: the shared handoff's comments endpoint (on its Vercel project), once it's shared.
+  const shared = index.shared && index.shared.comments ? index.shared.url + "/api/comments" : null;
+  return { project: path.basename(root), versions, screens, styles, commentsApi: shared };
 }
 
 // ---------- export ----------
@@ -172,6 +174,10 @@ export async function deployHandoff(root, origin, versionId) {
     await fs.mkdir(site, { recursive: true });
     await fs.copyFile(path.join(root, out.file), path.join(site, "index.html"));
     await fs.writeFile(path.join(site, "vercel.json"), JSON.stringify({ cleanUrls: true, headers: [{ source: "/(.*)", headers: [{ key: "X-Robots-Tag", value: "noindex" }] }] }, null, 2) + "\n");
+    // Comments: a small endpoint beside the page, storing them in a Blob store of the project's own.
+    await fs.mkdir(path.join(site, "api"), { recursive: true });
+    await fs.copyFile(new URL("./handoff-api/comments.js", import.meta.url), path.join(site, "api", "comments.js"));
+    await fs.writeFile(path.join(site, "package.json"), JSON.stringify({ name: name, private: true, type: "module", dependencies: { "@vercel/blob": "2.8.2" } }, null, 2) + "\n");
     // With several teams, the CLI won't pick one on its own: use the one it has selected (vercel switch).
     let res = await run("vercel", ["deploy", "--prod", "--yes"], site);
     if (res.code !== 0 && /multiple teams/i.test(res.out)) {
@@ -187,10 +193,27 @@ export async function deployHandoff(root, origin, versionId) {
     const urls = [...res.out.matchAll(/https:\/\/[a-z0-9.-]+\.vercel\.app/gi)].map((m) => m[0]);
     const alias = urls.find((u) => u.includes(`//${name}.`) || /Aliased/i.test(res.out.split(u)[0].split("\n").pop())) || urls[urls.length - 1];
     if (!alias) throw Object.assign(new Error("Vercel didn't say where it deployed"), { status: 502 });
-    const index = await readIndex(root);
-    index.shared = { url: alias, version: versionId || (index.versions[index.versions.length - 1] || {}).id, at: Date.now(), project: name };
+    // The first share: give the project a Blob store for comments (connected to it, so the endpoint gets its
+    // token), then deploy again so the page knows where comments live.
+    let index = await readIndex(root);
+    let comments = !!(index.shared && index.shared.comments && index.shared.project === name);
+    if (!comments) {
+      const envs = await run("vercel", ["env", "ls", "production"], site, 60_000);
+      if (!/BLOB_READ_WRITE_TOKEN/.test(envs.out)) await run("vercel", ["blob", "create-store", `${name}-comments`, "--access", "public", "--yes"], site, 120_000);
+      const again = await run("vercel", ["env", "ls", "production"], site, 60_000);
+      comments = /BLOB_READ_WRITE_TOKEN/.test(again.out);
+      if (comments) {
+        index.shared = { ...(index.shared || {}), url: alias, project: name, comments: true };
+        await fs.writeFile(path.join(handoffDir(root), "index.json"), JSON.stringify(index, null, 2) + "\n");
+        const rebuilt = await exportHandoff(root, origin, versionId || null);
+        await fs.copyFile(path.join(root, rebuilt.file), path.join(site, "index.html"));
+        await run("vercel", ["deploy", "--prod", "--yes"], site);
+      }
+    }
+    index = await readIndex(root);
+    index.shared = { url: alias, version: versionId || (index.versions[index.versions.length - 1] || {}).id, at: Date.now(), project: name, comments };
     await fs.writeFile(path.join(handoffDir(root), "index.json"), JSON.stringify(index, null, 2) + "\n");
-    return { url: alias, project: name, bytes: out.bytes };
+    return { url: alias, project: name, bytes: out.bytes, comments };
   })();
   try { return await deploying; } finally { deploying = null; }
 }

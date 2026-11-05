@@ -25,6 +25,7 @@
     "diff.mjs",
     "direct-apply.mjs",
     "git.mjs",
+    "handoff-api/",
     "handoff-page.mjs",
     "handoff-viewer.css",
     "handoff-viewer.js",

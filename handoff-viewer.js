@@ -21,6 +21,7 @@
     filter: "",
     outlines: false,
     matches: [], // search hits shown on the canvas
+    showStates: true, // component states (from Every state) on the canvas and in the list
   };
   if (S.vi < 0) S.vi = D.versions.length - 1;
   const version = () => D.versions[S.vi];
@@ -46,6 +47,8 @@
     <span class="hf-meta"></span>
     <span class="hf-grow"></span>
     <a class="hf-btn hf-app" target="_blank" rel="noopener" hidden title="The app itself, hosted, to click through it">Open the app ↗</a>
+    <button class="hf-btn hf-states-t on" hidden title="Show or hide the components' states (loading, empty, error…)">States</button>
+    <button class="hf-btn hf-comments-t" title="Comments on these screens">Comments</button>
     <button class="hf-btn hf-find" title="Search text, colours and elements on every screen">Search <kbd>${/Mac/.test(navigator.platform) ? "⌘" : "Ctrl"} F</kbd></button>
     <button class="hf-btn hf-outlines" title="Outline every element on the screens (O)">Outlines</button>
     <button class="hf-btn hf-fit" title="Fit every screen (⇧1)">Fit</button>
@@ -71,6 +74,10 @@
     const changed = v.screens.filter((s) => statusOf(s) === "changed").length, added = v.screens.filter((s) => statusOf(s) === "new").length;
     $(".hf-meta").textContent = [when(v.at), v.branch && v.commit ? v.branch + " @ " + v.commit + (v.dirty ? " + changes" : "") : "", prevVersion() ? (changed || added ? [changed && changed + " changed", added && added + " new"].filter(Boolean).join(", ") + " since " + prevVersion().label : "No changes since " + prevVersion().label) : v.screens.length + " screens"].filter(Boolean).join(" · ");
     $(".hf-meta").title = v.note || "";
+    const st = $(".hf-states-t"), nStates = v.screens.filter((x) => x.group).length;
+    st.hidden = !nStates;
+    st.textContent = "States " + nStates;
+    st.classList.toggle("on", S.showStates);
     const app = $(".hf-app");
     app.hidden = !v.appUrl;
     if (v.appUrl) app.href = v.appUrl;
@@ -89,6 +96,7 @@
     for (const s of order) {
       const st = statusOf(s);
       if (S.changedOnly && st === "same") continue;
+      if (s.group && !S.showStates) continue;
       if (q && !(s.name || s.url).toLowerCase().includes(q)) continue;
       const g = s.group ? s.group.replace(/^states:/, "") + " · states" : "Screens";
       if (g !== heading) { heading = g; if (s.group || screens.some((x) => x.group)) box.append(h("div", { className: "hf-list-group", textContent: g })); }
@@ -110,6 +118,7 @@
     for (const s of version().screens) {
       const st = statusOf(s);
       if (S.changedOnly && st === "same") continue;
+      if (s.group && !S.showStates) continue;
       const [w, hh] = s.size;
       const el = h("div", { className: "hf-card" + (st === "changed" ? " changed" : "") });
       Object.assign(el.style, { left: s.x + "px", top: s.y + "px" });
@@ -163,6 +172,7 @@
     doc.addEventListener("pointerdown", (e) => { if (hand) { e.preventDefault(); startPan(e, card); } }, true);
     if (S.pending && S.pending.sid === card.s.id) { const el = safeQuery(doc, S.pending.path); S.pending = null; if (el) select(card.s.id, el); }
     if (S.outlines || S.matches.length) drawMarks();
+    drawPins();
   }
 
   // ---------- camera ----------
@@ -174,7 +184,7 @@
     stage.style.backgroundPosition = S.cam.x + "px " + S.cam.y + "px";
     $(".hf-zoom").textContent = Math.round(S.cam.z * 100) + "%";
   }
-  const shown = () => version().screens.filter((s) => !S.changedOnly || statusOf(s) !== "same");
+  const shown = () => version().screens.filter((s) => (!S.changedOnly || statusOf(s) !== "same") && (S.showStates || !s.group));
   function fit(list = shown()) {
     if (!list.length) return;
     const x = Math.min(...list.map((s) => s.x)), y = Math.min(...list.map((s) => s.y)) - 40;
@@ -346,6 +356,7 @@
         if (statusOf(s) === "changed") { const cmp = h("button", { textContent: "Compare with " + prevVersion().label }); cmp.addEventListener("click", () => openCompare(s)); a.append(cmp); }
         panel.append(act);
         statesSection(s);
+        commentsSection(s, null);
       } else {
         box.innerHTML = "<b>Inspect</b>Click anything on a screen for its size, spacing, colours and type. Hold <kbd>Alt</kbd> and point at another element for the distance between them. Click a value to copy it.<br><br><kbd>" + (/Mac/.test(navigator.platform) ? "⌘" : "Ctrl") + " F</kbd> searches text, colours and elements on every screen." + (version().appUrl ? " <b style=\"display:inline;margin:0;color:inherit;font-weight:600\">Open the app ↗</b> (top right) is the real thing, to click through." : "");
         panel.append(box);
@@ -373,6 +384,7 @@
     name.append(h("small", { textContent: (s.name || s.url) + (txt ? " · “" + txt.slice(0, 50) + (txt.length > 50 ? "…" : "") + "”" : "") }));
     head.append(name);
     statesSection(s);
+    commentsSection(s, el);
     // Size and place.
     const geo = sec("Layout");
     row(geo, "Size", px(r.width) + " × " + px(r.height));
@@ -445,6 +457,132 @@
     a.append(css, link, parent);
     if (statusOf(s) === "changed") { const cmp = h("button", { textContent: "Compare" }); cmp.addEventListener("click", () => openCompare(s)); a.append(cmp); }
     act.append(a);
+  }
+
+  // ---------- comments ----------
+  // Stored by the shared handoff's comments endpoint (on its Vercel project): anyone with the link can leave one
+  // on a screen or an element. They stay with the screen across versions.
+  const API_C = D.commentsApi || (/\.vercel\.app$/.test(location.hostname) ? "/api/comments" : null);
+  const CM = { list: [], showResolved: false };
+  const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " d ago"; };
+  const myName = () => { try { return localStorage.getItem("hf:name") || ""; } catch { return ""; } };
+  async function loadComments() {
+    if (!API_C) return;
+    try { const d = await fetch(API_C, { cache: "no-store" }).then((r) => r.json()); CM.list = d.comments || []; } catch {}
+    drawCommentsButton();
+    drawPins();
+    if (S.sel && !panel.contains(document.activeElement)) drawPanel();
+  }
+  function drawCommentsButton() {
+    const b = $(".hf-comments-t");
+    const open = CM.list.filter((c) => !c.resolved).length;
+    b.textContent = "Comments" + (open ? " " + open : "");
+    b.disabled = !API_C;
+    b.title = API_C ? "Every open comment, on every screen" : "Comments turn on once the handoff is shared from the studio (Share)";
+  }
+  // A comment's element: by its path on the screen, else nothing (it sits on the screen).
+  const commentEl = (card, c) => (c.path && card.doc ? safeQuery(card.doc, c.path) : null);
+  function drawPins() {
+    for (const card of cards.values()) {
+      let layer = card.el.querySelector(".hf-pins");
+      if (!layer) { layer = h("div", { className: "hf-pins" }); card.el.querySelector(".hf-frame").append(layer); }
+      layer.innerHTML = "";
+      const mine = CM.list.filter((c) => c.screen === card.s.id && (!c.resolved || CM.showResolved));
+      mine.forEach((c, i) => {
+        const el = commentEl(card, c);
+        const r = el ? el.getBoundingClientRect() : { left: c.x, top: c.y, width: 0 };
+        const pin = h("button", { className: "hf-pin" + (c.resolved ? " done" : ""), textContent: String(CM.list.indexOf(c) + 1), title: c.author + ": " + c.text });
+        Object.assign(pin.style, { left: Math.min(card.s.size[0] - 12, r.left + r.width) + "px", top: Math.max(12, r.top) + "px" });
+        pin.addEventListener("click", (e) => { e.stopPropagation(); if (el) select(card.s.id, el); else focusScreen(card.s.id); });
+        layer.append(pin);
+      });
+    }
+  }
+  function commentsSection(s, el) {
+    const box = h("div", { className: "hf-sec hf-cm" });
+    const path = el ? pathOf(el) : "";
+    const here = CM.list.filter((c) => c.screen === s.id && (!el || c.path === path));
+    box.append(h("h4", { textContent: (el ? "Comments on this element" : "Comments on this screen") + (here.length ? " · " + here.length : "") }));
+    if (!API_C) { box.append(h("div", { className: "hf-cm-off", textContent: "Comments turn on once the handoff is shared from the studio (Handoff → Share)." })); panel.append(box); return; }
+    for (const c of here) {
+      const item = h("div", { className: "hf-cm-item" + (c.resolved ? " done" : "") });
+      const meta = h("div", { className: "hf-cm-meta" });
+      meta.append(h("b", { textContent: c.author }), h("span", { textContent: ago(c.at) + (c.version && c.version !== version().id ? " · on " + ((D.versions.find((v) => v.id === c.version) || {}).label || "another version") : "") }));
+      const toggle = h("button", { textContent: c.resolved ? "Reopen" : "Resolve" });
+      toggle.addEventListener("click", async () => {
+        toggle.disabled = true;
+        try { await fetch(API_C, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: c.id, resolved: !c.resolved }) }); c.resolved = !c.resolved; } catch { toast("Couldn’t reach the comments"); }
+        drawCommentsButton(); drawPins(); drawPanel();
+      });
+      meta.append(toggle);
+      item.append(meta, h("div", { className: "hf-cm-text", textContent: c.text }));
+      if (!el && c.label) item.append(h("div", { className: "hf-cm-on", textContent: "On " + c.label }));
+      box.append(item);
+    }
+    const form = h("form", { className: "hf-cm-form" });
+    const ta = h("textarea", { rows: 3, placeholder: el ? "Comment on this element…" : "Comment on this screen…" });
+    const who = h("input", { placeholder: "Your name", value: myName() });
+    const go = h("button", { type: "submit", textContent: "Comment" });
+    const row = h("div", { className: "hf-cm-row" }, who, go);
+    form.append(ta, row);
+    ta.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) form.requestSubmit(); });
+    who.addEventListener("keydown", (e) => e.stopPropagation());
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const text = ta.value.trim();
+      if (!text) return ta.focus();
+      try { localStorage.setItem("hf:name", who.value.trim()); } catch {}
+      go.disabled = true;
+      const card = cards.get(s.id), r = el ? el.getBoundingClientRect() : { left: 0, top: 0 };
+      const label = el ? el.tagName.toLowerCase() + (el.classList[0] ? "." + el.classList[0] : "") + ((el.innerText || "").trim() ? " “" + (el.innerText || "").trim().replace(/\s+/g, " ").slice(0, 40) + "”" : "") : "";
+      try {
+        const res = await fetch(API_C, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, author: who.value.trim(), version: version().id, screen: s.id, screenName: s.name, path, label, x: r.left, y: r.top }) });
+        const out = await res.json();
+        if (!res.ok) throw new Error(out.error || res.statusText);
+        CM.list.push(out.comment);
+        toast("Comment added");
+      } catch (err) { toast("Couldn’t add it: " + err.message); }
+      drawCommentsButton(); drawPins(); drawPanel();
+    });
+    box.append(form);
+    panel.append(box);
+  }
+  // Every comment, open first: a row goes to its screen and element.
+  function openComments() {
+    if (!API_C) return;
+    const modal = h("div", { className: "hf-modal" });
+    modal.innerHTML = '<div class="hf-search"><div class="hf-chips"><button data-k="open" class="on">Open</button><button data-k="done">Resolved</button><span class="hf-grow"></span><label class="hf-check"><input type="checkbox" class="cm-pins" /> Show resolved pins</label></div><div class="hf-results"></div></div>';
+    document.body.append(modal);
+    const list = $(".hf-results", modal);
+    let kind = "open";
+    const draw = () => {
+      list.innerHTML = "";
+      const rows = CM.list.filter((c) => (kind === "open" ? !c.resolved : c.resolved)).slice().reverse();
+      if (!rows.length) list.append(h("div", { className: "hf-group", textContent: kind === "open" ? "No open comments" : "Nothing resolved yet" }));
+      for (const c of rows) {
+        const b = h("button", { className: "hf-res" });
+        const t = h("span");
+        t.innerHTML = "<b></b> " ;
+        t.querySelector("b").textContent = c.author + ":";
+        t.append(document.createTextNode(c.text));
+        b.append(t, h("small", { textContent: (c.screenName || c.screen) + " · " + ago(c.at) }));
+        b.addEventListener("click", () => {
+          modal.remove();
+          const card = cards.get(c.screen);
+          if (!card) return toast("That screen isn’t in this version");
+          const el = commentEl(card, c);
+          focusScreen(c.screen, el || undefined);
+          if (el) select(c.screen, el);
+        });
+        list.append(b);
+      }
+    };
+    for (const b of modal.querySelectorAll(".hf-chips button")) b.addEventListener("click", () => { kind = b.dataset.k; for (const x of modal.querySelectorAll(".hf-chips button")) x.classList.toggle("on", x === b); draw(); });
+    const pins = $(".cm-pins", modal);
+    pins.checked = CM.showResolved;
+    pins.addEventListener("change", () => { CM.showResolved = pins.checked; drawPins(); });
+    modal.addEventListener("pointerdown", (e) => { if (e.target === modal) modal.remove(); });
+    draw();
   }
 
   // A component's states (a states page's screens): the others, grouped as its switcher groups them.
@@ -641,6 +779,8 @@
 
   // ---------- keys ----------
   $(".hf-find").addEventListener("click", openSearch);
+  $(".hf-comments-t").addEventListener("click", openComments);
+  $(".hf-states-t").addEventListener("click", () => { S.showStates = !S.showStates; if (S.sel && !S.showStates) { const s = version().screens.find((x) => x.id === S.sel.sid); if (s && s.group) S.sel = null; } drawVersions(); drawList(); build(); drawPanel(); });
   $(".hf-fit").addEventListener("click", () => fit());
   $(".hf-outlines").addEventListener("click", () => { S.outlines = !S.outlines; $(".hf-outlines").classList.toggle("on", S.outlines); drawMarks(); });
   function onKey(e) {
@@ -649,8 +789,9 @@
     if (typing) return;
     if (e.code === "Space" && !e.repeat) { e.preventDefault(); hand = true; stage.classList.add("hand"); }
     if (e.key === "Alt") { S.alt = true; drawMarks(); }
-    if (e.key === "Escape") { if ($(".hf-compare")) return $(".hf-compare").remove(); S.matches = []; S.sel = null; for (const c of cards.values()) c.el.classList.remove("on"); drawList(); drawPanel(); drawMarks(); syncHash(); }
+    if (e.key === "Escape") { if ($(".hf-compare")) return $(".hf-compare").remove(); if ($(".hf-modal")) return $(".hf-modal").remove(); S.matches = []; S.sel = null; for (const c of cards.values()) c.el.classList.remove("on"); drawList(); drawPanel(); drawMarks(); syncHash(); }
     if (e.key.toLowerCase() === "o" && !e.metaKey && !e.ctrlKey) $(".hf-outlines").click();
+    if (e.key.toLowerCase() === "c" && !e.metaKey && !e.ctrlKey && S.sel) { e.preventDefault(); const ta = panel.querySelector(".hf-cm-form textarea"); if (ta) { ta.scrollIntoView({ block: "center" }); ta.focus(); } }
     if (e.shiftKey && e.code === "Digit1") fit();
     if ((e.metaKey || e.ctrlKey) && (e.key === "=" || e.key === "+")) { e.preventDefault(); zoomAt(S.cam.z * 1.25, stage.clientWidth / 2, stage.clientHeight / 2); }
     if ((e.metaKey || e.ctrlKey) && e.key === "-") { e.preventDefault(); zoomAt(S.cam.z / 1.25, stage.clientWidth / 2, stage.clientHeight / 2); }
@@ -664,6 +805,9 @@
   addEventListener("resize", () => applyCam());
 
   // ---------- start ----------
+  drawCommentsButton();
+  loadComments();
+  setInterval(() => { if (!document.hidden) loadComments(); }, 30000);
   drawVersions();
   drawList();
   build();

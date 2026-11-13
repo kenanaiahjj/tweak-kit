@@ -1575,7 +1575,7 @@ export function studioPage(appPath) {
       (find && !finding ? (() => { const bad = find.status === "failed" && !(find.summary && !find.needs); return '<div class="pg-last' + (bad ? " err" : "") + '" title="' + esc(find.summary || find.error || "") + '">' + esc("Last run: " + (bad ? find.needs || find.error || "didn't finish" : find.summary || "done")) + "</div>"; })() : "") + "</div>" +
       // Every screen in canvas.json: the app's routes, plus the screens and states reached by ?screen= / ?fixture=.
       "<h4>Screens <span>" + screens.length + "</span></h4>" +
-      '<div class="pg-list">' + screens.map((a) => '<button class="pg-route pg-screen' + (a.id === fid ? " on" : "") + '" data-screen="' + esc(a.id) + '" title="' + esc(a.url) + '"><span class="name">' + esc(a.name || a.url) + '</span><span class="src">' + esc((a.url || "/").replace(/^\\/\\??/, "") || "/") + "</span></button>").join("") + "</div>" +
+      '<div class="pg-list">' + screens.map((a) => '<button class="pg-route pg-screen' + (a.id === fid ? " on" : "") + '" data-screen="' + esc(a.id) + '" title="' + esc(a.url) + '"><span class="name">' + esc(a.name || a.url) + '</span>' + (hasThere(a) === false ? '<span class="miss" title="Not a screen in the version on the right">only here</span>' : "") + '<span class="src">' + esc((a.url || "/").replace(/^\\/\\??/, "") || "/") + "</span></button>").join("") + "</div>" +
       "<h4>Routes <span>" + data.routes.length + "</span></h4>" +
       (data.routes.length === 1 && screens.length > 1 ? '<div class="pages-empty">One URL: this app switches screens without changing the path, so they\\'re listed under Screens.</div>' : "") +
       (data.routes.length ? '<div class="pg-list">' + data.routes.map((r) => '<button class="pg-route' + (have.has(r.path) ? " have" : "") + '" data-path="' + esc(r.path) + '"' + (r.params ? ' data-params="1" title="Has a parameter: click to give it a value"' : have.has(r.path) ? ' title="Already a screen: click to add another"' : "") + ">" + (data.pending.includes(r.path) ? "<i title='Has pending tweaks'></i>" : "") + '<span class="path">' + esc(r.path) + "</span>" + (have.has(r.path) ? '<span class="src tick">✓</span>' : "") + '<span class="src">' + (r.params ? "needs value" : esc(r.source)) + "</span></button>").join("") + "</div>" : '<div class="pages-empty">No routes found. If the app switches screens without URLs, use Find screens.</div>');
@@ -3416,7 +3416,7 @@ export function studioPage(appPath) {
   const STEPS = { preparing: "Getting ready…", "checking out": "Checking out", updating: "Updating the checkout of", installing: "Installing the dependencies of", starting: "Starting the dev server for" };
   function labelParts(side) {
     const cur = (refsInfo && refsInfo.current) || {};
-    if (side === "here") return [(cur.name || "This version") + (cur.dirty ? " (with your changes)" : ""), [cur.sha, cur.dirty ? "uncommitted changes" : "last commit"].filter(Boolean).join(" · ")];
+    if (side === "here") return [cur.dirty ? "Local" : cur.name || "This version", [cur.name && cur.sha ? cur.name + " @ " + cur.sha : cur.sha, cur.dirty ? "with your uncommitted changes" : "last commit"].filter(Boolean).join(" · ")];
     return [versus.ref === cur.name ? versus.ref + " (last commit)" : versus.ref, [versus.sha, versus.when, versus.subject].filter(Boolean).join(" · ")];
   }
   // The branch badge, what that side is for, and its commit.
@@ -3424,9 +3424,10 @@ export function studioPage(appPath) {
     const cur = (refsInfo && refsInfo.current) || {};
     // The branch you're on, opened again, is its last commit: say so, or the two look like the same thing.
     const sameBranch = versus.ref === cur.name;
-    const name = side === "here" ? cur.name || "This version" : sameBranch ? versus.ref + " · last commit" : versus.ref;
+    // Your checkout with changes that aren't committed is your local version, not the branch.
+    const name = side === "here" ? (cur.dirty ? "Local" : cur.name || "This version") : sameBranch ? versus.ref + " · last commit" : versus.ref;
     const role = side === "here" ? (cur.dirty ? "Editing · with your uncommitted changes" : "Editing") : sameBranch ? "Committed · without your changes" : "Comparing · view only";
-    const meta = side === "here" ? [cur.sha, cur.dirty ? "uncommitted changes" : "last commit"].filter(Boolean).join(" · ") : [versus.sha, versus.when, versus.subject].filter(Boolean).join(" · ");
+    const meta = side === "here" ? [cur.name && cur.sha ? cur.name + " @ " + cur.sha : cur.sha, cur.dirty ? "uncommitted changes" : "last commit"].filter(Boolean).join(" · ") : [versus.sha, versus.when, versus.subject].filter(Boolean).join(" · ");
     return '<span class="vs-branch" title="' + esc(name) + '"><span>' + esc(name) + '</span></span><span class="vs-role">' + esc(role) + '</span><span class="vs-meta" title="' + esc(meta) + '">' + esc(meta) + "</span>";
   }
   function placeVersus(a) {
@@ -3455,6 +3456,8 @@ export function studioPage(appPath) {
     vs.wait.hidden = !!ready;
     if (!ready) vs.wait.textContent = versus.status === "failed" ? "Couldn't open " + versus.ref + ":\\n" + (versus.error || "") : (STEPS[versus.status] || "Opening") + " " + versus.ref + "…";
     let want = ready ? versus.url + pathOf(f) : null;
+    // The same screen under another address there (matched by name): show that one.
+    if (want && !vs.pin) { const t = twinThere(a, pathOf(f)); if (t) want = versus.url + t.url; }
     // A screen picked from the other version's list stays on the right until this side moves.
     if (want && vs.pin) { if (pathOf(f) === vs.pin.left) want = versus.url + vs.pin.url; else vs.pin = null; }
     if (want && vs.src !== want) {
@@ -3576,6 +3579,22 @@ export function studioPage(appPath) {
   // Its own saved screens (canvas.json in its checkout), the ones Claude found in it, and its routes. Picking one
   // shows the same screen on both sides when this version has it, else that screen on the right only.
   let vsScreens = null;
+  // This version's screen in the other version: the same address, else the same name.
+  function twinThere(a, at) {
+    if (!vsScreens || !versusOn() || vsScreens.ref !== versus.ref || !a) return null;
+    // Still on the screen as it opened (apps often rewrite their address as they load): not somewhere you went.
+    if (!twinThere.on || twinThere.on.id !== a.id) twinThere.on = { id: a.id, at: Date.now(), paths: new Set([a.url]) };
+    if (at && Date.now() - twinThere.on.at < 3000) twinThere.on.paths.add(at);
+    if (at && !twinThere.on.paths.has(at)) return null;
+    if (vsScreens.screens.some((x) => x.url === a.url)) return null;
+    return vsScreens.screens.find((x) => x.name === a.name) || null;
+  }
+  // Whether the other version has this screen (null: can't tell yet, it has no screen list).
+  function hasThere(a) {
+    try { vsScreens; } catch { return null; } // asked before the comparison code is set up
+    if (!vsScreens || !versusOn() || vsScreens.ref !== versus.ref || !vsScreens.screens.length) return null;
+    return vsScreens.screens.some((x) => x.url === a.url || x.name === a.name);
+  }
   const VS_FIND = "Find the screens of another version of this app, for the UI tweak kit's side-by-side comparison. ";
   async function loadVsPages(force) {
     const box = $(".vs-pages");
@@ -3593,6 +3612,7 @@ export function studioPage(appPath) {
       vsScreens.find = asks.filter((a) => (a.instruction || "").startsWith(VS_FIND) && (a.instruction || "").includes("“" + ref + "”")).sort((x, y) => (y.at || 0) - (x.at || 0))[0];
       clearTimeout(loadVsPages.t);
       if (vsScreens.find && (vsScreens.find.status === "waiting" || vsScreens.find.status === "running")) loadVsPages.t = setTimeout(() => loadVsPages(true), 2500);
+      loadPages();
     }
     drawVsPages();
   }
@@ -3602,7 +3622,7 @@ export function studioPage(appPath) {
     if (box.hidden || !vsScreens || !versusOn()) return;
     const d = vsScreens, find = d.find;
     const finding = find && (find.status === "waiting" || find.status === "running");
-    const here = new Set(canvas.artboards.map((a) => a.url));
+    const here = new Set(canvas.artboards.flatMap((a) => [a.url, "name:" + a.name]));
     const list = [...d.screens];
     for (const r of d.routes || []) if (!list.some((x) => x.url === r.path)) list.push({ name: r.path === "/" ? "Home" : r.path, url: r.path });
     const on = vs.src && versus.url ? vs.src.slice(versus.url.length) : "";
@@ -3610,12 +3630,13 @@ export function studioPage(appPath) {
       '<div class="pages-actions"><button class="pg-find"' + (finding ? " disabled" : "") + ' title="Claude reads that version\u2019s code (without changing it) and lists its screens and states here">' + (finding ? (find.status === "running" ? "Claude is finding screens…" : "Waiting for Claude Code…") : "Find screens with Claude") + "</button>" +
       (find && !finding ? '<div class="pg-last' + (find.status === "failed" ? " err" : "") + '" title="' + esc(find.summary || find.error || "") + '">' + esc("Last run: " + (find.status === "failed" ? find.error || "didn't finish" : find.summary || "done")) + "</div>" : "") + "</div>" +
       "<h4>Screens <span>" + (d.loading ? "…" : list.length) + "</span></h4>" +
-      (list.length ? '<div class="pg-list">' + list.map((x) => '<button class="pg-route pg-screen' + (x.url === on ? " on" : "") + '" data-url="' + esc(x.url) + '" title="' + esc(x.url) + (here.has(x.url) ? "" : " · not a screen in this version") + '"><span class="name">' + esc(x.name) + "</span>" + (here.has(x.url) ? "" : '<span class="miss">only there</span>') + "</button>").join("") + "</div>"
+      (list.length ? '<div class="pg-list">' + list.map((x) => '<button class="pg-route pg-screen' + (x.url === on ? " on" : "") + '" data-url="' + esc(x.url) + '" title="' + esc(x.url) + (here.has(x.url) || here.has("name:" + x.name) ? "" : " · not a screen in this version") + '"><span class="name">' + esc(x.name) + "</span>" + (here.has(x.url) || here.has("name:" + x.name) ? "" : '<span class="miss">only there</span>') + "</button>").join("") + "</div>"
         : '<div class="pages-empty">' + (d.loading ? "Reading its screens…" : "No saved screens or routes in this version. Find screens asks Claude to list them.") + "</div>");
     box.querySelector(".vs-head b").textContent = versus.ref;
     for (const b of box.querySelectorAll("button[data-url]")) b.addEventListener("click", () => {
       const url = b.dataset.url;
-      const a = canvas.artboards.find((x) => x.url === url);
+      const name = b.querySelector(".name").textContent;
+      const a = canvas.artboards.find((x) => x.url === url) || canvas.artboards.find((x) => x.name === name);
       vs.pin = null;
       if (a) { select(a.id); setMode("focus", a.id); loadPages(); }
       else {

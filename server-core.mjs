@@ -9,7 +9,7 @@ import { queueTokens, sendToPaper } from "./paper.mjs";
 import net from "node:net";
 import { jsxAt, toTailwind } from "./code.mjs";
 import { findRoutes as findAppRoutes } from "./routes.mjs";
-import { listRefs, startVersion, stopVersion, versionStatus } from "./versions.mjs";
+import { listRefs, startVersion, stopVersion, versionStatus, worktreeDir } from "./versions.mjs";
 import { listReviews, readReview, saveReview } from "./review.mjs";
 import { promises as fs, unlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -710,6 +710,10 @@ export function studioPage(appPath) {
   .pages button.pg-screen.on { background: var(--active); color: #fff; }
   .pages .pg-last { font-size: 11.5px; line-height: 1.45; color: var(--dim); padding: 2px 2px 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .pages .pg-last.err { color: #ef9a9a; }
+  .vs-pages { order: 3; border-right: 0; border-left: 1px solid var(--line); }
+  .vs-pages .vs-head { margin: 0 0 10px; font-size: 12px; line-height: 1.45; color: var(--dim); }
+  .vs-pages .vs-head b { display: block; color: #fbbf24; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pages button.pg-screen .miss { margin-left: auto; flex: none; font-size: 10.5px; color: var(--dim); }
 
   /* Popovers */
   .overview-pop, .vs-pop { background: #212121; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,.5); }
@@ -932,6 +936,7 @@ export function studioPage(appPath) {
     </div>
     <div class="body">
       <div class="pages" hidden></div>
+      <div class="pages vs-pages" hidden></div>
       <div class="explore" hidden></div>
       <div class="viewport">
         <div class="dots"></div>
@@ -1464,6 +1469,11 @@ export function studioPage(appPath) {
     $(".focus-pick").hidden = !!view.pages;
     drawGuidesButton();
     $(".pages").hidden = !view.pages;
+    // Comparing: the other version's screens on the right, as this one's are on the left.
+    try {
+      const vsKey = view.pages && versusOn() ? versus.ref : "";
+      if (vsKey !== render.vsKey) { render.vsKey = vsKey; loadVsPages(); }
+    } catch {} // the first render runs before the comparison code is set up
     saveView();
     drawMinimap();
     dockPanel();
@@ -1879,7 +1889,7 @@ export function studioPage(appPath) {
   });
   addEventListener("pointerdown", (e) => { const pop = $(".guides-pop"); if (!pop.hidden && !e.target.closest(".guides-pop, .guides-toggle")) pop.hidden = true; });
   addEventListener("keydown", (e) => { if (e.key === "Escape") $(".guides-pop").hidden = true; });
-  $(".pages-toggle").addEventListener("click", () => { view.pages = !view.pages; render(); loadPages(); });
+  $(".pages-toggle").addEventListener("click", () => { view.pages = !view.pages; render(); loadPages(); loadVsPages(true); });
   $(".reload").addEventListener("click", () => frames.forEach((f) => f.iframe.contentWindow.location.reload()));
   $(".exit").addEventListener("click", () => {
     const a = canvas.artboards.find((x) => x.id === focusedId()) || canvas.artboards[0];
@@ -3444,7 +3454,9 @@ export function studioPage(appPath) {
     const ready = versus.status === "ready" && versus.url;
     vs.wait.hidden = !!ready;
     if (!ready) vs.wait.textContent = versus.status === "failed" ? "Couldn't open " + versus.ref + ":\\n" + (versus.error || "") : (STEPS[versus.status] || "Opening") + " " + versus.ref + "…";
-    const want = ready ? versus.url + pathOf(f) : null;
+    let want = ready ? versus.url + pathOf(f) : null;
+    // A screen picked from the other version's list stays on the right until this side moves.
+    if (want && vs.pin) { if (pathOf(f) === vs.pin.left) want = versus.url + vs.pin.url; else vs.pin = null; }
     if (want && vs.src !== want) {
       // A new version or screen loads; after that the frame follows by message instead of reloading.
       if (!vs.src || !vs.src.startsWith(versus.url)) { vs.src = want; vs.iframe.src = want; }
@@ -3557,7 +3569,75 @@ export function studioPage(appPath) {
     if (!f) return;
     follow(f);
     if (versus.status === "ready") { const a = current(); if (a) placeVersus(a); }
+    if (view.pages && vs.src !== drawVsPages.src) drawVsPages();
   }, 400);
+
+  // ---------- the other version's screens ----------
+  // Its own saved screens (canvas.json in its checkout), the ones Claude found in it, and its routes. Picking one
+  // shows the same screen on both sides when this version has it, else that screen on the right only.
+  let vsScreens = null;
+  const VS_FIND = "Find the screens of another version of this app, for the UI tweak kit's side-by-side comparison. ";
+  async function loadVsPages(force) {
+    const box = $(".vs-pages");
+    if (!view.pages || !versusOn()) { box.hidden = true; return; }
+    box.hidden = false;
+    const ref = versus.ref;
+    if (force || !vsScreens || vsScreens.ref !== ref) {
+      if (!vsScreens || vsScreens.ref !== ref) { vsScreens = { ref, screens: [], routes: [], loading: true }; drawVsPages(); }
+      let asks = [];
+      try {
+        const [d, st] = await Promise.all([fetch("/__ui-tweaks/versions/screens?ref=" + encodeURIComponent(ref), { cache: "no-store" }).then((r) => r.json()), fetch("/__ui-tweaks/status", { cache: "no-store" }).then((r) => r.json())]);
+        asks = st.asks || [];
+        if (versusOn() && versus.ref === ref) vsScreens = { ...d, ref };
+      } catch { vsScreens = { ref, screens: [], routes: [], error: true }; }
+      vsScreens.find = asks.filter((a) => (a.instruction || "").startsWith(VS_FIND) && (a.instruction || "").includes("“" + ref + "”")).sort((x, y) => (y.at || 0) - (x.at || 0))[0];
+      clearTimeout(loadVsPages.t);
+      if (vsScreens.find && (vsScreens.find.status === "waiting" || vsScreens.find.status === "running")) loadVsPages.t = setTimeout(() => loadVsPages(true), 2500);
+    }
+    drawVsPages();
+  }
+  function drawVsPages() {
+    const box = $(".vs-pages");
+    drawVsPages.src = vs.src;
+    if (box.hidden || !vsScreens || !versusOn()) return;
+    const d = vsScreens, find = d.find;
+    const finding = find && (find.status === "waiting" || find.status === "running");
+    const here = new Set(canvas.artboards.map((a) => a.url));
+    const list = [...d.screens];
+    for (const r of d.routes || []) if (!list.some((x) => x.url === r.path)) list.push({ name: r.path === "/" ? "Home" : r.path, url: r.path });
+    const on = vs.src && versus.url ? vs.src.slice(versus.url.length) : "";
+    box.innerHTML = '<div class="vs-head"><b></b>The screens in this version, on the right. Picking one shows it on both sides when this version has it too.</div>' +
+      '<div class="pages-actions"><button class="pg-find"' + (finding ? " disabled" : "") + ' title="Claude reads that version\u2019s code (without changing it) and lists its screens and states here">' + (finding ? (find.status === "running" ? "Claude is finding screens…" : "Waiting for Claude Code…") : "Find screens with Claude") + "</button>" +
+      (find && !finding ? '<div class="pg-last' + (find.status === "failed" ? " err" : "") + '" title="' + esc(find.summary || find.error || "") + '">' + esc("Last run: " + (find.status === "failed" ? find.error || "didn't finish" : find.summary || "done")) + "</div>" : "") + "</div>" +
+      "<h4>Screens <span>" + (d.loading ? "…" : list.length) + "</span></h4>" +
+      (list.length ? '<div class="pg-list">' + list.map((x) => '<button class="pg-route pg-screen' + (x.url === on ? " on" : "") + '" data-url="' + esc(x.url) + '" title="' + esc(x.url) + (here.has(x.url) ? "" : " · not a screen in this version") + '"><span class="name">' + esc(x.name) + "</span>" + (here.has(x.url) ? "" : '<span class="miss">only there</span>') + "</button>").join("") + "</div>"
+        : '<div class="pages-empty">' + (d.loading ? "Reading its screens…" : "No saved screens or routes in this version. Find screens asks Claude to list them.") + "</div>");
+    box.querySelector(".vs-head b").textContent = versus.ref;
+    for (const b of box.querySelectorAll("button[data-url]")) b.addEventListener("click", () => {
+      const url = b.dataset.url;
+      const a = canvas.artboards.find((x) => x.url === url);
+      vs.pin = null;
+      if (a) { select(a.id); setMode("focus", a.id); loadPages(); }
+      else {
+        const f = frames.get(focusedId());
+        vs.pin = { left: f ? pathOf(f) : "", url };
+        if (versus.status === "ready") { vs.src = versus.url + url; vs.iframe.src = vs.src; }
+        note("“" + b.textContent.replace(/only there$/, "") + "” isn\u2019t a screen in this version: showing it on the right only");
+      }
+      drawVsPages();
+    });
+    box.querySelector(".pg-find").addEventListener("click", async () => {
+      const instruction = VS_FIND + "The version is “" + versus.ref + "”, checked out at " + d.dir + ": read its code there, and don't change any file in that folder or this project's source. " +
+        "List every distinct screen it has, and the states worth comparing, that it can open by URL: its routes, and its own ?screen= / ?fixture= values if it has such a development hook. " +
+        "Write " + d.foundFile + ' in this project as {"artboards":[{"name":"Wallet · verified","url":"/?screen=wallet"}, …]}. Name each like the same screen in this project\u2019s .ui-tweaks/canvas.json when it is the same screen, so they line up.';
+      try {
+        const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "edit", instruction, page: { url: "/", path: "/" } }) });
+        if (!res.ok) throw new Error((await res.json()).error);
+        note("Claude is finding the screens in " + versus.ref + " (keep a Claude Code session with the ui-tweaks mod open).");
+        loadVsPages(true);
+      } catch (e) { note("Couldn't ask Claude: " + e.message); }
+    });
+  }
 
   async function pollVersus() {
     clearTimeout(pollVersus.t);
@@ -3571,6 +3651,7 @@ export function studioPage(appPath) {
       } else versus = run;
     } catch {}
     layoutFocus();
+    if (versusOn() && view.pages && $(".vs-pages").hidden) loadVsPages();
     if (versus && versus.status !== "ready" && versus.status !== "failed") pollVersus.t = setTimeout(pollVersus, 700);
     else if (versus && versus.status === "ready") pollVersus.t = setTimeout(pollVersus, 5000);
     if (!$(".vs-pop").hidden) drawVersions();
@@ -3590,6 +3671,7 @@ export function studioPage(appPath) {
     if (!refsInfo) loadRefs();
     if (!was) { focusPan.id = null; }
     layoutFocus();
+    loadVsPages(true);
     pollVersus();
   }
   async function closeVersion() {
@@ -3602,6 +3684,7 @@ export function studioPage(appPath) {
     focusPan.id = null;
     layoutFocus();
     $(".vs-pop").hidden = true;
+    loadVsPages();
     if (ref) fetch("/__ui-tweaks/versions?ref=" + encodeURIComponent(ref), { method: "DELETE" }).catch(() => {});
   }
   async function loadRefs() {
@@ -3888,6 +3971,23 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
         return html === null ? send(res, 404, { error: "No such review" }) : send(res, 200, html, "text/html; charset=utf-8");
       }
       // Other versions of the app (a branch or commit) for the studio's side-by-side view.
+      // The other version's screens: its own canvas.json (from its checkout), the screens Claude found in it
+      // (kept in this project, nothing written to the other version), and its routes.
+      if (req.method === "GET" && url.pathname === `${PREFIX}/versions/screens`) {
+        const ref = url.searchParams.get("ref") || "";
+        if (!ref || ref.startsWith("-")) return send(res, 400, { error: "Which version?" });
+        const dir = worktreeDir(root, ref);
+        const readJson = async (f) => { try { return JSON.parse(await fs.readFile(f, "utf8")); } catch { return null; } };
+        const own = (await readJson(path.join(dir, ".ui-tweaks", "canvas.json"))) || {};
+        const found = (await readJson(path.join(root, ".ui-tweaks", "version-screens", ref.replace(/[^\w.-]+/g, "_") + ".json"))) || {};
+        const screens = [];
+        for (const a of [...(own.artboards || []), ...(found.artboards || found.screens || [])]) {
+          if (a && typeof a.url === "string" && a.url.startsWith("/") && !screens.some((x) => x.url === a.url)) screens.push({ name: String(a.name || a.url).slice(0, 120), url: a.url.slice(0, 500) });
+        }
+        let routes = [];
+        try { routes = await findAppRoutes(dir); } catch {}
+        return send(res, 200, { ref, dir, screens, routes: routes.filter((r) => !r.params), foundFile: ".ui-tweaks/version-screens/" + ref.replace(/[^\w.-]+/g, "_") + ".json" });
+      }
       if (url.pathname === `${PREFIX}/versions`) {
         if (req.method === "GET") return send(res, 200, url.searchParams.has("refs") ? await listRefs(root) : { running: versionStatus(root) });
         const ref = req.method === "DELETE" ? url.searchParams.get("ref") : JSON.parse(await readBody(req)).ref;

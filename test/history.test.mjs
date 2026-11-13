@@ -46,21 +46,6 @@ test("stops at an apply whose file changed since", async () => {
   assert.equal((await undoApplies(root, "nope")).status, 404);
 });
 
-test("comments: add, resolve, delete; kept in git", async () => {
-  const { changeComments } = await import("../server-core.mjs");
-  const root = await project();
-  let list = await changeComments(root, "POST", { url: "/home", selector: "main > h1", label: "h1", text: "  Too big on phones  " });
-  assert.equal(list.length, 1);
-  assert.equal(list[0].text, "Too big on phones");
-  assert.equal(list[0].resolved, false);
-  list = await changeComments(root, "PATCH", { id: list[0].id, resolved: true });
-  assert.equal(list[0].resolved, true);
-  await assert.rejects(changeComments(root, "POST", { selector: "x", text: " " }), /needs text/);
-  assert.match(await fs.readFile(path.join(root, ".ui-tweaks/.gitignore"), "utf8"), /!comments\.json/);
-  list = await changeComments(root, "DELETE", {}, list[0].id);
-  assert.equal(list.length, 0);
-});
-
 test("assets: an image is saved where the app serves it, named from the file and its contents", async () => {
   const http = await import("node:http");
   const { createTweaksHandler } = await import("../server-core.mjs");

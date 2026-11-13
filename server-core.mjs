@@ -110,7 +110,6 @@ export async function recordHistory(root, { by, count, files, what }) {
   return id;
 }
 
-// ---------- comments ----------
 // ---------- pictures for History ----------
 // The panel sends the screen before and after just ahead of an apply; they wait as "pending" until the History
 // entry that apply makes shows up, then take its id. Pictures of entries that are gone are removed.
@@ -148,42 +147,11 @@ export async function matchShots(root, entries) {
   return has;
 }
 
-// .ui-tweaks/comments.json: notes pinned to elements on a screen (kept in git, so the team sees them).
-async function readComments(root) {
-  try {
-    return JSON.parse(await fs.readFile(path.join(tweaksDir(root), "comments.json"), "utf8")).comments || [];
-  } catch {
-    return [];
-  }
-}
-async function writeComments(root, comments) {
-  await fs.mkdir(tweaksDir(root), { recursive: true });
-  await fs.writeFile(path.join(tweaksDir(root), ".gitignore"), GITIGNORE);
-  await fs.writeFile(path.join(tweaksDir(root), "comments.json"), JSON.stringify({ comments }, null, 2) + "\n");
-}
 const clip = (v, n) => String(v ?? "").slice(0, n);
-/** Adds, edits (text, resolved) or deletes a comment; returns the list. */
-export async function changeComments(root, method, body = {}, id = null) {
-  const comments = await readComments(root);
-  if (method === "POST") {
-    if (!String(body.text || "").trim() || !body.selector) throw Object.assign(new Error("A comment needs text and an element."), { status: 400 });
-    comments.push({ id: `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, url: clip(body.url || "/", 500), selector: clip(body.selector, 1000), label: clip(body.label, 120), text: clip(body.text, 2000).trim(), author: clip(body.author, 60) || undefined, at: Date.now(), resolved: false });
-  } else {
-    const i = comments.findIndex((c) => c.id === (id || body.id));
-    if (i < 0) throw Object.assign(new Error("No such comment."), { status: 404 });
-    if (method === "DELETE") comments.splice(i, 1);
-    else {
-      if (typeof body.resolved === "boolean") comments[i].resolved = body.resolved;
-      if (typeof body.text === "string" && body.text.trim()) comments[i].text = clip(body.text, 2000).trim();
-    }
-  }
-  await writeComments(root, comments);
-  return comments;
-}
 
 // ---------- flow map ----------
 // .ui-tweaks/flows.json: which tap leads from which screen to which, recorded as you click through the app
-// (kept in git, like comments). A screen is its URL plus its main heading, for apps that switch screens in place.
+// (kept in git). A screen is its URL plus its main heading, for apps that switch screens in place.
 async function readFlows(root) {
   try {
     return JSON.parse(await fs.readFile(path.join(tweaksDir(root), "flows.json"), "utf8")).flows || [];
@@ -583,8 +551,6 @@ export function studioPage(appPath) {
   .cd-foot button { height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: rgba(255,255,255,.08); color: #fff; font: 500 12px system-ui, -apple-system, sans-serif; cursor: pointer; }
   .cd-foot button.primary { background: #0d99ff; }
   .cd-foot button:disabled { opacity: .4; cursor: default; }
-  .cm-pop .cm-empty { padding: 10px; color: var(--dim); font-size: 12px; line-height: 1.45; }
-  .toolbar .cm-toggle.on { background: rgba(255,178,32,.16); color: #ffb020; }
   .ex-pop .ex-forget { color: var(--dim); font-size: 11.5px; text-align: center; }
   .ex-card.pending .ex-view { height: 140px; display: grid; place-items: center; color: var(--dim); font-size: 12px; }
   .ex-card.pending .ex-view::after { content: ""; width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255,255,255,.15); border-top-color: #fff; animation: ex-spin .8s linear infinite; }
@@ -748,10 +714,11 @@ export function studioPage(appPath) {
   .toolbar button[data-icon], .toolbar a[data-icon] { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
   .toolbar button[data-icon]:not(:has(.lbl)), .toolbar a[data-icon]:not(:has(.lbl)) { width: 30px; padding: 0; }
   .toolbar button[data-icon]:has(.lbl), .toolbar a[data-icon]:has(.lbl) { padding: 0 10px 0 8px; }
+  /* The label sits on the icon's centre line (the pop-ups' .lbl headings have margins of their own). */
+  .toolbar [data-icon] .lbl { margin: 0; line-height: 16px; }
   .toolbar .lbl { font-size: 12.5px; }
   .toolbar .count { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: rgba(255,255,255,.12); color: #fff; font: 600 10.5px/16px system-ui, -apple-system, sans-serif; text-align: center; font-variant-numeric: tabular-nums; }
   .toolbar button:has(> .count):not(:has(.lbl)) { width: auto; padding: 0 8px 0 7px; }
-  .toolbar .cm-toggle.on .count { background: rgba(255,178,32,.25); color: #ffcf70; }
   .toolbar button, .toolbar a.tb { color: rgba(255,255,255,.62); }
   .toolbar button:not(:disabled):active, .toolbar a.tb:active { transform: scale(0.96); }
   .toolbar button, .toolbar a.tb, .toolbar select { transition-property: background-color, color, transform; transition-duration: .15s; transition-timing-function: cubic-bezier(0.2, 0, 0, 1); }
@@ -922,7 +889,6 @@ export function studioPage(appPath) {
         <button class="review-toggle" hidden title="Make a review page: every screen captured (side by side with the other version when comparing), which ones changed, and a note; open it or publish it with Claude">Review</button>
       </span>
       <span class="tb-group">
-        <button class="cm-toggle" data-icon="comment" title="Comments pinned to elements (M on a screen: pin one to the selected element)">💬</button>
         <button class="gal-toggle" data-icon="components" data-label="Components" title="Every component in the app, as it appears on your screens, side by side with its variants">Components</button>
         <button class="copy-toggle" data-icon="type" data-label="Copy" title="Every text on every screen in one table: fix typos and wording in bulk, then send the changes as one batch">Copy</button>
         <button class="ck-all-toggle" data-icon="check-circle" data-label="Check all" title="Check every screen: layout (also at 320px wide), contrast, tap targets, labels, keyboard and off-token values, with the worst screens first">✓ All screens</button>
@@ -953,7 +919,6 @@ export function studioPage(appPath) {
 <div class="guides-pop" hidden></div>
 <div class="rv-pop" hidden></div>
 <div class="ex-pop" hidden></div>
-<div class="ex-pop cm-pop" hidden></div>
 <div class="ck-all" hidden></div>
 <div class="ck-all copy-deck" hidden></div>
 <div class="gallery" hidden></div>
@@ -1307,8 +1272,6 @@ export function studioPage(appPath) {
     hand: setHand,
     // The design skills installed in Claude Code (a screen's panel passes them on), for the board's picker.
     designSkills(list) { exSkills = list || []; if (ex.req) drawExSkills(); },
-    // A screen's panel turned its comment pins on or off, or changed a comment.
-    commentsChanged: () => loadCm(),
     // The panel's Explore: open the board for an element, with its first variations request.
     explore(req) {
       const a = current();
@@ -2045,7 +2008,7 @@ export function studioPage(appPath) {
     for (const b of pop.querySelectorAll("button[data-i]")) b.addEventListener("click", () => { pop.hidden = true; openExploration(list[Number(b.dataset.i)]); });
     pop.querySelector(".ex-forget").addEventListener("click", () => { try { localStorage.removeItem(EX_KEY); } catch {} pop.hidden = true; drawExToggle(); });
   });
-  addEventListener("pointerdown", (e) => { const pop = $(".ex-pop:not(.cm-pop)"); if (!pop.hidden && !e.target.closest(".ex-pop, .ex-toggle")) pop.hidden = true; });
+  addEventListener("pointerdown", (e) => { const pop = $(".ex-pop"); if (!pop.hidden && !e.target.closest(".ex-pop, .ex-toggle")) pop.hidden = true; });
   drawExToggle();
 
   // ---------- check every screen ----------
@@ -2371,420 +2334,6 @@ export function studioPage(appPath) {
     drawScheme();
   });
   drawScheme();
-
-  // ---------- comments ----------
-  // 💬 shows the pins on the screen and lists open comments on every screen; a row goes to its screen.
-  const cm = { list: [] };
-  const shownTweaks = () => { try { return frames.get(focusedId()).iframe.contentWindow.__uiTweaks; } catch { return null; } };
-  async function loadCm() {
-    try { cm.list = ((await fetch("/__ui-tweaks/comments", { cache: "no-store" }).then((r) => r.json())).comments || []).filter((c) => !c.resolved); } catch {}
-    drawCmToggle();
-  }
-  function drawCmToggle() {
-    const b = $(".cm-toggle");
-    const t = shownTweaks();
-    setLabel(b, "", cm.list.length ? String(cm.list.length) : "");
-    b.classList.toggle("on", !!(t && t.showComments));
-  }
-  const urlPath = (u) => { try { const x = new URL(u || "/", location.origin); return x.pathname + x.search; } catch { return u || "/"; } };
-  $(".cm-toggle").addEventListener("click", async (e) => {
-    const pop = $(".cm-pop");
-    const t = shownTweaks();
-    const r = e.currentTarget.getBoundingClientRect();
-    if (pop.hidden) {
-      if (t && !t.showComments) t.setComments(true);
-      await loadCm();
-      anchorPop(pop, { getBoundingClientRect: () => r }, 300);
-      const screenFor = (c) => canvas.artboards.find((a) => urlPath(a.url) === c.url);
-      pop.innerHTML = (cm.list.length ? cm.list.map((c, i) => {
-        const a = screenFor(c);
-        return '<button data-i="' + i + '">' + esc(c.text.length > 90 ? c.text.slice(0, 89) + "…" : c.text) + "<span>" + esc((a ? a.name || a.url : c.url) + " · " + (c.label || "element")) + "</span></button>";
-      }).join("") : '<div class="cm-empty">No open comments. Select an element on a screen and press M to pin one.</div>') + '<button class="ex-forget cm-hide">Hide pins</button>';
-      for (const b of pop.querySelectorAll("button[data-i]")) b.addEventListener("click", () => {
-        const c = cm.list[Number(b.dataset.i)];
-        const a = screenFor(c);
-        pop.hidden = true;
-        if (a && a.id !== focusedId()) setMode("focus", a.id);
-        else if (!a) note("That comment is on " + c.url + ", which isn't one of your screens.");
-        // The pins show once that screen's panel is up.
-        const show = (n = 0) => { const x = shownTweaks(); if (x) { x.setComments(true); drawCmToggle(); } else if (n < 30) setTimeout(() => show(n + 1), 200); };
-        show();
-      });
-      pop.querySelector(".cm-hide").addEventListener("click", () => { pop.hidden = true; const x = shownTweaks(); if (x) x.setComments(false); drawCmToggle(); });
-      pop.hidden = false;
-    } else pop.hidden = true;
-    drawCmToggle();
-  });
-  addEventListener("pointerdown", (e) => { const pop = $(".cm-pop"); if (!pop.hidden && !e.target.closest(".cm-pop, .cm-toggle")) pop.hidden = true; });
-  loadCm();
-  setInterval(() => { if (!document.hidden) loadCm(); }, 15000);
-  const EX_PAD = 24, EX_MAX = 380;
-  let exSkills = [];
-  const skillLabel = (name) => (exSkills.find((s) => s.name === name) || {}).label || name;
-  // Which design skills the next batch works from: Auto (Claude picks) or up to three.
-  function drawExSkills() {
-    const row = $(".explore .ex-skills");
-    if (!row) return;
-    row.innerHTML = "";
-    row.hidden = !exSkills.length;
-    const chosen = (ex.req.skills || []).filter((n) => exSkills.some((s) => s.name === n));
-    const chip = (label, title, on, run) => { const b = Object.assign(document.createElement("button"), { textContent: label, title }); if (on) b.classList.add("on"); b.addEventListener("click", run); row.append(b); };
-    row.append(Object.assign(document.createElement("span"), { textContent: "Skills" }));
-    const save = (list) => { ex.req.skills = list; saveExploration(); drawExSkills(); };
-    chip("Auto", "Claude picks the installed design skill that fits", !chosen.length, () => save([]));
-    for (const s of exSkills) {
-      const on = chosen.includes(s.name);
-      chip(s.label, s.name + ": " + s.lens, on, () => on ? save(chosen.filter((n) => n !== s.name)) : chosen.length < 3 ? save([...chosen, s.name]) : note("Three skills at most: unpick one first"));
-    }
-  }
-  function exRun(id) { return ex.asks.find((a) => a.id === id); }
-  async function exAsk(instruction) {
-    const r = ex.req;
-    const res = await fetch("/__ui-tweaks/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "variations", instruction, mode: r.mode, scope: r.scope, skills: r.skills, refs: (r.refs || []).map((x) => x.path), element: r.element, page: r.page, context: r.context, count: 2 }) });
-    const out = await res.json();
-    if (!res.ok) throw new Error(out.error || res.statusText);
-    ex.asks.push({ id: out.ask.id, instruction, status: "waiting" });
-    saveExploration();
-    drawExplore();
-    pollExplore();
-  }
-  async function pollExplore() {
-    clearTimeout(ex.timer);
-    if (!ex.req) return;
-    const open = ex.asks.filter((a) => a.status !== "done" && a.status !== "failed");
-    if (!open.length) return;
-    try {
-      const { asks = [], listener = null } = await fetch("/__ui-tweaks/status", { cache: "no-store" }).then((r) => r.json());
-      if (listener && listener.skills && JSON.stringify(listener.skills) !== JSON.stringify(exSkills)) { exSkills = listener.skills; drawExSkills(); }
-      let changed = false;
-      for (const a of open) {
-        const s = asks.find((x) => x.id === a.id);
-        if (s && s.status !== a.status) { Object.assign(a, { status: s.status, variants: s.variants || [], error: s.error }); changed = true; }
-        // Gone from the queue without an answer (dismissed, or pruned long ago): stop waiting for it.
-        if (!s && a.status !== "waiting" && a.status !== "running") continue;
-        if (!s && Date.now() - (a.since || (a.since = Date.now())) > 15000) { Object.assign(a, { status: "failed", error: "That request isn't in the queue any more." }); changed = true; }
-      }
-      if (changed) { drawExplore(); saveExploration(); }
-    } catch {}
-    ex.timer = setTimeout(pollExplore, 1200);
-  }
-  // A live copy of the screen showing the element with the given changes on it, cropped to the element.
-  // With full, the whole screen is shown (scaled to fit the board), not cropped to the element.
-  // A layout variation's markup as a node of the frame's document, with anything that could run taken out.
-  function exMarkup(doc, html) {
-    const parsed = new DOMParser().parseFromString("<body>" + html, "text/html");
-    for (const n of parsed.querySelectorAll("script, style, iframe, object, embed, link, meta, base, form, noscript, template")) n.remove();
-    for (const n of parsed.body.querySelectorAll("*")) for (const a of [...n.attributes]) if (/^on/i.test(a.name) || (/^(href|src|action|formaction|xlink:href)$/i.test(a.name) && /^\\s*javascript:/i.test(a.value))) n.removeAttribute(a.name);
-    return parsed.body.firstElementChild ? doc.importNode(parsed.body.firstElementChild, true) : null;
-  }
-  // r is the exploration request (the board's by default; a canvas card passes the one it was pinned with).
-  // opts.canvas: the whole screen at its real size, unscaled and not interactive (the canvas zooms it).
-  function exPreview(view, v, full, r = ex.req, opts = {}) {
-    const changes = (v && v.changes) || [];
-    const html = v && v.html;
-    const [w, h] = r.size;
-    const frame = document.createElement("iframe");
-    frame.name = "uit-explore"; // the panel's script stays out of these
-    frame.width = w;
-    frame.height = h;
-    frame.style.width = w + "px";
-    frame.style.height = h + "px";
-    frame.tabIndex = -1;
-    frame.setAttribute("aria-hidden", "true");
-    const msg = (t) => { view.innerHTML = '<div class="ex-msg">' + esc(t) + "</div>"; };
-    frame.addEventListener("load", async () => {
-      // The blank page an iframe starts with fires load too: only the real page's load counts, once.
-      let blank = false;
-      try { blank = frame.contentWindow.location.href === "about:blank"; } catch {}
-      if (frame.__uitShown || blank) return;
-      frame.__uitShown = true;
-      let doc, el = null;
-      for (let i = 0; i < 40 && !el; i++) {
-        try { doc = frame.contentDocument; el = doc && doc.querySelector(r.snapshot ? "[data-uit-target]" : r.selector); } catch { return msg("Can't show this screen here."); }
-        if (!el) await sleep(150);
-      }
-      if (!el) return msg(r.snapshot ? "The snapshot of this screen is gone; explore the element again." : "This element isn't on a fresh load of the screen (it was reached by clicking around). Explore it again to show it as it is now.");
-      // Styles go on the element as it is now, and again whenever the app re-renders it into a new one.
-      // A layout variation goes in beside the element, which is hidden (so an app that owns it never notices).
-      let added = null;
-      const put = () => {
-        // A concept is a whole new screen: its markup takes the place of the reference screen's page.
-        // Tagged, so a second pass (or a second load of the frame) finds it instead of swapping in another
-        // copy: two copies replacing each other would never settle.
-        if (html && r.replaceBody) {
-          if (!(added && added.isConnected)) {
-            added = doc.body.querySelector(":scope > [data-uit-concept]");
-            if (!added) { added = exMarkup(doc, html); if (added) { added.setAttribute("data-uit-concept", ""); doc.body.replaceChildren(added); } }
-          }
-          el = added || el;
-          return;
-        }
-        if (html && !(added && added.isConnected)) {
-          const orig = doc.querySelector(r.snapshot ? "[data-uit-target]" : r.selector) || el;
-          added = orig && exMarkup(doc, html);
-          if (added) {
-            orig.style.setProperty("display", "none", "important");
-            orig.after(added);
-          }
-        }
-        el = added || doc.querySelector(r.snapshot ? "[data-uit-target]" : r.selector) || el;
-        for (const c of changes || []) {
-          let node = null;
-          try { node = c.target === ":scope" ? el : el.querySelector(c.target); } catch {}
-          if (node && node.style.getPropertyValue(c.prop) !== c.value) node.style.setProperty(c.prop, c.value, "important");
-        }
-      };
-      put();
-      const watch = new frame.contentWindow.MutationObserver(() => { if (html ? !(added && added.isConnected) : doc.querySelector(r.snapshot ? "[data-uit-target]" : r.selector) !== el) put(); });
-      watch.observe(doc.body, { childList: true, subtree: true });
-      setTimeout(() => watch.disconnect(), 8000);
-      // Let it lay out and settle: entrance animations finish (endless ones are left running), fonts load.
-      await sleep(150);
-      try {
-        const finite = (doc.getAnimations ? doc.getAnimations() : []).filter((x) => { try { return isFinite(x.effect.getComputedTiming().endTime); } catch { return false; } });
-        await Promise.race([Promise.all(finite.map((x) => x.finished.catch(() => {}))), sleep(2500)]);
-        if (doc.fonts) await Promise.race([doc.fonts.ready, sleep(1000)]);
-      } catch {}
-      await sleep(120);
-      put();
-      // Scroll only when the element is out of view, and only as far as needed: a scrolled frame can
-      // show its pixels out of step with where the crop expects them.
-      const vb = el.getBoundingClientRect();
-      if (vb.bottom > frame.contentWindow.innerHeight || vb.top < 0 || vb.right > frame.contentWindow.innerWidth || vb.left < 0) el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
-      // Some entrance animations run in script, out of sight of the checks above: wait until the
-      // element's box holds still for a few frames (or 3s), then crop to where it ended up.
-      if (full || opts.canvas) {
-        if (!opts.canvas) {
-          el.style.setProperty("outline", "2px dashed rgba(120,170,255,.8)", "important");
-          el.style.setProperty("outline-offset", "3px", "important");
-        }
-        frame.style.visibility = "";
-        return;
-      }
-      let b = el.getBoundingClientRect(), still = 0;
-      for (let i = 0; i < 30 && still < 3; i++) {
-        await sleep(100);
-        put();
-        const n = el.getBoundingClientRect();
-        still = Math.abs(n.top - b.top) + Math.abs(n.left - b.left) + Math.abs(n.width - b.width) + Math.abs(n.height - b.height) < 0.5 ? still + 1 : 0;
-        b = n;
-      }
-      const cw = Math.ceil(b.width + EX_PAD * 2), ch = Math.ceil(b.height + EX_PAD * 2);
-      const scale = Math.min(1, EX_MAX / cw);
-      view.style.width = Math.round(cw * scale) + "px";
-      view.style.height = Math.round(ch * scale) + "px";
-      frame.style.transform = "scale(" + scale + ") translate(" + (EX_PAD - b.left) + "px," + (EX_PAD - b.top) + "px)";
-      frame.style.visibility = "";
-    });
-    frame.style.visibility = "hidden";
-    if (opts.canvas) {
-      view.style.width = w + "px";
-      view.style.height = h + "px";
-      frame.style.pointerEvents = "none";
-    } else if (full) {
-      const board = $(".explore");
-      const scale = Math.min(1, (board.clientHeight - 90) / h, (board.clientWidth - 40) / w);
-      view.style.width = Math.round(w * scale) + "px";
-      view.style.height = Math.round(h * scale) + "px";
-      frame.style.transform = "scale(" + scale + ")";
-      frame.style.pointerEvents = "auto"; // scroll around the screen
-    } else {
-      view.style.width = Math.min(EX_MAX, w) + "px";
-      view.style.height = "120px";
-    }
-    view.append(frame);
-    frame.src = r.snapshot || r.url;
-  }
-  function exCard(kind, v, a) {
-    const card = document.createElement("div");
-    card.className = "ex-card " + kind;
-    if (kind === "pending") {
-      card.innerHTML = '<div class="ex-name">' + esc(a.instruction ? "Sketching: " + a.instruction.slice(0, 40) : "Claude is sketching…") + '</div><div class="ex-view"></div><div class="ex-why">' + (a.status === "waiting" ? "Waiting for Claude Code…" : "Working…") + "</div>";
-      return card;
-    }
-    if (kind === "failed") {
-      card.innerHTML = '<div class="ex-name">No variations</div><div class="ex-why">' + esc(a.error || "It didn't work out; try again.") + "</div>";
-      return card;
-    }
-    if (kind === "variant" && ex.req.used === v.name) card.classList.add("used");
-    // The card works on its own copy of the changes, so Edit can adjust them before they're used.
-    let cur = { ...v, changes: JSON.parse(JSON.stringify(v.changes || [])) };
-    card.innerHTML = '<div class="ex-name"><span class="ex-title"></span>' + (v.html ? '<span class="ex-kind" title="A rebuilt layout: using it asks Claude to build it in the component">Layout</span>' : "") + (v.skill ? '<span class="ex-skill" title="The design skill this variation applies">' + esc(skillLabel(v.skill)) + "</span>" : "") + '</div><div class="ex-view"></div>' + (v.why ? '<div class="ex-why">' + esc(v.why) + "</div>" : "") + '<div class="ex-edit" hidden></div><div class="ex-actions"></div>';
-    const title = card.querySelector(".ex-title");
-    title.textContent = v.name;
-    const redraw = () => { const view = card.querySelector(".ex-view"); view.innerHTML = ""; exPreview(view, cur); };
-    redraw();
-    const actions = card.querySelector(".ex-actions");
-    const btn = (text, title, run, cls) => { const b = Object.assign(document.createElement("button"), { textContent: text, title }); if (cls) b.className = cls; b.addEventListener("click", run); actions.append(b); return b; };
-    if (kind !== "original") {
-      btn(v.html ? "Build it" : "Use on screen", v.state ? "A missing state: Claude adds it to the component" + (v.when ? ", shown when " + v.when : "") + " (Undo apply reverts it)" : v.html ? "A new layout: Claude builds it in the component (Undo apply reverts it)" : "Put this on the real screen as tweaks (send them, or they apply in instant mode)", () => exUse(cur), "use");
-      const edit = card.querySelector(".ex-edit");
-      const editBtn = btn("Edit", "Adjust this variation's values before using it", () => {
-        edit.hidden = !edit.hidden;
-        editBtn.classList.toggle("on", !edit.hidden);
-        if (!edit.hidden) drawEdit();
-      });
-      const drawEdit = () => {
-        edit.innerHTML = "";
-        if (cur.html) {
-          // A layout variation's markup, editable: the card redraws when you leave the box (or ⌘Enter).
-          const area = Object.assign(document.createElement("textarea"), { className: "ex-html", value: cur.html, spellcheck: false, rows: 6 });
-          const commit = () => {
-            if (area.value.trim() === cur.html) return;
-            if (area.value.length > 20000) return note("That markup is too long to build (20,000 characters at most).");
-            cur.html = area.value.trim();
-            if (!/ \\(edited\\)$/.test(cur.name)) cur.name = v.name + " (edited)";
-            title.textContent = cur.name;
-            redraw();
-            drawEdit();
-          };
-          area.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) commit(); });
-          area.addEventListener("change", commit);
-          edit.append(area);
-        }
-        cur.changes.forEach((c, i) => {
-          const row = document.createElement("label");
-          row.className = "ex-edit-row";
-          const what = (c.target === ":scope" ? "" : c.target + " ") + c.prop;
-          row.innerHTML = '<span title="' + esc(what) + '">' + esc(what) + "</span>";
-          const input = Object.assign(document.createElement("input"), { value: c.value, spellcheck: false });
-          const commit = () => {
-            if (input.value.trim() === c.value) return;
-            cur.changes[i] = { ...c, value: input.value.trim() };
-            if (!/ \\(edited\\)$/.test(cur.name)) cur.name = v.name + " (edited)";
-            title.textContent = cur.name;
-            redraw();
-            drawEdit();
-          };
-          input.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") commit(); if (e.key === "Escape") { input.value = c.value; input.blur(); } });
-          input.addEventListener("change", commit);
-          if (/^(#|rgb|hsl|oklch)/i.test(c.value.trim())) {
-            const sw = Object.assign(document.createElement("input"), { type: "color", className: "ex-swatch" });
-            try { const d = document.createElement("canvas").getContext("2d"); d.fillStyle = c.value; sw.value = /^#[0-9a-f]{6}$/i.test(d.fillStyle) ? d.fillStyle : "#000000"; } catch {}
-            sw.addEventListener("change", () => { input.value = sw.value; commit(); });
-            row.append(sw);
-          }
-          row.append(input);
-          const x = Object.assign(document.createElement("button"), { textContent: "✕", title: "Drop this change" });
-          x.addEventListener("click", (e) => { e.preventDefault(); cur.changes.splice(i, 1); if (!/ \\(edited\\)$/.test(cur.name)) cur.name = v.name + " (edited)"; title.textContent = cur.name; redraw(); drawEdit(); });
-          row.append(x);
-          edit.append(row);
-        });
-        if (cur !== v && cur.name !== v.name) {
-          const keep = Object.assign(document.createElement("button"), { className: "ex-keep", textContent: "Keep as a new variation", title: "Add the edited one to this exploration, beside the original" });
-          keep.addEventListener("click", () => {
-            const a = { id: "edit-" + Date.now().toString(36), instruction: "", status: "done", variants: [cur] };
-            ex.asks.push(a);
-            cur = { ...v, changes: JSON.parse(JSON.stringify(v.changes || [])) };
-            title.textContent = v.name;
-            redraw();
-            edit.hidden = true;
-            editBtn.classList.remove("on");
-            saveExploration();
-            drawExplore();
-          });
-          edit.append(keep);
-        }
-      };
-    }
-    btn("On screen", "See it on the whole screen", () => exFull(cur));
-    if (kind !== "original") btn("Pin", "Pin it to the canvas, beside its screen, to keep and compare it with others (and branch off it)", () => pinFromExplore(cur));
-    btn(kind === "original" ? "More variations" : "More like this", kind === "original" ? "Ask Claude for more (two, unless the direction says how many)" : "More that push this one further", () => {
-      const dir = $(".ex-dir").value.trim();
-      const text = kind === "original" ? dir : "Variations on “" + cur.name + "” (" + (v.why || "") + "). Push that idea further in different ways" + (dir ? ", " + dir : "") + (cur.html ? ". Start from its layout and return full variations (html and changes): " + JSON.stringify({ html: cur.html, changes: cur.changes }) : ". Start from its changes and return full change sets: " + JSON.stringify(cur.changes));
-      exAsk(text).catch((e) => note("Couldn't ask Claude: " + e.message));
-    });
-    return card;
-  }
-  // The whole screen with a variation on it, over the board.
-  function exFull(v) {
-    const box = $(".explore");
-    box.querySelector(".ex-full")?.remove();
-    const full = document.createElement("div");
-    full.className = "ex-full";
-    full.innerHTML = '<div class="ex-full-head"><b></b><span>The element is outlined</span><button class="use">' + (v.html ? "Build it" : "Use on screen") + '</button><button class="ex-full-close">Back to variations</button></div><div class="ex-view"></div>';
-    full.querySelector("b").textContent = v.name;
-    full.querySelector(".use").hidden = !v.html && (!v.changes || !v.changes.length);
-    full.querySelector(".use").addEventListener("click", () => exUse(v));
-    full.querySelector(".ex-full-close").addEventListener("click", () => full.remove());
-    full.addEventListener("click", (e) => { if (e.target === full) full.remove(); });
-    box.append(full);
-    exPreview(full.querySelector(".ex-view"), v, true);
-  }
-  function drawExplore() {
-    const box = $(".explore");
-    if (!ex.req) { box.hidden = true; box.innerHTML = ""; return; }
-    const grid = box.querySelector(".ex-grid");
-    if (!grid) {
-      box.innerHTML = '<div class="ex-head"><h3>Explore</h3><span class="ex-el"></span><input class="ex-dir" placeholder="Direction for more, e.g. “bolder, more compact”" /><span class="ex-mode" title="What the next variations may change"><button data-mode="">Any</button><button data-mode="styles">Styles</button><button data-mode="layout">Layout</button><button data-mode="states" title="The states this element is missing (empty, loading, error…), designed to fit; Build it adds one to the component">States</button></span><span class="ex-skills" hidden></span><span class="ex-refs"></span><button class="ex-ref-add" title="Add a reference image for the next variations (or drop one here)">＋ Reference</button><input type="file" class="ex-ref-file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden /><button class="ex-more">More variations</button><button class="ex-close" title="Back to the screen (Esc)">Close</button></div><div class="ex-grid"></div>';
-      box.querySelector(".ex-el").textContent = ex.req.label;
-      box.querySelector(".ex-el").title = ex.req.selector;
-      box.querySelector(".ex-dir").value = ex.req.instruction || "";
-      box.querySelector(".ex-dir").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") box.querySelector(".ex-more").click(); if (e.key === "Escape") closeExplore(); });
-      box.querySelector(".ex-more").addEventListener("click", () => exAsk(box.querySelector(".ex-dir").value.trim()).catch((e) => note("Couldn't ask Claude: " + e.message)));
-      box.querySelector(".ex-close").addEventListener("click", closeExplore);
-      const drawMode = () => { for (const b of box.querySelectorAll(".ex-mode button")) b.classList.toggle("on", (ex.req.mode || "") === b.dataset.mode); };
-      for (const b of box.querySelectorAll(".ex-mode button")) b.addEventListener("click", () => { ex.req.mode = b.dataset.mode || undefined; saveExploration(); drawMode(); });
-      drawMode();
-      drawExSkills();
-      // References for the next requests: the ones from the panel, plus any added here.
-      const drawRefs = () => {
-        box.querySelector(".ex-refs").innerHTML = (ex.req.refs || []).map((r, i) => '<span class="ex-ref" title="' + esc(r.name || "Reference") + '"><img src="' + esc(r.url) + '" alt="" /><button data-i="' + i + '" title="Remove">✕</button></span>').join("");
-        for (const b of box.querySelectorAll(".ex-ref button")) b.addEventListener("click", () => { ex.req.refs.splice(Number(b.dataset.i), 1); saveExploration(); drawRefs(); });
-      };
-      const addRefs = async (files) => {
-        for (const f of [...files].filter((x) => /^image\\/(png|jpeg|webp|gif)$/.test(x.type)).slice(0, 6 - (ex.req.refs || []).length)) {
-          try {
-            const res = await fetch("/__ui-tweaks/refs", { method: "POST", headers: { "Content-Type": f.type }, body: f });
-            const out = await res.json();
-            if (!res.ok) throw new Error(out.error);
-            ex.req.refs = [...(ex.req.refs || []), { path: out.path, url: out.url, name: f.name }];
-          } catch (e) { note("Couldn't add that image: " + e.message); }
-        }
-        saveExploration();
-        drawRefs();
-      };
-      box.querySelector(".ex-ref-add").addEventListener("click", () => box.querySelector(".ex-ref-file").click());
-      box.querySelector(".ex-ref-file").addEventListener("change", (e) => { addRefs(e.target.files); e.target.value = ""; });
-      box.addEventListener("dragover", (e) => { if ([...e.dataTransfer.items].some((i) => i.kind === "file")) e.preventDefault(); });
-      box.addEventListener("drop", (e) => { e.preventDefault(); addRefs(e.dataTransfer.files); });
-      drawRefs();
-      box.hidden = false;
-      box.querySelector(".ex-grid").append(exCard("original", { name: ex.req.label, changes: [] }));
-    }
-    // Cards are added as results come in and kept, so live previews don't reload.
-    const g = box.querySelector(".ex-grid");
-    for (const a of ex.asks) {
-      if (a.drawn === a.status) continue;
-      if (a.placeholder) { a.placeholder.remove(); a.placeholder = null; }
-      if (a.status === "done") for (const v of a.variants || []) g.append(exCard("variant", v, a));
-      else if (a.status === "failed") g.append(exCard("failed", null, a));
-      else { a.placeholder = exCard("pending", null, a); g.append(a.placeholder); }
-      a.drawn = a.status;
-    }
-  }
-  function exUse(v) {
-    const f = frames.get(focusedId());
-    try {
-      f.iframe.contentWindow.__uiTweaks.useVariant(ex.req.selector, v.changes, v.name, v.html, v.why, { state: v.state, when: v.when });
-      ex.req.used = v.name;
-      saveExploration();
-      closeExplore();
-      note(v.html ? "Claude is building “" + v.name + "” in the component; Undo apply reverts it. The other variations are kept in ✦ Explorations." : "Using “" + v.name + "”. The other variations are kept: ✦ Explorations brings them back.");
-    } catch { note("Couldn't reach the screen's panel; reload it and try again."); }
-  }
-  function closeExplore() {
-    clearTimeout(ex.timer);
-    ex.req = null;
-    ex.asks = [];
-    drawExplore();
-  }
-  addEventListener("keydown", (e) => {
-    if (e.key !== "Escape" || !ex.req) return;
-    const full = $(".explore .ex-full");
-    if (full) full.remove();
-    else closeExplore();
-  });
 
   // ---------- the canvas ----------
   // Every screen as a picture (a static snapshot, light enough for dozens), your pinned explorations beside
@@ -4061,17 +3610,6 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
         if (req.method === "POST" || req.method === "DELETE") {
           try {
             return send(res, 200, { flows: await changeFlows(root, req.method, req.method === "POST" ? JSON.parse((await readBody(req, 20_000)) || "{}") : {}) });
-          } catch (error) {
-            return send(res, error.status || 400, { error: error.message });
-          }
-        }
-      }
-      if (url.pathname === `${PREFIX}/comments`) {
-        if (req.method === "GET") return send(res, 200, { comments: await readComments(root) });
-        if (["POST", "PATCH", "DELETE"].includes(req.method)) {
-          try {
-            const body = req.method === "DELETE" ? {} : JSON.parse((await readBody(req, 100_000)) || "{}");
-            return send(res, 200, { comments: await changeComments(root, req.method, body, url.searchParams.get("id")) });
           } catch (error) {
             return send(res, error.status || 400, { error: error.message });
           }

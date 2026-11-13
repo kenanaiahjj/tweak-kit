@@ -311,13 +311,7 @@ export type DesignSkill = { name: string; dir: string; label: string; lens: stri
 export const DESIGN_CATALOG: { name: string; label: string; lens: string }[] = [
   { name: 'impeccable', label: 'Impeccable', lens: 'craft standards, with playbooks to go bolder, quieter (distill), more colourful, or rework layout and type' },
   { name: 'emil-design-eng', label: 'Emil Kowalski', lens: 'polish and restraint: the invisible details, component craft, purposeful motion' },
-  { name: 'make-interfaces-feel-better', label: 'Feels better', lens: 'design-engineering details: shadows, borders, radius, type, hover and press states' },
-  { name: 'interface-design', label: 'Interface design', lens: 'product UI: hierarchy, density, layout, tokens and states' },
-  { name: 'taste-skill', label: 'Taste', lens: 'anti-slop: a distinct, non-templated visual direction' },
   { name: 'apple-design', label: 'Apple', lens: 'fluid, physical, materials and depth, typography' },
-  { name: 'vercel-labs-web-design-guidelines', label: 'Web guidelines', lens: "Vercel's web interface guidelines" },
-  { name: 'oklch-skill', label: 'OKLCH colour', lens: 'colour palettes, contrast and gamut in OKLCH' },
-  { name: 'mobile-native', label: 'Mobile native', lens: 'making a web app feel native on a phone' },
 ]
 export const DESIGN_SKILLS = DESIGN_CATALOG.map(s => s.name)
 const SKILL_COPY = '.ui-tweaks/skills'

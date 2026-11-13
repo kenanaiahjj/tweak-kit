@@ -140,7 +140,7 @@ React 19 (and so Next 15+) no longer exposes JSX line numbers in development. On
 
 ### Keep `.ui-tweaks/` out of git
 
-Nothing to do: the kit writes a `.gitignore` inside `.ui-tweaks/` that ignores everything but the studio's screens (`canvas.json`) and comments (`comments.json`), which are meant to be shared with the team.
+Nothing to do: the kit writes a `.gitignore` inside `.ui-tweaks/` that ignores everything but the studio's screens (`canvas.json`) and the flow map (`flows.json`), which are meant to be shared with the team.
 
 ## 3. Use it
 
@@ -219,7 +219,7 @@ Select an element, optionally type a direction in **Ask Claude** ("bolder", "mor
 - **Use on screen** puts that variation on the real screen as ordinary tweaks and closes the board: send them as usual (or they apply right away in instant mode), and undo works as for any tweak.
 - **How many:** two variations a batch, unless your direction asks for another number ("give me 4", "just one"; four at most).
 - **References:** **＋ Reference** under Ask Claude (or paste an image into the box, or drop one on it) attaches pictures of the look you want; the board's header has its own **＋ Reference** for the next batch. They're saved in `.ui-tweaks/refs/`, and Claude looks at each one before designing (for Do it too).
-- **Design skills:** variations and Do it work from the design skills installed in Claude Code (in `~/.claude/skills` or `~/.agents/skills`, including ones from the ui-skills registry): Impeccable, Emil Kowalski's design engineering, Make interfaces feel better, Interface design, Taste, Apple design, Vercel's web interface guidelines, OKLCH colour and Mobile native. The **Skills** chips under Ask Claude (and in the Explore board's header) pick up to three; **Auto** lets Claude pick the one that fits the element and direction. Each variation applies one skill, shows it on its card, and says which principle it applied. The skills' files are copied into `.ui-tweaks/skills/` for the agents to read; they never run their scripts.
+- **Design skills:** variations and Do it work from the design skills installed in Claude Code (in `~/.claude/skills` or `~/.agents/skills`, including ones from the ui-skills registry): Impeccable, Emil Kowalski's design engineering and Apple design. The **Skills** chips under Ask Claude (and in the Explore board's header) pick any of them; **Auto** lets Claude pick the one that fits the element and direction. Each variation applies one skill, shows it on its card, and says which principle it applied. The skills' files are copied into `.ui-tweaks/skills/` for the agents to read; they never run their scripts.
 - **The whole screen:** with nothing selected, **Explore** works on the whole screen: Claude proposes other layouts for it (sections, grouping, order, density).
 - **Nothing is thrown away.** Explorations are kept in your browser: Use on screen closes the board, and **✦ Explorations** in the toolbar lists them (element, screen, how many variations, which one you used) to reopen with every card, the used one marked **Used**. Exploring the same element on the same screen again adds to its board. **Forget these** clears the list.
 - **States.** The **States** mode designs what the element is missing: Claude reads its component, sees which states it handles, and proposes the ones it lacks (empty, loading, error, invalid…) built from its own classes, with real copy and when each should show. **Build it** adds that state to the component, wired to its data.
@@ -281,7 +281,6 @@ Select an element, optionally type a direction in **Ask Claude** ("bolder", "mor
 - **Structure** (part of every check): no headings, no h1 or several, skipped heading levels, no `<main>`. **Structure** in the check shows the outline a screen reader gets: headings indented by level and the regions (banner, navigation, main…); click one to select it.
 - **Worst-case data** (in the check, or ⌘K): every text on the screen swapped for its worst case (long names, unbroken emails, huge numbers, Greek, Japanese and Arabic names), on the page only, and the screen checked again, so text that spills out of a card, gets cut off or runs into other text shows up. **Real data** puts it back. Nothing is a tweak and nothing is written.
 - **Every state** (element header, or ⌘K, with a component selected): Claude renders every state the component can be in, following [Jakub Krehel's state-machine skill](https://github.com/jakubkrehel/skills) (the kit ships a copy, MIT; an installed one takes its place). It reads the component's code for the states it can reach (data: loading, empty, error, one item, many, stale; account: roles, plans; feature: flags, limits), builds a throwaway page with the real component, product-shaped mock data fed at its data boundary and a `__state` switcher, and lists states the design needs but the code can't reach (design those with Explore → States). Each state is added to your screens as "Component · state", so checks and the canvas include them. **Remove the states page** (on the request in the panel) has Claude delete the page and its fixtures, and the states leave your screens.
-- **Comments:** **Comment** in the element header (or **M** with an element selected) pins a note to it; ⌘Enter posts. **M** with nothing selected shows or hides the pins. A pin opens its note, with **Select**, **Delete** and **Resolve**. In the studio, **💬** shows how many are open, lists them by screen (a row goes to that screen and shows its pins) and **Hide pins**. They're saved in `.ui-tweaks/comments.json`, which is kept in git so the team sees them.
 - **⌘K** opens the command palette: type to find any action (select parent, duplicate, add auto layout, copy as code, insert, send…), any section or property ("padding-left" jumps to that field), or another screen in the studio. ↑/↓ and Enter run it.
 - **⌘⇧Z** (or Ctrl+Y, or ↷ in the bar) redoes what ⌘Z undid: styles, text, moves, removals, inserts and props alike.
 - **Colour fields** show the token a colour comes from (e.g. `var(--brand)`), the project's colour tokens as swatches to click (◇ lists them with names), and **⊙** picks a colour from anywhere on screen (Chrome, Edge).
@@ -397,7 +396,7 @@ An override applies to every element that JSX line renders. For a button rendere
 
 ## Files it creates
 
-All inside `<project>/.ui-tweaks/`, which ignores itself in git (except `canvas.json`, `comments.json`, and `flows.json`):
+All inside `<project>/.ui-tweaks/`, which ignores itself in git (except `canvas.json` and `flows.json`):
 
 | File | What |
 | --- | --- |
@@ -406,7 +405,6 @@ All inside `<project>/.ui-tweaks/`, which ignores itself in git (except `canvas.
 | `history.json`, `history/slot-N.json` | Undo history: file copies for the last 10 applies |
 | `history/shots/` | Before and after pictures of the screen for each apply from the panel |
 | `lock.json` | Which session is applying right now |
-| `comments.json` | Comments pinned to elements (kept in git) |
 | `paper/` | Elements and screens captured for Send to Paper or Figma (last 40), and their inline images |
 | `flows.json` | The flow map: which tap leads from which screen to which (kept in git) |
 | `skills/` | Design skills copied for Claude's agents to read (e.g. state-machine) |

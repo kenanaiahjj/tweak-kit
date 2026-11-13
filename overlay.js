@@ -1688,16 +1688,6 @@
     .ck-text b { font-weight: 600; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ck-text span { color: var(--dim); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ck-back { display: block; width: 100%; margin-bottom: 8px; padding: 6px 8px; border: 0; border-radius: 8px; background: rgba(229,72,77,.12); color: var(--text); font: 500 11.5px system-ui, -apple-system, sans-serif; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .cm-pin { position: fixed; pointer-events: auto; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 12px 12px 12px 2px; background: #ffb020; color: #1a1a1a; font: 700 11px/24px system-ui, -apple-system, sans-serif; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,.35), 0 0 0 2px #fff; cursor: pointer; z-index: 2; }
-    .cm-pin:hover, .cm-pin.on { transform: scale(1.12); }
-    .cm-bubble { position: fixed; pointer-events: auto; width: 260px; display: grid; gap: 8px; padding: 10px; border-radius: 12px; background: var(--bg); color: var(--text); box-shadow: 0 8px 32px rgba(0,0,0,.45), 0 0 0 1px var(--line); z-index: 3; font: 12px/1.45 system-ui, -apple-system, sans-serif; }
-    .cm-bubble .cm-head { display: flex; justify-content: space-between; gap: 8px; }
-    .cm-bubble .cm-head b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .cm-bubble .cm-head span { color: var(--dim); flex: none; }
-    .cm-bubble .cm-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-    .cm-bubble textarea { resize: vertical; min-height: 60px; border: 0; border-radius: 8px; background: var(--bg2); color: var(--text); padding: 8px; font: inherit; outline: none; }
-    .cm-bubble textarea:focus { box-shadow: inset 0 0 0 1px var(--line-hover); }
-    .cm-bubble .cm-row { display: flex; gap: 6px; justify-content: flex-end; }
     .ask-skills { margin: 6px 0 2px; }
     .skill-btn { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 26px; padding: 0 6px 0 9px; border: 0; border-radius: 7px; background: var(--bg2); color: var(--label); font-size: 11.5px; cursor: pointer; }
     .skill-btn:hover, .skill-btn.open { background: var(--hover); color: var(--text); }
@@ -2031,7 +2021,7 @@
   <div class="pad p-t hidden"></div><div class="pad p-r hidden"></div><div class="pad p-b hidden"></div><div class="pad p-l hidden"></div>
   <div class="sel-box hidden"></div>
   <div class="tag hidden"></div>
-  <div class="multi-layer"></div><div class="sp-layer"></div><div class="cm-layer"></div><div class="cm-bubble hidden"></div><div class="ck-layer"></div><div class="kb-layer"></div>
+  <div class="multi-layer"></div><div class="sp-layer"></div><div class="ck-layer"></div><div class="kb-layer"></div>
   <div class="drag-ghost hidden"></div><div class="drop-line hidden"></div><div class="guide gv hidden"></div><div class="guide gh hidden"></div><div class="drag-tip hidden"></div>
   ${["nw", "n", "ne", "e", "se", "s", "sw", "w"].map((d) => `<div class="handle hidden" data-dir="${d}"></div>`).join("")}
   <div class="measure hidden"></div><div class="measure hidden"></div><div class="measure hidden"></div><div class="measure hidden"></div>
@@ -2175,7 +2165,6 @@
     const active = (state.isOpen || state.measuring) && !document.hidden && (!STUDIO || ownsPanel() || !!state.hovered);
     if (active || !drawnIdle) time(stats.draw, drawBoxes);
     drawnIdle = !active;
-    if (state.showComments || pinsDrawn || bubble.id) drawPins();
     if (state.showCheck || checkPinsDrawn) { drawCheckPins(); checkPinsDrawn = !!state.showCheck; }
     if (state.showTabOrder || tabPinsDrawn) { drawTabOrder(); tabPinsDrawn = !!state.showTabOrder; }
     requestAnimationFrame(loop);
@@ -5669,7 +5658,6 @@
         ["Copy style", "Copy this element's type, fill, border, radius, shadow and padding (⌘⌥C)", copyStyle],
         ["Paste style", "Paste the copied style onto this element (⌘⌥V)", pasteStyle],
         ["Matching", "Select every instance of this component (or every element with the same tag and classes): edits apply to all", (n) => selectMatching(n)],
-        ["Comment", "Pin a comment to this element (M)", (n) => startComment(n)],
         ["Make component", "Claude turns this into a reusable component, uses it here and replaces copies of it in the source (Undo apply reverts it)", (n) => makeComponent(n)],
         ["Every state", "Claude renders every state of this component (loading, empty, error, roles, limits…) on a throwaway page with mock data, following Jakub Krehel's state-machine skill; each state is added to your screens", (n) => askStates(n)],
       ]) {
@@ -6717,125 +6705,6 @@
     h.addEventListener("pointercancel", up);
   }
 
-  // ---------- comments ----------
-  // Notes pinned to elements, saved in .ui-tweaks/comments.json (kept in git). M shows them, or pins
-  // one to the selected element; a pin opens its note, to resolve or delete.
-  const COMMENTS_KEY = "ui-tweaks:comments-on";
-  try { state.showComments = localStorage.getItem(COMMENTS_KEY) === "1"; } catch {}
-  state.comments = [];
-  let pinsDrawn = false, commentsAt = 0;
-  const pageKey = () => location.pathname + location.search;
-  async function loadComments(force) {
-    if (!force && Date.now() - commentsAt < 4000) return state.comments;
-    commentsAt = Date.now();
-    try { state.comments = (await fetch(API + "/comments", { cache: "no-store" }).then((r) => r.json())).comments || []; } catch {}
-    return state.comments;
-  }
-  async function changeComment(method, body, id) {
-    try {
-      const res = await fetch(API + "/comments" + (id ? "?id=" + encodeURIComponent(id) : ""), { method, headers: { "Content-Type": "application/json" }, body: method === "DELETE" ? undefined : JSON.stringify(body) });
-      const out = await res.json();
-      if (!res.ok) throw new Error(out.error);
-      state.comments = out.comments;
-      commentsAt = Date.now();
-      if (STUDIO && STUDIO.__studio && STUDIO.__studio.commentsChanged) STUDIO.__studio.commentsChanged();
-      return true;
-    } catch (error) {
-      toast("Comment not saved: " + error.message);
-      return false;
-    }
-  }
-  function setComments(on) {
-    state.showComments = on;
-    try { localStorage.setItem(COMMENTS_KEY, on ? "1" : "0"); } catch {}
-    if (on) loadComments(true);
-    else closeBubble();
-    if (STUDIO && STUDIO.__studio && STUDIO.__studio.commentsChanged) STUDIO.__studio.commentsChanged();
-  }
-  const pinned = () => state.comments.filter((c) => !c.resolved && c.url === pageKey());
-  const commentTarget = (c) => { try { return document.querySelector(c.selector); } catch { return null; } };
-  function drawPins() {
-    if (state.showComments) loadComments();
-    const list = state.showComments ? pinned() : [];
-    pinsDrawn = list.length > 0;
-    reuse(".cm-layer", list.length, "cm-pin").forEach((p, i) => {
-      const c = list[i];
-      const el = commentTarget(c);
-      const r = el && el.getClientRects().length ? el.getBoundingClientRect() : null;
-      p.classList.toggle("hidden", !r);
-      if (!r) return;
-      p.textContent = String(i + 1);
-      p.title = c.text;
-      p.style.left = Math.min(innerWidth - 14, Math.max(14, r.right)) + "px";
-      p.style.top = Math.max(14, r.top) + "px";
-      p.classList.toggle("on", bubble.id === c.id);
-      p.onclick = (e) => { e.stopPropagation(); bubble.id === c.id ? closeBubble() : openBubble(c, p); };
-    });
-    if (bubble.id && bubble.anchor && bubble.anchor.isConnected) {
-      const r = bubble.anchor.getBoundingClientRect();
-      const box = $(".cm-bubble");
-      box.style.left = Math.max(8, Math.min(innerWidth - 268, r.right + 8)) + "px";
-      box.style.top = Math.max(8, Math.min(innerHeight - box.offsetHeight - 8, r.top)) + "px";
-    }
-  }
-  const bubble = { id: null, anchor: null };
-  function closeBubble() {
-    bubble.id = null;
-    bubble.anchor = null;
-    $(".cm-bubble").classList.add("hidden");
-  }
-  function openBubble(c, anchor) {
-    bubble.id = c.id;
-    bubble.anchor = anchor;
-    const box = $(".cm-bubble");
-    box.innerHTML = "";
-    const head = Object.assign(document.createElement("div"), { className: "cm-head" });
-    head.append(Object.assign(document.createElement("b"), { textContent: c.label || "Element" }), Object.assign(document.createElement("span"), { textContent: ago(c.at) }));
-    const text = Object.assign(document.createElement("div"), { className: "cm-text", textContent: c.text });
-    const row = Object.assign(document.createElement("div"), { className: "cm-row" });
-    const btn = (label, run, cls) => { const b = Object.assign(document.createElement("button"), { className: "btn " + (cls || "ghost"), textContent: label }); b.addEventListener("click", run); row.append(b); };
-    btn("Select", () => { const el = commentTarget(c); if (el) { if (!state.isOpen) toggle(true); select(el); } });
-    btn("Delete", async () => { if (await changeComment("DELETE", null, c.id)) closeBubble(); });
-    btn("Resolve", async () => { if (await changeComment("PATCH", { id: c.id, resolved: true })) { closeBubble(); toast("Resolved"); } }, "primary");
-    box.append(head, text, row);
-    box.classList.remove("hidden");
-  }
-  const commentLabel = (el) => {
-    const d = describe(el);
-    const cls = d.classes.find((c) => !/--t[0-9a-z]{4}$/.test(c));
-    return (cls ? `${d.tag}.${cls}` : d.tag) + (d.text ? ` “${d.text.slice(0, 30)}”` : "");
-  };
-  function startComment(el) {
-    if (!el || !el.isConnected) return toast("Select an element to comment on");
-    if (!state.showComments) setComments(true);
-    bubble.id = "new";
-    bubble.anchor = el;
-    const box = $(".cm-bubble");
-    box.innerHTML = "";
-    const head = Object.assign(document.createElement("div"), { className: "cm-head" });
-    head.append(Object.assign(document.createElement("b"), { textContent: "Comment on " + commentLabel(el) }));
-    const area = Object.assign(document.createElement("textarea"), { rows: 3, placeholder: "What should change here? (⌘↵ to post)" });
-    const row = Object.assign(document.createElement("div"), { className: "cm-row" });
-    const post = async () => {
-      if (!area.value.trim()) return;
-      if (await changeComment("POST", { url: pageKey(), selector: cssPath(el), label: commentLabel(el), text: area.value })) { closeBubble(); toast("Comment pinned"); }
-    };
-    area.addEventListener("keydown", (e) => {
-      e.stopPropagation();
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) post();
-      if (e.key === "Escape") closeBubble();
-    });
-    const cancel = Object.assign(document.createElement("button"), { className: "btn ghost", textContent: "Cancel" });
-    cancel.addEventListener("click", closeBubble);
-    const ok = Object.assign(document.createElement("button"), { className: "btn primary", textContent: "Post" });
-    ok.addEventListener("click", post);
-    row.append(cancel, ok);
-    box.append(head, area, row);
-    box.classList.remove("hidden");
-    drawPins();
-    setTimeout(() => area.focus(), 0);
-  }
-
   // ---------- multi-select ----------
   // Shift-click adds elements; edits in the panel go to every selected element.
   function drawMulti(primary) {
@@ -7320,11 +7189,6 @@
     if (e.key === "Escape") {
       if (state.selected) select(null);
       else toggle(false);
-    } else if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === "m") {
-      // M: comment on the selected element; with nothing selected, show or hide the comments.
-      e.preventDefault();
-      if (sel) startComment(sel);
-      else setComments(!state.showComments);
     } else if (!e.metaKey && !e.ctrlKey && !e.altKey && (e.key.toLowerCase() === "v" || e.key.toLowerCase() === "c")) {
       // V: Inspect (clicks pick elements). C, beside it: Interact (clicks reach the app).
       e.preventDefault();
@@ -7429,10 +7293,6 @@
     // Picking on or off (off: clicks reach the app, as when the studio's comparison is set to Interact).
     get isPicking() { return state.isPicking; },
     setPicking: (on) => { state.isPicking = !!on; if (!on) { state.hovered = null; } render(); },
-    // Comment pins: shown or not (the studio's 💬 switch), and pinning one to an element.
-    get showComments() { return state.showComments; },
-    setComments: (on) => setComments(!!on),
-    comment: (selector) => startComment(document.querySelector(selector)),
     // Worst-case data on the page (true/false, or toggles), and the Tab order (true shows its pins).
     worstCase: (on) => worstCase(on === undefined ? undefined : !!on),
     // The screen as a static page (the studio canvas's picture of it) and its main heading.

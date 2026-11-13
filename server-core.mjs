@@ -1460,6 +1460,8 @@ export function studioPage(appPath) {
     $(".focus-device").innerHTML = options(a && a.device);
     if (a) { $(".width-slider").value = String(size(a)[0]); fillSlider(); }
     $(".pages-toggle").classList.toggle("on", !!view.pages);
+    // The Screens list on the left already names every screen: the picker only when it's closed.
+    $(".focus-pick").hidden = !!view.pages;
     drawGuidesButton();
     $(".pages").hidden = !view.pages;
     saveView();

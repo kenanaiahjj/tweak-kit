@@ -6,9 +6,6 @@ import { adoptToken, createToken, scanTokens, setToken } from "./tokens.mjs";
 import { systemPage } from "./system-page.mjs";
 import { addAsk, askStatus, cancelAsk } from "./asks.mjs";
 import { queueTokens, sendToPaper } from "./paper.mjs";
-import { deployHandoff, exportHandoff, handoffData, readIndex, saveHandoff } from "./handoff.mjs";
-import { handoffPage } from "./handoff-page.mjs";
-import { figmaScreens, figmaToken, tokenFile } from "./figma.mjs";
 import net from "node:net";
 import { jsxAt, toTailwind } from "./code.mjs";
 import { findRoutes as findAppRoutes } from "./routes.mjs";
@@ -826,37 +823,6 @@ export function studioPage(appPath) {
   .cn-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
   .cn-actions button { height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: rgba(255,255,255,.08); color: #fff; font: 500 12.5px system-ui, -apple-system, sans-serif; cursor: pointer; }
   .cn-actions button.primary { background: #a78bfa; color: #1b1530; font-weight: 600; }
-  .ho-pop { width: 340px; }
-  .ho-src { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 2px; margin: 0 0 10px; border-radius: 8px; background: rgba(255,255,255,.06); }
-  .ho-src button { height: 28px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; opacity: .7; }
-  .ho-src button.on { background: rgba(255,255,255,.14); opacity: 1; font-weight: 600; }
-  .ho-fnote { margin: -4px 0 10px; font-size: 11.5px; line-height: 1.45; color: #fbbf24; overflow-wrap: anywhere; }
-  .ho-label { grid-template-columns: 64px minmax(0, 1fr) !important; }
-  .ho-label input { height: 30px; min-width: 0; padding: 0 10px; border: 0; border-radius: 8px; background: rgba(255,255,255,.06); color: #fff; font: 12.5px system-ui, -apple-system, sans-serif; outline: none; }
-  .ho-label input:focus { box-shadow: inset 0 0 0 1px rgba(167,139,250,.7); }
-  .ho-list { display: grid; gap: 2px; margin: 2px -6px 0; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.08); }
-  .ho-row { display: flex; align-items: center; gap: 4px; padding: 6px; border-radius: 8px; }
-  .ho-row:hover { background: rgba(255,255,255,.04); }
-  .ho-row > div { flex: 1; min-width: 0; display: grid; }
-  .ho-row b { font: 600 12.5px system-ui, -apple-system, sans-serif; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ho-row span { font: 11.5px system-ui, -apple-system, sans-serif; color: rgba(255,255,255,.5); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ho-row a, .ho-row button { flex: none; height: 26px; padding: 0 8px; border: 0; border-radius: 7px; background: rgba(255,255,255,.07); color: rgba(255,255,255,.85); font: 500 12px/26px system-ui, -apple-system, sans-serif; text-decoration: none; cursor: pointer; }
-  .ho-row a:hover, .ho-row button:hover { background: rgba(255,255,255,.14); color: #fff; }
-  .ho-viewer { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: #171717; }
-  .ho-viewer[hidden] { display: none; }
-  .ho-viewer-bar { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 8px 0 14px; background: #2a2340; border-bottom: 1px solid rgba(167,139,250,.35); font: 12.5px system-ui, -apple-system, sans-serif; color: rgba(255,255,255,.6); }
-  .ho-viewer-bar b { color: #fff; font-weight: 600; }
-  .ho-viewer-bar span { flex: 1; }
-  .ho-viewer-bar a, .ho-viewer-bar button { height: 28px; padding: 0 12px; border: 0; border-radius: 8px; background: rgba(255,255,255,.1); color: #fff; font: 500 12px/28px system-ui, -apple-system, sans-serif; text-decoration: none; cursor: pointer; }
-  .ho-viewer-bar a:hover, .ho-viewer-bar button:hover { background: rgba(255,255,255,.18); }
-  .ho-viewer iframe { flex: 1; width: 100%; border: 0; }
-  .ho-shared { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; background: rgba(52,211,153,.1); box-shadow: inset 0 0 0 1px rgba(52,211,153,.3); font: 12px system-ui, -apple-system, sans-serif; }
-  .ho-shared[hidden] { display: none; }
-  .ho-shared span { color: #6ee7b7; font-weight: 600; }
-  .ho-shared a { flex: 1; min-width: 0; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
-  .ho-shared a:hover { text-decoration: underline; }
-  .ho-shared button { height: 24px; padding: 0 8px; border: 0; border-radius: 6px; background: rgba(255,255,255,.1); color: #fff; font: 500 11.5px system-ui, -apple-system, sans-serif; cursor: pointer; }
-  .ho-empty { padding: 4px 6px; color: rgba(255,255,255,.45); font-size: 12px; }
   .canvas-toggle.on { background: rgba(255,255,255,.11); color: #fff; }
 
   /* ---------- pop-ups ----------
@@ -960,7 +926,6 @@ export function studioPage(appPath) {
       </span>
       <span class="tb-group">
         <button class="vs-toggle" data-icon="branch" data-label="Versions" title="Compare with another branch or commit, side by side">⑂ Versions</button>
-        <button class="ho-toggle" data-icon="handoff" data-label="Handoff" title="Handoff: a read-only version of every screen for developers, PMs and QA (inspect, search, compare versions)">Handoff</button>
         <button class="vs-mirror" data-icon="mirror" hidden title="Mirror clicks: repeat your clicks and typing on the other version, so both walk through the same flow">⇆ Mirror clicks</button>
         <button class="vs-match" data-icon="match" hidden title="Match: both sides drifted apart? Reload both at this screen's starting state (its URL, fixture and screen)">⟲ Match</button>
       </span>
@@ -989,7 +954,6 @@ export function studioPage(appPath) {
 <div class="gallery" hidden></div>
 <div class="phone-pop" hidden></div>
 <div class="guides-pop cv-new" hidden></div>
-<div class="guides-pop cv-new ho-pop" hidden></div>
 <div class="rv-progress" hidden></div>
 <div class="vs-pop" hidden></div>
 <script>
@@ -3223,165 +3187,6 @@ export function studioPage(appPath) {
   addEventListener("pointerdown", (e) => { const pop = $(".cv-new"); if (!pop.hidden && !e.target.closest(".cv-new, .cv-concept")) pop.hidden = true; });
   $(".cv-bar .cv-refresh").addEventListener("click", () => { queuePictures(true); note("Taking a fresh picture of every screen, one at a time…"); });
 
-  // ---------- handoff ----------
-  // A version of every screen for developers, PMs and QA: each screen loads on its own (as Check all does)
-  // and its panel snapshots it; the dev server keeps the version and says which screens changed.
-  let hoBusy = false;
-  function openHandoffViewer(href) {
-    let box = $(".ho-viewer");
-    if (!box) {
-      box = document.createElement("div");
-      box.className = "ho-viewer";
-      box.innerHTML = '<div class="ho-viewer-bar"><b>Handoff</b><span>What developers, PMs and QA see: read-only</span><a class="ho-newtab" target="_blank" rel="noopener">New tab</a><button class="ho-close">Close</button></div><iframe title="Handoff"></iframe>';
-      document.body.append(box);
-      box.querySelector(".ho-close").addEventListener("click", () => { box.hidden = true; box.querySelector("iframe").src = "about:blank"; });
-    }
-    box.querySelector(".ho-newtab").href = href;
-    box.querySelector("iframe").src = href;
-    box.hidden = false;
-  }
-  // Leaving the studio while a version is captured stops it: ask first.
-  addEventListener("beforeunload", (e) => { if (hoBusy) { e.preventDefault(); e.returnValue = ""; } });
-  async function drawHandoffPop(button) {
-    const pop = $(".ho-pop");
-    let versions = [], shared = null;
-    try { const d = await fetch("/__ui-tweaks/handoff/versions", { cache: "no-store" }).then((r) => r.json()); versions = d.versions || []; shared = d.shared; } catch {}
-    const last = versions[versions.length - 1];
-    pop.innerHTML = '<h4>Handoff</h4><p>A read-only version of every screen for developers, PMs and QA: inspect measurements and colours, search it, and compare with the last version. Add your hosted app to let them click through it too.</p><div class="ho-src" role="radiogroup" aria-label="Screens from"><button data-src="app" role="radio">This app</button><button data-src="figma" role="radio">A Figma file</button></div><label class="ho-label ho-figma" hidden>Figma link<input class="ho-flink" type="url" placeholder="https://www.figma.com/design/… (a page, section or frame)" /></label><p class="ho-fnote" hidden></p><label class="ho-label">Version<input class="ho-name" maxlength="60" /></label><label class="ho-label">Live app<input class="ho-app" type="url" placeholder="https://your-app.vercel.app (optional)" /></label><div class="cn-actions"><button class="cn-go primary ho-save">' + (hoBusy ? "Capturing…" : "Save a version") + '</button></div><div class="ho-shared" hidden><span>Shared</span><a target="_blank" rel="noopener"></a><button title="Copy the link">Copy</button></div><div class="ho-list"></div>';
-    pop.querySelector(".ho-name").value = "Version " + (versions.length + 1);
-    // Where the handoff is shared (the same address every time), and which version is up there.
-    if (shared && shared.url) {
-      const box = pop.querySelector(".ho-shared");
-      box.hidden = false;
-      const sv = versions.find((x) => x.id === shared.version);
-      box.querySelector("a").href = shared.url;
-      box.querySelector("a").textContent = shared.url.replace(/^https:[/][/]/, "") + (sv ? " · " + sv.label : "");
-      box.querySelector("button").addEventListener("click", () => navigator.clipboard.writeText(shared.url).then(() => note("Copied " + shared.url), () => note(shared.url)));
-    }
-    pop.querySelector(".ho-save").disabled = hoBusy;
-    const list = pop.querySelector(".ho-list");
-    for (const v of versions.slice().reverse().slice(0, 6)) {
-      const row = document.createElement("div");
-      row.className = "ho-row";
-      row.innerHTML = '<div><b></b><span></span></div><a class="ho-open" target="_blank" rel="noopener">Open</a><a class="ho-dl" title="One self-contained file: send it, or host it anywhere">Download</a><button class="ho-pub" title="Put it on Vercel (its own project, with your logged-in Vercel CLI): anyone with the link can view it, and sharing again updates the same address">Share</button>';
-      row.querySelector("b").textContent = v.label;
-      row.querySelector("span").textContent = new Date(v.at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) + (v.commit ? " · " + v.commit : "") + (v === last && versions.length > 1 ? " · " + v.changed + " changed, " + v.added + " new" : " · " + v.screens + " screens");
-      row.querySelector(".ho-open").href = "/__ui-tweaks/handoff#v=" + encodeURIComponent(v.id);
-      // Over the studio, not instead of it (this tab keeps the studio; New tab opens it on its own).
-      row.querySelector(".ho-open").addEventListener("click", (e) => { e.preventDefault(); pop.hidden = true; openHandoffViewer(row.querySelector(".ho-open").href); });
-      row.querySelector(".ho-dl").href = "/__ui-tweaks/handoff/export?version=" + encodeURIComponent(v.id);
-      row.querySelector(".ho-pub").addEventListener("click", async (e) => {
-        const b = e.currentTarget;
-        b.disabled = true;
-        b.textContent = "Sharing…";
-        note("Putting “" + v.label + "” on Vercel (about a minute)…");
-        try {
-          const res = await fetch("/__ui-tweaks/handoff/deploy", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: v.id }) });
-          const out = await res.json();
-          if (!res.ok) throw new Error(out.error || res.statusText);
-          try { await navigator.clipboard.writeText(out.url); } catch {}
-          note("Shared: " + out.url + " (copied)");
-        } catch (err) { note("Couldn't share it: " + err.message); }
-        drawHandoffPop(button);
-      });
-      list.append(row);
-    }
-    if (!versions.length) list.append(Object.assign(document.createElement("div"), { className: "ho-empty", textContent: "No versions yet." }));
-    // The hosted app (a preview deploy, say), for clicking through it: kept for the next version too.
-    const app = pop.querySelector(".ho-app");
-    try { app.value = localStorage.getItem("ui-tweaks:handoff-app") || ""; } catch {}
-    app.addEventListener("keydown", (e) => e.stopPropagation());
-    // Where the screens come from: this app (each canvas screen, captured) or a Figma file (its frames).
-    let src = "app";
-    try { src = localStorage.getItem("ui-tweaks:handoff-src") === "figma" ? "figma" : "app"; } catch {}
-    const flink = pop.querySelector(".ho-flink"), fnote = pop.querySelector(".ho-fnote");
-    let figmaInfo = null;
-    const drawSrc = () => {
-      for (const b of pop.querySelectorAll(".ho-src button")) { b.classList.toggle("on", b.dataset.src === src); b.setAttribute("aria-checked", String(b.dataset.src === src)); }
-      pop.querySelector(".ho-figma").hidden = src !== "figma";
-      fnote.hidden = src !== "figma" || !figmaInfo || figmaInfo.token;
-      if (figmaInfo && !figmaInfo.token) fnote.textContent = "Needs your Figma token: in Figma, Settings → Security → Personal access tokens (File content: read). Save it in " + figmaInfo.tokenFile + " or as FIGMA_TOKEN, then try again.";
-      if (!hoBusy) pop.querySelector(".ho-save").textContent = src === "figma" ? "Save a version from Figma" : "Save a version";
-    };
-    for (const b of pop.querySelectorAll(".ho-src button")) b.addEventListener("click", () => { src = b.dataset.src; try { localStorage.setItem("ui-tweaks:handoff-src", src); } catch {} drawSrc(); });
-    flink.addEventListener("keydown", (e) => e.stopPropagation());
-    fetch("/__ui-tweaks/handoff/figma", { cache: "no-store" }).then((r) => r.json()).then((d) => {
-      figmaInfo = d;
-      let saved = "";
-      try { saved = localStorage.getItem("ui-tweaks:handoff-figma") || ""; } catch {}
-      if (!flink.value) flink.value = saved || d.link || "";
-      drawSrc();
-    }).catch(() => {});
-    drawSrc();
-    pop.querySelector(".ho-save").addEventListener("click", () => {
-      const url = app.value.trim();
-      if (url && !/^https?:[/][/]/i.test(url)) return note("The live app link starts with https://");
-      try { localStorage.setItem("ui-tweaks:handoff-app", url); } catch {}
-      if (src === "figma") {
-        const link = flink.value.trim();
-        if (!/^https:[/][/]([a-z0-9-]+[.])?figma[.]com[/]/i.test(link)) return note("Paste a Figma link: figma.com/design/… (a page, a section or a frame)");
-        try { localStorage.setItem("ui-tweaks:handoff-figma", link); } catch {}
-        return saveFigmaVersion(pop.querySelector(".ho-name").value.trim(), button, url, link);
-      }
-      saveHandoffVersion(pop.querySelector(".ho-name").value.trim(), button, url);
-    });
-    pop.querySelector(".ho-name").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") pop.querySelector(".ho-save").click(); });
-  }
-  async function saveHandoffVersion(label, button, appUrl) {
-    if (hoBusy) return;
-    hoBusy = true;
-    drawHandoffPop(button);
-    const screens = [];
-    try {
-      for (const [i, a] of canvas.artboards.entries()) {
-        note("Capturing " + (i + 1) + " of " + canvas.artboards.length + ": " + (a.name || a.url) + "…");
-        const [w, h] = size(a);
-        const frame = await loadHidden(a.url, w, h);
-        try {
-          const t = frame.contentWindow.__uiTweaks;
-          const html = await Promise.race([Promise.resolve().then(() => t.snapshotHtml()), sleep(15000).then(() => null)]);
-          if (html) screens.push({ id: a.id, name: a.name || a.url, url: a.url, size: [w, h], x: a.x, y: a.y, heading: (t.screenKey ? t.screenKey() : {}).heading || "", html, ...(a.group ? { group: a.group, state: a.state, stateGroup: a.stateGroup } : {}) });
-        } catch {}
-        frame.remove();
-      }
-      if (!screens.length) throw new Error("no screen could be captured");
-      const res = await fetch("/__ui-tweaks/handoff", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label, screens, appUrl }) });
-      const out = await res.json();
-      if (!res.ok) throw new Error(out.error || res.statusText);
-      note("Saved “" + out.version.label + "”: " + screens.length + " screens" + (out.changed || out.added ? ", " + out.changed + " changed and " + out.added + " new since the last version" : "") + ".");
-    } catch (e) {
-      note("Couldn't save the version: " + e.message);
-    } finally {
-      hoBusy = false;
-      if (!$(".ho-pop").hidden) drawHandoffPop(button);
-    }
-  }
-  async function saveFigmaVersion(label, button, appUrl, link) {
-    if (hoBusy) return;
-    hoBusy = true;
-    drawHandoffPop(button);
-    note("Reading the Figma file (its frames, layers and styles)…");
-    try {
-      const res = await fetch("/__ui-tweaks/handoff/figma", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label, appUrl, link }) });
-      const out = await res.json();
-      if (!res.ok) throw new Error(out.error || res.statusText);
-      note("Saved “" + out.version.label + "” from " + out.file + ": " + out.screens + " frames" + (out.changed || out.added ? ", " + out.changed + " changed and " + out.added + " new since the last Figma version" : "") + ".");
-    } catch (e) {
-      note("Couldn't save from Figma: " + e.message);
-    } finally {
-      hoBusy = false;
-      if (!$(".ho-pop").hidden) drawHandoffPop(button);
-    }
-  }
-  $(".ho-toggle").addEventListener("click", (e) => {
-    const pop = $(".ho-pop");
-    if (!pop.hidden) { pop.hidden = true; return; }
-    anchorPop(pop, e.currentTarget, 340);
-    pop.hidden = false;
-    drawHandoffPop(e.currentTarget);
-  });
-  addEventListener("pointerdown", (e) => { const pop = $(".ho-pop"); if (!pop.hidden && !e.target.closest(".ho-pop, .ho-toggle")) pop.hidden = true; });
-
   // ---------- review pages ----------
   // Every screen (or this one) captured in one pass, side by side with the other version when comparing,
   // with the screens that changed flagged; the server writes one shareable page from it.
@@ -4119,57 +3924,6 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
       if (url.pathname === `${PREFIX}/design-tokens` && req.method === "POST") {
         try {
           return send(res, 200, { ok: true, ask: await queueTokens(root, JSON.parse((await readBody(req, 10_000)) || "{}")) });
-        } catch (error) {
-          return send(res, error.status || 500, { error: error.message });
-        }
-      }
-      // Handoff: read-only versions of the screens (the viewer, its data, saving a version, sharing one).
-      if (url.pathname === `${PREFIX}/handoff` && req.method === "GET") return send(res, 200, handoffPage(), "text/html; charset=utf-8");
-      if (url.pathname === `${PREFIX}/handoff/data` && req.method === "GET") return send(res, 200, await handoffData(root));
-      if (url.pathname === `${PREFIX}/handoff/deploy` && req.method === "POST") {
-        try {
-          const origin = `http://${req.headers.host || "localhost"}`;
-          return send(res, 200, { ok: true, ...(await deployHandoff(root, origin, JSON.parse((await readBody(req, 10_000)) || "{}").version || null)) });
-        } catch (error) {
-          return send(res, error.status || 500, { error: error.message });
-        }
-      }
-      if (url.pathname === `${PREFIX}/handoff/versions` && req.method === "GET") return send(res, 200, { shared: (await readIndex(root)).shared || null, versions: (await readIndex(root)).versions.map(({ screens, ...v }) => ({ ...v, screens: screens.length, changed: screens.filter((x) => x.status === "changed").length, added: screens.filter((x) => x.status === "new").length })) });
-      // A version from a Figma file instead of the app: with the person's own token (never sent anywhere else).
-      if (url.pathname === `${PREFIX}/handoff/figma` && req.method === "GET") {
-        const last = (await readIndex(root)).versions.slice().reverse().find((v) => v.source && v.source.type === "figma");
-        return send(res, 200, { token: !!(await figmaToken()), tokenFile: tokenFile(), link: last ? last.source.link : null });
-      }
-      if (url.pathname === `${PREFIX}/handoff/figma` && req.method === "POST") {
-        try {
-          const body = JSON.parse((await readBody(req, 20_000)) || "{}");
-          const { screens, file } = await figmaScreens(body.link);
-          const out = await saveHandoff(root, { label: body.label, note: body.note, appUrl: body.appUrl, screens, source: { type: "figma", ...file } });
-          return send(res, 200, { ok: true, file: file.name, screens: screens.length, ...out });
-        } catch (error) {
-          return send(res, error.status || 500, { error: error.message });
-        }
-      }
-      if (url.pathname === `${PREFIX}/handoff` && req.method === "POST") {
-        try {
-          return send(res, 200, { ok: true, ...(await saveHandoff(root, JSON.parse(await readBody(req, 120_000_000)))) });
-        } catch (error) {
-          return send(res, error.status || 500, { error: error.message });
-        }
-      }
-      if ((url.pathname === `${PREFIX}/handoff/publish` && req.method === "POST") || (url.pathname === `${PREFIX}/handoff/export` && req.method === "GET")) {
-        try {
-          const origin = `http://${req.headers.host || "localhost"}`;
-          const versionId = req.method === "GET" ? url.searchParams.get("version") : JSON.parse((await readBody(req, 10_000)) || "{}").version;
-          const out = await exportHandoff(root, origin, versionId || null);
-          if (req.method === "GET") {
-            res.statusCode = 200;
-            res.setHeader("Content-Type", "text/html; charset=utf-8");
-            res.setHeader("Content-Disposition", `attachment; filename="${path.basename(out.file)}"`);
-            return res.end(await fs.readFile(path.join(root, out.file)));
-          }
-          const ask = await addAsk(root, { kind: "publish", file: out.file, title: out.title, instruction: `Publish the handoff “${out.title}”` });
-          return send(res, 200, { ok: true, ask, ...out });
         } catch (error) {
           return send(res, error.status || 500, { error: error.message });
         }

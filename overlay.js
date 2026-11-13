@@ -5013,7 +5013,7 @@
   // ---------- every state of a component ----------
   // Jakub Krehel's state-machine skill, run by Claude: the component's reachable states on a throwaway page with
   // mock data and a __state switcher. When it's built, the studio adds each state to the screens (and so to
-  // checks and handoffs).
+  // checks and the canvas).
   // The component's name when this element is its root, else a readable name from its class ("Events timeline").
   function componentName(el) {
     return paperName(el) || el.tagName.toLowerCase();

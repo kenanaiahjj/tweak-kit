@@ -56,7 +56,7 @@ function linesPlugin({ sources = true } = {}) {
   };
 }
 
-function kitPlugin({ autoUpdate = true, updateCheck = true, sources = true, commit = false } = {}) {
+function kitPlugin({ autoUpdate = true, updateCheck = true, sources = true, commit = false, copyOf = null } = {}) {
   let root = process.cwd();
   return {
     name: "ui-tweaks",
@@ -76,7 +76,9 @@ function kitPlugin({ autoUpdate = true, updateCheck = true, sources = true, comm
       root = config.root;
     },
     configureServer(server) {
-      server.middlewares.use(createTweaksHandler({ root, commit }));
+      server.middlewares.use(createTweaksHandler({ root, commit, copyOf }));
+      // A canvas copy's server stays out of the registry (Claude finds the project's own) and doesn't update.
+      if (copyOf) return;
       server.httpServer?.once("listening", () => {
         const address = server.httpServer.address();
         if (address && typeof address === "object") void announceServer(root, `http://localhost:${address.port}`);

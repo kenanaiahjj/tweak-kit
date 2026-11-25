@@ -5,6 +5,7 @@ import { updateStatus } from "./update.mjs";
 import { adoptToken, createToken, scanTokens, setToken } from "./tokens.mjs";
 import { systemPage } from "./system-page.mjs";
 import { addAsk, askStatus, cancelAsk } from "./asks.mjs";
+import { applyCopy, copyAt, createCopy, deleteCopy, listCopies, moveCopy, startCopy, stopCopy } from "./copies.mjs";
 import { queueTokens, sendToPaper } from "./paper.mjs";
 import net from "node:net";
 import { jsxAt, toTailwind } from "./code.mjs";
@@ -292,9 +293,11 @@ function send(res, status, body, type = "application/json") {
  * device, kept in .ui-tweaks/canvas.json) with the overlay's own panel docked on the right.
  * The overlay in the first artboard docks its panel here; clicking in any artboard moves it there.
  */
-export function studioPage(appPath) {
+export function studioPage(appPath, copy = null) {
   const safe = typeof appPath === "string" && appPath.startsWith("/") && !appPath.startsWith("//") ? appPath : "/";
   const src = JSON.stringify(safe).replace(/</g, "\\u003c");
+  // In a canvas copy's own studio: which copy, and the project's studio to go back to.
+  const copyJson = JSON.stringify(copy || null).replace(/</g, "\\u003c");
   return `<!doctype html>
 <html lang="en" data-ui-tweaks-studio>
 <head>
@@ -784,6 +787,30 @@ export function studioPage(appPath) {
   .cv-bar button.primary { background: #a78bfa; color: #1b1530; font-weight: 600; }
   .cv-bar button.primary:hover { background: #b9a2fc; }
   .cv-branch path.cv-reach { stroke: rgba(167,139,250,.7); }
+  /* Canvas copies: live, on their own branch. Green: running code, unlike the violet explorations. */
+  .cv-copy .cv-tag { background: #4ade80; color: #0b2414; }
+  .cv-copy .cv-head .cv-meta { padding: 0 calc(6px * var(--iz)); border-radius: calc(4px * var(--iz)); background: rgba(74,222,128,.14); color: #86efac; }
+  .cv-copy .cv-body { box-shadow: 0 0 0 calc(1px * var(--iz)) rgba(74,222,128,.55), 0 16px 48px rgba(0,0,0,.45); }
+  .cv-copy.live .cv-body { box-shadow: 0 0 0 calc(2px * var(--iz)) #4ade80, 0 16px 48px rgba(0,0,0,.45); }
+  .cv-copy.live .cv-body iframe { pointer-events: auto; }
+  .cv-copy .cv-flag { background: rgba(74,222,128,.1); color: #bbf7d0; box-shadow: inset 0 0 0 calc(1px * var(--iz)) rgba(74,222,128,.4); }
+  .cv-copy .cv-flag.busy { background: rgba(167,139,250,.14); color: #ddd6fe; box-shadow: inset 0 0 0 calc(1px * var(--iz)) rgba(167,139,250,.5); }
+  .cv-copy .cv-actions button.primary { background: #4ade80; color: #0b2414; }
+  .cv-screen .cv-actions { opacity: 0; transition: opacity .15s; }
+  .cv-screen:hover .cv-actions, .cv-screen.selected .cv-actions { opacity: 1; }
+  .cp-state { display: grid; justify-items: center; gap: calc(10px * var(--iz)); max-width: 80%; text-align: center; }
+  .cp-state small { color: rgba(255,255,255,.4); font-size: calc(11.5px * var(--iz)); text-wrap: pretty; }
+  .cp-state button { height: calc(30px * var(--iz)); padding: 0 calc(14px * var(--iz)); border: 0; border-radius: calc(8px * var(--iz)); background: #4ade80; color: #0b2414; font: 600 calc(12.5px * var(--iz)) system-ui, -apple-system, sans-serif; cursor: pointer; }
+  .cn-actions button.danger { background: #f87171; color: #2a0b0b; font-weight: 600; }
+  .cn-actions button:disabled { opacity: .5; cursor: default; }
+  .cp-pop p b { color: #fff; font-weight: 600; }
+  .cp-pop .cn-actions button.primary { background: #4ade80; color: #0b2414; }
+  .copy-label { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; margin-left: 4px; border-radius: 6px; background: rgba(74,222,128,.12); color: #86efac; font-weight: 600; white-space: nowrap; }
+  .copy-label[hidden] { display: none; }
+  .copy-label b { color: #fff; font-weight: 600; }
+  .copy-label span { color: rgba(134,239,172,.75); font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+  .toolbar .dup { margin-left: 4px; }
+  .toolbar .dup[hidden], .toolbar .canvas-toggle[hidden] { display: none; }
   .cv-new { width: 320px; display: grid; gap: 10px; }
   .cv-new h4 { margin: 0; font: 600 13px system-ui, -apple-system, sans-serif; color: #fff; }
   .cv-new p { margin: -4px 0 0; color: rgba(255,255,255,.55); font: 12px/1.45 system-ui, -apple-system, sans-serif; text-wrap: pretty; }
@@ -853,7 +880,9 @@ export function studioPage(appPath) {
           <button class="next" data-icon="chevron-right" title="Next screen (→)">›</button>
           <button class="pages-toggle" data-icon="list" title="Screens and routes">☰</button>
           <button class="overview" data-icon="grid" title="All screens at a glance">▦</button>
-          <button class="canvas-toggle" data-icon="canvas" title="Canvas: every screen as a picture with your pinned explorations beside it and the flow between screens. Double-click a screen to work on it">Canvas</button>
+          <button class="canvas-toggle" data-icon="chevron-left" data-label="Canvas" title="Back to the canvas (Esc)">Canvas</button>
+          <span class="copy-label" hidden title="A copy of your app on its own branch: changes here stay in it until you apply it from the canvas">Copy <b></b><span></span></span>
+          <button class="dup" title="Duplicate this screen: a real copy of your app on its own branch, live on the canvas, to change by hand or by prompt">Duplicate</button>
         </span>
       </span>
       <span class="tb-group focus-tools">
@@ -921,6 +950,7 @@ export function studioPage(appPath) {
 <div class="gallery" hidden></div>
 <div class="phone-pop" hidden></div>
 <div class="guides-pop cv-new" hidden></div>
+<div class="guides-pop cv-new cp-pop" hidden></div>
 <div class="rv-progress" hidden></div>
 <div class="vs-pop" hidden></div>
 <script>
@@ -974,12 +1004,14 @@ export function studioPage(appPath) {
   const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
   const $ = (s) => document.querySelector(s);
+  const COPY = ${copyJson};
   const viewport = $(".viewport"), world = $(".world");
   const VIEW_KEY = "ui-tweaks:studio-view";
   let view = { grid: false, base: false, pages: false, cam: null, mode: "focus", focus: null };
   try { view = { ...view, ...JSON.parse(localStorage.getItem(VIEW_KEY) || "{}") }; } catch {}
   view.vsMode = "interact"; // the studio opens in Interact: the app works as usual until V (or Inspect) picks elements
-  if (view.mode !== "canvas") view.mode = "focus"; // one screen at a time at its real size, or the canvas
+  // The canvas is home; a screen opens from it at its real size (Canvas, or Esc, goes back). A copy's own studio is one screen.
+  view.mode = COPY ? "focus" : "canvas";
   const saveView = () => { try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch {} };
 
   // ---------- pop-up placement ----------
@@ -1016,6 +1048,7 @@ export function studioPage(appPath) {
   let canvas = { artboards: [], notes: [], arrows: [] };
   let version = -1, saving = null, dirty = false;
   function save() {
+    if (COPY) return; // a copy's studio shows its one screen; the canvas is the project's
     dirty = true;
     clearTimeout(saving);
     saving = setTimeout(async () => {
@@ -1028,7 +1061,7 @@ export function studioPage(appPath) {
   }
   // Claude (or you, in an editor) can change canvas.json: pick that up.
   setInterval(async () => {
-    if (dirty) return;
+    if (dirty || COPY) return;
     try {
       const data = await fetch("/__ui-tweaks/canvas", { cache: "no-store" }).then((r) => r.json());
       if (data.version !== version && !dirty) {
@@ -2313,12 +2346,13 @@ export function studioPage(appPath) {
   // Every screen as a picture (a static snapshot, light enough for dozens), your pinned explorations beside
   // the screen they came from with a line back to it, and the flow map's taps as arrows between screens.
   // Double-click a screen to work on it live; a variation's More like this branches off it.
-  const cv = { cards: new Map(), queue: [], capturing: false, sel: null, timer: null, flows: [], flowsAt: 0 };
+  const cv = { cards: new Map(), queue: [], capturing: false, sel: null, timer: null, flows: [], flowsAt: 0, copies: [], live: null, copiesAt: 0, autoStarted: false };
   const isCanvas = () => view.mode === "canvas";
+  const urlPath = (u) => { try { const x = new URL(u || "/", location.origin); return x.pathname + x.search; } catch { return u || "/"; } };
   const CV_GAP = 64;
   const cvVariants = () => (canvas.variants ||= []);
   const cvPending = () => (canvas.pending ||= []);
-  const itemById = (id) => canvas.artboards.find((a) => a.id === id) || cvVariants().find((v) => v.id === id) || null;
+  const itemById = (id) => canvas.artboards.find((a) => a.id === id) || cvVariants().find((v) => v.id === id) || (cv.copies || []).find((c) => c.id === id) || null;
   const isScreen = (it) => canvas.artboards.includes(it);
   function itemRect(it) {
     const [w, h] = isScreen(it) ? size(it) : (it.req && it.req.size) || [390, 844];
@@ -2330,7 +2364,7 @@ export function studioPage(appPath) {
   }
   // The first free place to the right of (x, y), clear of every screen, variation and placeholder.
   function freeSpot(x, y, w, h) {
-    const rects = [...canvas.artboards, ...cvVariants()].map(itemRect).concat(cvPending().map((p) => ({ x: p.x, y: p.y, w: p.w || 390, h: p.h || 844 })));
+    const rects = [...canvas.artboards, ...cvVariants(), ...(cv.copies || [])].map(itemRect).concat(cvPending().map((p) => ({ x: p.x, y: p.y, w: p.w || 390, h: p.h || 844 })));
     for (let i = 0; i < 400; i++) {
       if (!rects.some((r) => x < r.x + r.w + 40 && x + w + 40 > r.x && y < r.y + r.h + 72 && y + h + 72 > r.y)) return { x: Math.round(x / 8) * 8, y };
       x += 40;
@@ -2410,6 +2444,7 @@ export function studioPage(appPath) {
     for (const [cid, c] of cv.cards) c.el.classList.toggle("selected", cid === id);
   }
   function cvOpen(it) {
+    if (it && cv.copies.includes(it)) return cpOpen(it);
     const a = rootArtboard(it);
     if (!a) return;
     select(a.id);
@@ -2419,7 +2454,7 @@ export function studioPage(appPath) {
     const el = document.createElement("div");
     el.className = "cv-card cv-" + kind;
     // Your app's screens (in code) are plain; explorations say so in the header and on the card.
-    el.innerHTML = '<div class="cv-head">' + (kind === "screen" ? "" : '<span class="cv-tag">' + (it.concept ? "Concept" : "Exploration") + "</span>") + '<span class="cv-name"></span><span class="cv-meta"></span></div><div class="cv-body"></div>' + (kind === "variant" ? '<div class="cv-actions"><span class="cv-flag"></span></div>' : "");
+    el.innerHTML = '<div class="cv-head">' + (kind === "screen" ? "" : '<span class="cv-tag">' + (kind === "copy" ? "Copy" : it.concept ? "Concept" : "Exploration") + "</span>") + '<span class="cv-name"></span><span class="cv-meta"></span></div><div class="cv-body"></div>' + (kind === "variant" || kind === "copy" ? '<div class="cv-actions"><span class="cv-flag"></span></div>' : kind === "screen" ? '<div class="cv-actions"></div>' : "");
     const card = { el, kind, id: it.id, body: el.querySelector(".cv-body"), shown: null };
     // Drag the header to move it (8px grid); its branch lines follow.
     el.querySelector(".cv-head").addEventListener("pointerdown", (e) => {
@@ -2438,13 +2473,32 @@ export function studioPage(appPath) {
         el.style.top = target.y + "px";
         drawLinks();
       };
-      const up = () => { head.removeEventListener("pointermove", move); head.removeEventListener("pointerup", up); save(); };
+      if (kind === "copy") target.dragging = true;
+      const up = () => {
+        head.removeEventListener("pointermove", move);
+        head.removeEventListener("pointerup", up);
+        if (kind !== "copy") return save();
+        cpCall("PATCH", "/__ui-tweaks/copies/" + it.id, { x: target.x, y: target.y }).catch(() => {}).finally(() => { target.dragging = false; });
+      };
       head.addEventListener("pointermove", move);
       head.addEventListener("pointerup", up);
     });
     if (kind !== "pending") {
       el.addEventListener("pointerdown", (e) => { if (!e.target.closest("button")) cvSelect(it.id); });
       el.addEventListener("dblclick", (e) => { if (!e.target.closest("button")) cvOpen(itemById(it.id)); });
+    }
+    if (kind === "screen") {
+      const b = Object.assign(document.createElement("button"), { textContent: "Duplicate", title: "A real copy of your app on its own branch, live beside this screen: change it by hand or by prompt, then apply it to a new branch" });
+      b.addEventListener("click", (e) => { e.stopPropagation(); cpDuplicate(itemById(it.id)); });
+      el.querySelector(".cv-actions").append(b);
+    }
+    if (kind === "copy") {
+      const actions = el.querySelector(".cv-actions");
+      const btn = (text, title, run, cls) => { const b = Object.assign(document.createElement("button"), { textContent: text, title }); if (cls) b.className = cls; b.addEventListener("click", (e) => { e.stopPropagation(); const c = itemById(it.id); if (c) run(c, b); }); actions.insertBefore(b, actions.querySelector(".cv-flag")); };
+      btn("Prompt", "Ask Claude to change this copy", cpPrompt, "primary");
+      btn("Edit", "Open it in its own studio to tweak by hand (Back returns here)", cpEdit);
+      btn("Apply", "Commit what changed to its branch and put the copy away", cpApply);
+      btn("Delete", "Delete the copy and its branch", cpDelete);
     }
     if (kind === "variant") {
       const actions = el.querySelector(".cv-actions");
@@ -2462,6 +2516,7 @@ export function studioPage(appPath) {
     const r = itemRect(it);
     Object.assign(card.el.style, { left: r.x + "px", top: r.y + "px" });
     Object.assign(card.body.style, { width: r.w + "px", height: r.h + "px" });
+    if (card.kind === "copy") return fillCopy(card, it);
     if (card.kind === "screen") {
       card.el.querySelector(".cv-name").textContent = it.name || it.url;
       card.el.querySelector(".cv-meta").textContent = r.w + "×" + r.h;
@@ -2504,16 +2559,18 @@ export function studioPage(appPath) {
       world.prepend(cv.layer);
     }
     cv.layer.hidden = !isCanvas();
-    $(".canvas-toggle").classList.toggle("on", isCanvas());
+    $(".canvas-toggle").hidden = isCanvas();
+    $(".dup").hidden = isCanvas() || !!COPY; // on the canvas each screen has its own Duplicate
     drawCvBar();
     if (!isCanvas()) return;
     // Placeholders for asks still on the way take their spot beside their parent.
     for (const p of cvPending()) if (p.x === undefined) { const par = itemById(p.parent) || itemById(p.anchor); if (par) { const r = itemRect(par); const [w, h] = (p.req && p.req.size) || [r.w, r.h]; Object.assign(p, freeSpot(r.x + r.w + CV_GAP, r.y, w, h), { w, h }); } }
-    const items = [...canvas.artboards.map((it) => ["screen", it]), ...cvVariants().map((it) => ["variant", it]), ...cvPending().map((p) => ["pending", { ...p, req: { size: [p.w || 390, p.h || 844] } }])];
+    const items = [...canvas.artboards.map((it) => ["screen", it]), ...cvVariants().map((it) => ["variant", it]), ...cvPending().map((p) => ["pending", { ...p, req: { size: [p.w || 390, p.h || 844] } }]), ...cv.copies.map((it) => ["copy", it])];
     const ids = new Set(items.map(([, it]) => it.id));
     for (const [id, c] of cv.cards) if (!ids.has(id)) { c.el.remove(); cv.cards.delete(id); }
     for (const [kind, it] of items) fillCard(cv.cards.get(it.id) || makeCard(kind, it), it);
     cvSelect(cv.sel);
+    cpLive(cv.live && cv.copies.some((c) => c.id === cv.live && c.status === "ready") ? cv.live : null);
     drawLinks();
     if (canvas.artboards.some((a) => !a.snap)) queuePictures(false);
     if (cvPending().length) { clearTimeout(cv.timer); cv.timer = setTimeout(pollCanvas, 1500); }
@@ -2533,7 +2590,7 @@ export function studioPage(appPath) {
       return ["M" + x1 + " " + y1 + " C" + x1 + " " + top + " " + x2 + " " + top + " " + x2 + " " + y2, (x1 + x2) / 2, top + 20 / z];
     };
     let branch = "";
-    for (const v of [...cvVariants(), ...cvPending()]) {
+    for (const v of [...cvVariants(), ...cvPending(), ...cv.copies]) {
       const p = itemById(v.parent);
       if (!p) continue;
       const [d] = curve(itemRect(p), { x: v.x, y: v.y, w: v.w || itemRect(v).w, h: v.h || itemRect(v).h });
@@ -2576,18 +2633,190 @@ export function studioPage(appPath) {
     const n = cvVariants().length;
     bar.querySelector(".cv-count").textContent = canvas.artboards.length + " screens" + (n ? " · " + n + " variation" + (n === 1 ? "" : "s") : "") + (cv.queue.length ? " · picturing " + cv.queue.length + "…" : "");
   }
-  function fitCanvas() {
-    const rects = [...canvas.artboards, ...cvVariants()].map(itemRect);
+  function fitCanvas(tries = 0) {
+    // Not laid out yet (the first frame of a page load): once it is.
+    if (viewport.clientHeight < 240 || viewport.clientWidth < 240) { if (tries < 30) setTimeout(() => fitCanvas(tries + 1), 100); return; }
+    const rects = [...canvas.artboards, ...cvVariants(), ...cv.copies].map(itemRect);
     if (!rects.length) return;
     const x = Math.min(...rects.map((r) => r.x)), y = Math.min(...rects.map((r) => r.y)) - 40;
     const w = Math.max(...rects.map((r) => r.x + r.w)) - x, h = Math.max(...rects.map((r) => r.y + r.h)) - y;
     const z = Math.min(1, (viewport.clientWidth - 96) / w, (viewport.clientHeight - 120) / h);
     // Clear of the canvas bar at the top.
-    cam = { z: Math.min(z, (viewport.clientHeight - 150) / h), x: 0, y: 0 };
+    cam = { z: Math.max(0.02, Math.min(z, (viewport.clientHeight - 150) / h)), x: 0, y: 0 };
     cam.x = (viewport.clientWidth - w * cam.z) / 2 - x * cam.z;
     cam.y = 76 - y * cam.z;
     applyCam();
   }
+
+  // ---------- copies ----------
+  // Duplicate a screen: a real copy of the app (its own branch tweak/<name>, checkout and dev server) on the
+  // canvas, live. Double-click it to use it in place; Prompt asks Claude to change it, Edit opens it in its own
+  // studio for hand tweaks; Apply commits what changed to its branch, Delete drops it. Your checkout isn't touched.
+  const CP_STATUS = { copying: "Copying the app…", preparing: "Getting it ready…", installing: "Installing its dependencies…", starting: "Starting its dev server…", stopped: "Paused", failed: "It didn’t start" };
+  function cpSize(c) {
+    const parent = canvas.artboards.find((a) => a.id === c.from);
+    return parent ? size(parent) : size({ device: c.device || "i16" });
+  }
+  async function cpLoad() {
+    clearTimeout(cpLoad.timer);
+    try {
+      const [list, status] = await Promise.all([
+        fetch("/__ui-tweaks/copies", { cache: "no-store" }).then((r) => r.json()),
+        fetch("/__ui-tweaks/status", { cache: "no-store" }).then((r) => r.json()).catch(() => ({})),
+      ]);
+      const asks = status.asks || [];
+      const old = new Map(cv.copies.map((c) => [c.id, c]));
+      cv.copies = (list.copies || []).map((c) => {
+        const mine = asks.filter((a) => a.dir === c.dir);
+        const busy = mine.some((a) => a.status === "waiting" || a.status === "running");
+        const was = old.get(c.id);
+        // A drag in progress keeps its place until it's saved.
+        const pos = was && was.dragging ? { x: was.x, y: was.y, dragging: true } : {};
+        return { ...c, ...pos, parent: c.from, busy, req: { size: cpSize(c) } };
+      });
+      if (!cv.autoStarted) {
+        cv.autoStarted = true;
+        // After a restart the copies are paused: the newest few start again on their own.
+        cv.copies.filter((c) => c.status === "stopped" && !c.missing).sort((a, b) => b.at - a.at).slice(0, 3).forEach((c) => cpStart(c, true));
+      }
+    } catch {}
+    cv.copiesAt = Date.now();
+    if (isCanvas()) drawCanvas();
+    const settling = cv.copies.some((c) => c.busy || !["ready", "stopped", "failed"].includes(c.status));
+    cpLoad.timer = setTimeout(cpLoad, settling ? 1500 : 5000);
+  }
+  async function cpCall(method, url, body) {
+    const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(out.error || "Something went wrong");
+    return out;
+  }
+  async function cpDuplicate(a) {
+    if (!a) return;
+    const [w, h] = size(a);
+    const pr = itemRect(a);
+    const spot = freeSpot(pr.x + pr.w + CV_GAP, pr.y, w, h);
+    try {
+      const c = await cpCall("POST", "/__ui-tweaks/copies", { name: (a.name || a.url) + " copy", url: a.url, device: a.device, from: a.id, x: spot.x, y: spot.y });
+      note("Copying the app for “" + c.name + "” on the branch " + c.branch + ". It appears live on the canvas when its dev server is up.");
+      if (!isCanvas()) setMode("canvas");
+      await cpLoad();
+    } catch (e) { note("Couldn’t make a copy: " + e.message); }
+  }
+  async function cpStart(c, quiet) {
+    try { await cpCall("POST", "/__ui-tweaks/copies/" + c.id + "/start"); if (!quiet) note("Starting “" + c.name + "”…"); } catch (e) { if (!quiet) note("Couldn’t start it: " + e.message); }
+    cpLoad();
+  }
+  function cpLive(id) {
+    cv.live = id;
+    for (const [cid, card] of cv.cards) card.el.classList.toggle("live", card.kind === "copy" && cid === id);
+  }
+  function cpOpen(c) {
+    if (!c) return;
+    if (c.status !== "ready") return c.status === "stopped" || c.status === "failed" ? cpStart(c) : note(CP_STATUS[c.status] || "Not ready yet");
+    cvSelect(c.id);
+    cpLive(c.id);
+    const r = itemRect(c);
+    // Zoom in on it: the canvas is the focus view.
+    const z = Math.min(1, (viewport.clientWidth - 120) / r.w, (viewport.clientHeight - 150) / r.h);
+    cam = { z, x: (viewport.clientWidth - r.w * z) / 2 - r.x * z, y: 96 - r.y * z };
+    applyCam();
+  }
+  function cpPop(button, html) {
+    const pop = $(".cp-pop");
+    pop.innerHTML = html;
+    anchorPop(pop, button, 320);
+    pop.hidden = false;
+    // The actions sit under the copy, often near the bottom: open upward when there's no room below.
+    const r = button.getBoundingClientRect();
+    if (r.bottom + 6 + pop.offsetHeight > innerHeight - 8) pop.style.top = Math.max(8, Math.round(r.top - 6 - pop.offsetHeight)) + "px";
+    pop.querySelector(".cn-cancel").addEventListener("click", () => { pop.hidden = true; });
+    return pop;
+  }
+  function cpPrompt(c, button) {
+    const pop = cpPop(button, '<h4>Ask Claude to change this copy</h4><p>Claude edits the copy on <b>' + esc(c.branch) + '</b>; you see it change live. Your checkout isn’t touched.</p><textarea rows="4" placeholder="e.g. Make the QR card the hero: bigger, centred, with the next event under it"></textarea><div class="cn-actions"><button class="cn-cancel">Cancel</button><button class="cn-go primary">Ask Claude</button></div>');
+    const ta = pop.querySelector("textarea");
+    ta.focus();
+    ta.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) pop.querySelector(".cn-go").click(); if (e.key === "Escape") pop.hidden = true; });
+    pop.querySelector(".cn-go").addEventListener("click", async () => {
+      const instruction = ta.value.trim();
+      if (!instruction) return ta.focus();
+      try {
+        await cpCall("POST", "/__ui-tweaks/ask", { kind: "edit", instruction, dir: c.dir, page: { url: c.path } });
+        pop.hidden = true;
+        note("Claude is changing “" + c.name + "”. It updates live on the canvas.");
+        cpLoad();
+      } catch (e) { note("Couldn’t ask Claude: " + e.message); }
+    });
+  }
+  function cpApply(c, button) {
+    if (!c.changed) return note("Nothing has changed in “" + c.name + "” yet: tweak it or ask Claude first.");
+    const pop = cpPop(button, '<h4>Apply to a new branch</h4><p>Commits the ' + c.changed + ' changed file' + (c.changed === 1 ? "" : "s") + ' to <b>' + esc(c.branch) + '</b> and puts the copy away. Your checkout isn’t touched: merge the branch or open a pull request from it when you’re ready.' + (c.carried ? " Its first commit holds the uncommitted work you had when you made the copy." : "") + '</p><div class="cn-actions"><button class="cn-cancel">Cancel</button><button class="cn-go primary">Apply</button></div>');
+    pop.querySelector(".cn-go").addEventListener("click", async (e) => {
+      e.currentTarget.disabled = true;
+      try {
+        const out = await cpCall("POST", "/__ui-tweaks/copies/" + c.id + "/apply", {});
+        pop.hidden = true;
+        note("Committed " + out.files.length + " file" + (out.files.length === 1 ? "" : "s") + " to " + out.branch + " (" + out.sha + "). Merge it when you’re ready: git merge " + out.branch);
+        if (cv.live === c.id) cpLive(null);
+        cpLoad();
+      } catch (err) { e.currentTarget.disabled = false; note("Couldn’t apply it: " + err.message); }
+    });
+  }
+  function cpDelete(c, button) {
+    const pop = cpPop(button, '<h4>Delete “' + esc(c.name) + '”?</h4><p>Removes the copy and its branch <b>' + esc(c.branch) + '</b>, with everything explored in it. This can’t be undone.</p><div class="cn-actions"><button class="cn-cancel">Cancel</button><button class="cn-go danger">Delete</button></div>');
+    pop.querySelector(".cn-go").addEventListener("click", async () => {
+      try {
+        await cpCall("DELETE", "/__ui-tweaks/copies/" + c.id);
+        pop.hidden = true;
+        if (cv.live === c.id) cpLive(null);
+        note("Deleted “" + c.name + "” and its branch.");
+        cpLoad();
+      } catch (e) { note("Couldn’t delete it: " + e.message); }
+    });
+  }
+  function cpEdit(c) {
+    if (c.status !== "ready") return cpOpen(c);
+    // Its own studio (its own dev server runs the kit): the docked panel, Inspect, Send; Back returns here.
+    location.href = c.url + "/__ui-tweaks/studio?path=" + encodeURIComponent(c.path || "/");
+  }
+  function fillCopy(card, c) {
+    card.el.querySelector(".cv-name").textContent = c.name;
+    card.el.querySelector(".cv-meta").textContent = c.branch;
+    card.el.title = "A copy of your app on the branch " + c.branch + ": double-click to use it here";
+    const flag = card.el.querySelector(".cv-flag");
+    flag.textContent = c.busy ? "Claude is working…" : c.changed ? c.changed + " file" + (c.changed === 1 ? "" : "s") + " changed" : "No changes yet";
+    flag.classList.toggle("busy", !!c.busy);
+    const src = c.status === "ready" && c.url ? c.url + (c.path || "/") : "";
+    const key = src || c.status + "|" + (c.error || "");
+    if (card.shown === key) return;
+    card.shown = key;
+    card.body.innerHTML = "";
+    const [w, h] = c.req.size;
+    if (src) {
+      const f = Object.assign(document.createElement("iframe"), { src, title: c.name });
+      Object.assign(f.style, { width: w + "px", height: h + "px" });
+      card.body.append(f);
+      return;
+    }
+    const wait = Object.assign(document.createElement("div"), { className: "cv-wait" });
+    const box = document.createElement("div");
+    box.className = "cp-state";
+    box.append(Object.assign(document.createElement("span"), { textContent: c.missing ? "Its folder is gone" : CP_STATUS[c.status] || c.status }));
+    if (c.status === "failed" && c.error) box.append(Object.assign(document.createElement("small"), { textContent: c.error }));
+    if ((c.status === "stopped" || c.status === "failed") && !c.missing) {
+      const b = Object.assign(document.createElement("button"), { textContent: c.status === "failed" ? "Try again" : "Start" });
+      b.addEventListener("click", (e) => { e.stopPropagation(); cpStart(c); });
+      box.append(b);
+    }
+    wait.append(box);
+    card.body.append(wait);
+  }
+  // Leave a live copy by clicking anywhere else, or Esc.
+  viewport.addEventListener("pointerdown", (e) => { if (cv.live && !e.target.closest(".cv-copy.live")) cpLive(null); }, true);
+  addEventListener("keydown", (e) => { if (e.key === "Escape" && cv.live) cpLive(null); });
+  addEventListener("pointerdown", (e) => { const pop = $(".cp-pop"); if (!pop.hidden && !e.target.closest(".cp-pop, .cv-actions")) pop.hidden = true; });
+  if (!COPY) cpLoad();
 
   // ---------- acting on a variation ----------
   function cvUse(it) {
@@ -2711,13 +2940,22 @@ export function studioPage(appPath) {
     if ((e.key === "Backspace" || e.key === "Delete") && cv.sel && cvVariants().some((v) => v.id === cv.sel)) { e.preventDefault(); cvRemove(cv.sel); }
     if (e.key === "Enter" && cv.sel) { const it = itemById(cv.sel); if (it) cvOpen(it); }
   });
-  $(".canvas-toggle").addEventListener("click", () => {
+  function toCanvas() {
+    if (COPY) { location.href = COPY.back; return; }
     const first = !view.canvasSeen;
     view.canvasSeen = true;
-    setMode(isCanvas() ? "focus" : "canvas");
-    if (isCanvas() && first) setTimeout(fitCanvas, 0);
-  });
-  $(".cv-bar .cv-fit").addEventListener("click", fitCanvas);
+    setMode("canvas");
+    if (first) setTimeout(fitCanvas, 0);
+  }
+  $(".canvas-toggle").addEventListener("click", toCanvas);
+  $(".dup").addEventListener("click", () => cpDuplicate(canvas.artboards.find((a) => a.id === focusedId())));
+  // Esc from a screen goes back to the canvas (when nothing else is open to close first).
+  addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !isFocus() || COPY || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+    if (document.querySelector(".guides-pop:not([hidden]), .vs-pop:not([hidden]), .overview-pop:not([hidden]), .rv-pop:not([hidden]), .explore:not([hidden]), .ck-all:not([hidden]), .gallery:not([hidden])")) return;
+    toCanvas();
+  }, true);
+  $(".cv-bar .cv-fit").addEventListener("click", () => fitCanvas());
   $(".cv-bar .cv-concept").addEventListener("click", (e) => openConceptForm(e.currentTarget));
   addEventListener("pointerdown", (e) => { const pop = $(".cv-new"); if (!pop.hidden && !e.target.closest(".cv-new, .cv-concept")) pop.hidden = true; });
   $(".cv-bar .cv-refresh").addEventListener("click", () => { queuePictures(true); note("Taking a fresh picture of every screen, one at a time…"); });
@@ -3293,15 +3531,28 @@ export function studioPage(appPath) {
     if (isFocus()) { render(); applyCam(); }
   }).observe(viewport);
   (async () => {
-    try {
-      const data = await fetch("/__ui-tweaks/canvas", { cache: "no-store" }).then((r) => r.json());
-      canvas = data.canvas;
-      version = data.version;
-    } catch {}
-    // Opened from a page that isn't on the canvas yet: add it.
-    if (${src} !== "/" && !canvas.artboards.some((a) => a.url === ${src})) canvas.artboards.push({ id: newId(), name: ${src}, device: (canvas.artboards[0] || {}).device || "i16", url: ${src}, ...place() });
+    if (COPY) canvas = { artboards: [{ id: "copy", name: COPY.name, device: COPY.device || "i16", url: ${src}, x: 0, y: 0 }], notes: [], arrows: [] };
+    else {
+      try {
+        const data = await fetch("/__ui-tweaks/canvas", { cache: "no-store" }).then((r) => r.json());
+        canvas = data.canvas;
+        version = data.version;
+      } catch {}
+      // Opened from a page that isn't on the canvas yet: add it.
+      if (${src} !== "/" && !canvas.artboards.some((a) => a.url === ${src})) canvas.artboards.push({ id: newId(), name: ${src}, device: (canvas.artboards[0] || {}).device || "i16", url: ${src}, ...place() });
+    }
+    if (COPY) {
+      view.focus = "copy";
+      document.title = COPY.name + " · copy";
+      const label = $(".copy-label");
+      label.hidden = false;
+      label.querySelector("b").textContent = COPY.name;
+      label.querySelector("span").textContent = COPY.branch;
+      $(".dup").hidden = true;
+    }
     render();
-    if (!view.cam) fitTo(canvas.artboards);
+    if (isCanvas() && (!view.canvasSeen || !(cam.z > 0))) { view.canvasSeen = true; saveView(); setTimeout(fitCanvas, 0); }
+    else if (!view.cam) fitTo(canvas.artboards);
     else applyCam();
     loadPages();
   })();
@@ -3369,7 +3620,10 @@ export async function announceServer(root, url) {
  * Connect-style middleware. `getVersion` (optional) returns a number that changes when
  * the served files change; the overlay reloads the page when it does (static mode only).
  */
-export function createTweaksHandler({ root, getVersion, commit = false }) {
+export function createTweaksHandler({ root, getVersion, commit = false, copyOf = null }) {
+  // In a canvas copy's own dev server, copyOf is the project it was copied from: asks go to the project's
+  // queue (where Claude listens), marked to run in this copy.
+  const askRoot = copyOf || root;
   return async function handle(req, res, next) {
     const url = new URL(req.url, "http://localhost");
     if (!url.pathname.startsWith(PREFIX)) return next();
@@ -3542,11 +3796,35 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
           return send(res, error.status || 500, { error: error.message });
         }
       }
+      // Canvas copies: a real copy of the app (its own branch, checkout and dev server) to explore a design in.
+      if (!copyOf && (url.pathname === `${PREFIX}/copies` || url.pathname.startsWith(`${PREFIX}/copies/`))) {
+        try {
+          const [, id, action] = url.pathname.slice(`${PREFIX}/copies`.length).split("/");
+          const body = req.method === "GET" || req.method === "DELETE" ? {} : JSON.parse((await readBody(req, 20_000)) || "{}");
+          if (!id && req.method === "GET") return send(res, 200, { copies: await listCopies(root) });
+          if (!id && req.method === "POST") return send(res, 200, await createCopy(root, body));
+          if (id && req.method === "POST" && action === "start") return send(res, 200, await startCopy(root, id));
+          if (id && req.method === "POST" && action === "stop") return send(res, 200, { ok: stopCopy(root, id) });
+          if (id && req.method === "POST" && action === "apply") return send(res, 200, await applyCopy(root, id, body));
+          if (id && req.method === "PATCH") return send(res, 200, await moveCopy(root, id, body));
+          if (id && req.method === "DELETE") return send(res, 200, await deleteCopy(root, id));
+          return send(res, 404, { error: "unknown copies route" });
+        } catch (error) {
+          return send(res, error.status || 500, { error: error.message });
+        }
+      }
       if (req.method === "GET" && url.pathname === `${PREFIX}/routes`) {
         return send(res, 200, await findRoutes(root));
       }
       if (req.method === "GET" && url.pathname === `${PREFIX}/studio`) {
-        return send(res, 200, studioPage(url.searchParams.get("path") || "/"), "text/html; charset=utf-8");
+        let copy = null;
+        if (copyOf) {
+          const c = await copyAt(copyOf, root);
+          let back = "/";
+          try { back = JSON.parse(await fs.readFile(path.join(tweaksDir(copyOf), "server.json"), "utf8")).url + "/__ui-tweaks/studio"; } catch {}
+          copy = { name: c ? c.name : path.basename(root), branch: c ? c.branch : "", device: c ? c.device : null, back };
+        }
+        return send(res, 200, studioPage(url.searchParams.get("path") || "/", copy), "text/html; charset=utf-8");
       }
       if (req.method === "GET" && url.pathname === `${PREFIX}/overlay.js`) {
         // The icon set goes in where the overlay asks for it (one set for the panel and the studio).
@@ -3562,9 +3840,9 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
           pendingTweaks: pending.batches.flatMap((b) => (b.tweaks || []).map((t, i) => ({ id: t.id || `${b.id}-${i}`, skipped: t.skipped }))),
           version: getVersion ? getVersion() : null,
           update: updateStatus(),
-          asks: await askStatus(root),
-          running: await readRunning(root),
-          listener: await readListener(root),
+          asks: copyOf ? (await askStatus(askRoot)).filter((a) => a.dir === root) : await askStatus(root),
+          running: await readRunning(askRoot),
+          listener: await readListener(askRoot),
         });
       }
       if (url.pathname === `${PREFIX}/design-tokens` && req.method === "POST") {
@@ -3630,7 +3908,11 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
           ...direct.applied.map((a) => ({ at: batch.createdAt, id: a.id, element: label(byId.get(a.id)), by: "direct", outcome: "applied", props: [...a.props, ...(a.text ? ["text"] : [])], files: a.files })),
           ...direct.remaining.map((t) => ({ at: batch.createdAt, id: t.id, element: label(t), by: "direct", outcome: "sent to Haiku", props: Object.keys(t.changes || {}), reason: t.directSkip })),
         ]);
-        if (direct.remaining.length) {
+        if (direct.remaining.length && copyOf) {
+          // In a canvas copy, what can't be written directly goes to Claude as a design change in the copy.
+          const list = direct.remaining.map(({ directSkip, ...t }) => t);
+          await addAsk(askRoot, { kind: "edit", dir: root, instruction: ("Apply these tweaks made by hand in the browser (each has the element with its source location, and what to change)." + (batch.note ? " Note: " + batch.note : "") + " " + JSON.stringify(list)).slice(0, 24000), page: { url: (batch.page && batch.page.path) || "/" } });
+        } else if (direct.remaining.length) {
           const pending = await readPending(root);
           pending.batches.push({ ...batch, tweaks: direct.remaining });
           await writePending(root, pending);
@@ -3660,13 +3942,14 @@ export function createTweaksHandler({ root, getVersion, commit = false }) {
       }
       if (req.method === "POST" && url.pathname === `${PREFIX}/ask`) {
         try {
-          return send(res, 200, { ok: true, ask: await addAsk(root, JSON.parse(await readBody(req))) });
+          const body = JSON.parse(await readBody(req));
+          return send(res, 200, { ok: true, ask: await addAsk(askRoot, copyOf ? { ...body, dir: root } : body) });
         } catch (error) {
           return send(res, error.status || 500, { error: error.message });
         }
       }
       if (req.method === "DELETE" && url.pathname.startsWith(`${PREFIX}/ask/`)) {
-        await cancelAsk(root, url.pathname.slice(`${PREFIX}/ask/`.length));
+        await cancelAsk(askRoot, url.pathname.slice(`${PREFIX}/ask/`.length));
         return send(res, 200, { ok: true });
       }
       if (req.method === "DELETE" && url.pathname.startsWith(`${PREFIX}/`)) {

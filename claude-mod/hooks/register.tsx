@@ -197,7 +197,7 @@ Answer with exactly one line of JSON and nothing after it:
 {"variants":[{"name":"<2-4 words>","why":"<one sentence>","changes":[{"target":":scope","prop":"padding","value":"16px 20px"}]},{"name":"<2-4 words>","why":"<one sentence>","html":"<div class=\\"card\\">…</div>","changes":[]}]}`
 
 type Capture = { file: string; title: string; width?: number; height?: number }
-type Ask = { id: string; kind: 'edit' | 'variations' | 'publish' | 'paper' | 'paper-pull' | 'tokens' | 'concept' | 'states'; direction?: 'push' | 'pull'; reference?: { snapshot?: string; url?: string; name?: string; size?: number[] }; from?: string; fromName?: string; instruction: string; file?: string; files?: Capture[]; target?: 'paper' | 'figma'; title?: string; whole?: boolean; refs?: string[]; mode?: 'any' | 'styles' | 'layout' | 'states'; scope?: 'screen'; skills?: string[]; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number }
+type Ask = { id: string; kind: 'edit' | 'variations' | 'publish' | 'paper' | 'paper-pull' | 'tokens' | 'concept' | 'states'; direction?: 'push' | 'pull'; reference?: { snapshot?: string; url?: string; name?: string; size?: number[] }; from?: string; fromName?: string; instruction: string; file?: string; files?: Capture[]; target?: 'paper' | 'figma'; title?: string; whole?: boolean; refs?: string[]; mode?: 'any' | 'styles' | 'layout' | 'states'; scope?: 'screen'; skills?: string[]; element?: { selector?: string; tag?: string; classes?: string[]; text?: string; react?: { jsxSource?: string; components?: unknown[] } } | null; page?: { url?: string } | null; context?: unknown; count?: number; at?: number; dir?: string; branch?: string; copyName?: string }
 type StateItem = { group: string; name: string }
 type AskOutcome = { status: 'running' | 'done' | 'failed'; startedAt?: number; summary?: string; needs?: string; files?: string[]; variants?: unknown[]; error?: string; url?: string; states?: StateItem[]; missing?: string[]; folder?: string }
 
@@ -249,8 +249,12 @@ export function cleanVariants(raw: unknown, max = 4): { name: string; why: strin
     .slice(0, max)
 }
 
-export function askPrompt(ask: Ask, root: string | null, skills: DesignSkill[] = [], chosen: string[] = ask.skills ?? []): string {
-  const where = root ? `The project is ${root}; file paths are relative to it.` : ''
+export function askPrompt(ask: Ask, project: string | null, skills: DesignSkill[] = [], chosen: string[] = ask.skills ?? []): string {
+  // A canvas copy: its own checkout (a git worktree on its own branch) of the project, where the change is explored.
+  const root = ask.dir ?? project
+  const where = ask.dir
+    ? `Work in the canvas copy at ${ask.dir}: a separate checkout of the project${ask.branch ? ` on the git branch ${ask.branch}` : ''}${ask.copyName ? ` (“${ask.copyName}”)` : ''}, made to explore this design. File paths are relative to it. Edit files only inside ${ask.dir}; never touch ${project ?? 'the main checkout'}, and don't commit.`
+    : root ? `The project is ${root}; file paths are relative to it.` : ''
   // Images the person attached in the panel, as direction: the agent looks at each one first.
   const refs = (ask.refs ?? []).filter(r => /^\.ui-tweaks\/refs\/[\w.-]+$/.test(r)).map(r => (root ? `${root}/${r}` : r))
   const refNote = refs.length
@@ -548,7 +552,7 @@ async function startNextAsk($: EngineInterface) {
     snapshots.clear()
     const jsx = /^(.*):\d+$/.exec(next.element?.react?.jsxSource ?? '')
     if (jsx?.[1]) {
-      const file = inProject(jsx[1])
+      const file = next.dir ? `${next.dir}/${jsx[1]}` : inProject(jsx[1])
       const text = await $.fs.read(file).catch(() => null)
       if (text !== null) snapshots.set(file, text)
     }
@@ -557,13 +561,13 @@ async function startNextAsk($: EngineInterface) {
   const startedAt = await $.clock.now()
   await writeOutcome($, next.id, { status: 'running', startedAt })
   // A concept runs like variations: the same agent and JSON answer, nothing edited.
-  await update($, askRun, () => ({ id: next.id, kind: (edits ? 'edit' : 'variations') as 'edit' | 'variations', startedAt, instruction: next.instruction || (next.kind === 'states' ? 'Every state' : '') }))
+  await update($, askRun, () => ({ id: next.id, kind: (edits ? 'edit' : 'variations') as 'edit' | 'variations', startedAt, instruction: next.instruction || (next.kind === 'states' ? 'Every state' : ''), ...(next.dir ? { dir: next.dir } : {}) }))
   const started = await $.agent.spawn({
     subagentType: edits ? DESIGNER : VARIATOR,
     model: 'sonnet',
     description: next.kind === 'edit' ? 'Design change' : next.kind === 'states' ? 'Every state' : next.kind === 'concept' ? 'Concept screen' : 'Design variations',
     prompt: askPrompt(next, projectRoot, skills, chosen),
-    ...(projectRoot ? { cwd: projectRoot } : {}),
+    ...(next.dir ?? projectRoot ? { cwd: next.dir ?? projectRoot! } : {}),
   })
   if ('deny' in started) {
     await writeOutcome($, next.id, { status: 'failed', error: `Could not start: ${String(started.deny)}` })
@@ -614,7 +618,8 @@ async function finishAsk($: EngineInterface, answer: string) {
   let names: string[] = []
   if (current.kind === 'edit') {
     const files = await changedFiles($)
-    await recordApply($, files.length ? 1 : 0, files, 'claude', current.instruction ? `Claude: ${current.instruction}` : undefined)
+    // A canvas copy's changes stay out of the project's History: Apply (to a branch) or Delete is their undo.
+    if (!current.dir) await recordApply($, files.length ? 1 : 0, files, 'claude', current.instruction ? `Claude: ${current.instruction}` : undefined)
     await releaseLock($)
     names = files.map(f => f.path.split('/').at(-1) ?? f.path)
   }

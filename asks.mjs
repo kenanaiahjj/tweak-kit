@@ -57,6 +57,13 @@ export async function addAsk(root, body) {
   const instruction = String((body && body.instruction) || "").trim();
   if (!instruction && kind === "edit") throw Object.assign(new Error("Say what to change"), { status: 400 });
   if (!instruction && kind === "concept") throw Object.assign(new Error("Describe the feature"), { status: 400 });
+  // From a canvas copy: the agent works in the copy's checkout (one of the project's copies, nowhere else).
+  let copy = null;
+  if (body.dir !== undefined && body.dir !== null) {
+    const copies = (await readJson(path.join(dir(root), "copies.json"), { copies: [] })).copies || [];
+    copy = copies.find((c) => c && c.dir === body.dir) || null;
+    if (!copy) throw Object.assign(new Error("That canvas copy is gone"), { status: 400 });
+  }
   const ask = {
     id: `ask${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
     kind,
@@ -79,9 +86,10 @@ export async function addAsk(root, body) {
     ...(kind === "paper" || kind === "paper-pull" || kind === "tokens" ? { target: body.target === "figma" ? "figma" : "paper" } : {}),
     // Reference images attached in the panel (files the dev server saved in .ui-tweaks/refs).
     ...(Array.isArray(body.refs) && body.refs.length ? { refs: body.refs.filter((r) => /^\.ui-tweaks\/refs\/r[a-z0-9]+\.(png|jpg|webp|gif)$/.test(String(r))).slice(0, 6) } : {}),
+    ...(copy ? { dir: copy.dir, branch: copy.branch, copyName: String(copy.name || "").slice(0, 120) } : {}),
     at: Date.now(),
   };
-  if (kind === "states") await provideStateSkill(root);
+  if (kind === "states") await provideStateSkill(copy ? copy.dir : root);
   await fs.mkdir(path.join(dir(root), "asks"), { recursive: true });
   const asks = [...(await readAsks(root)), ask].slice(-KEEP);
   await fs.writeFile(path.join(dir(root), "asks.json"), JSON.stringify({ asks }, null, 2) + "\n");
@@ -123,7 +131,7 @@ async function readStatus(root) {
       const result = await readJson(path.join(dir(root), "asks", `${a.id}.json`), null);
       // A send to a design tool keeps what Pull changes back needs: where, which capture, and its name.
       const design = a.kind === "paper" ? { target: a.target, title: a.title, capture: a.files && a.files[0] && a.files[0].file } : {};
-      return { id: a.id, kind: a.kind, instruction: a.instruction, at: a.at, page: a.page && a.page.url, selector: a.element && a.element.selector, ...design, status: (result && result.status) || "waiting", ...(result || {}) };
+      return { id: a.id, kind: a.kind, instruction: a.instruction, at: a.at, ...(a.dir ? { dir: a.dir } : {}), page: a.page && a.page.url, selector: a.element && a.element.selector, ...design, status: (result && result.status) || "waiting", ...(result || {}) };
     }),
   );
 }

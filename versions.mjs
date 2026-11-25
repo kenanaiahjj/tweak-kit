@@ -10,11 +10,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const git = (cwd, args) =>
+export const git = (cwd, args) =>
   new Promise((resolve) => execFile("git", args, { cwd, maxBuffer: 4 << 20 }, (error, stdout, stderr) => resolve({ ok: !error, out: String(stdout).trim(), err: String(stderr || (error && error.message) || "").trim() })));
 
 const VITE_CONFIGS = ["vite.config.ts", "vite.config.mts", "vite.config.js", "vite.config.mjs", "vite.config.cjs", "vite.config.cts"];
-const LOCKFILES = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"];
+export const LOCKFILES = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"];
 const CONFIG_NAME = "vite.ui-tweaks-version.config.mjs";
 const LOG_LINES = 40;
 
@@ -56,7 +56,11 @@ export const MIRROR_SCRIPT = `(() => {
   if (parent !== window) parent.postMessage({ uit: "mirror-ready" }, "*");
 })();`;
 
-const runs = new Map(); // root -> Map(ref -> run)
+// Kept on globalThis: Vite loads the kit again when it restarts itself (a config file changed), and the
+// running servers must stay known (not orphaned) across that.
+const shared = (globalThis.__uiTweaksRuns ||= { versions: new Map(), copies: new Map(), live: new Set(), watching: false });
+const runs = shared.versions; // root -> Map(ref -> run)
+const live = shared.live; // every run that started a dev server (versions and canvas copies), stopped with this one
 const runsOf = (root) => runs.get(root) || runs.set(root, new Map()).get(root);
 
 /** Branches (local, then remote) with their last commit, and what the project is on now. */
@@ -90,18 +94,22 @@ export function worktreeDir(root, ref) {
  * A Vite config for the version: the project's own config (as that version has it), on its own port and
  * cache, allowed to read the project's node_modules, with the mirror script in its pages.
  */
-export function versionViteConfig({ userConfig, port, mainRoot }) {
+export function versionViteConfig({ userConfig, port, mainRoot, kit = null, cache = ".ui-tweaks-version-vite" }) {
   const load = userConfig ? `import user from "./${userConfig}";\n` : "const user = {};\n";
+  // A canvas copy runs the kit itself (rooted in the copy, its asks sent to the project); a version only mirrors.
+  const extra = kit
+    ? `...kitPlugin({ updateCheck: false, copyOf: ${JSON.stringify(mainRoot)} })`
+    : `{ name: "ui-tweaks:version-mirror", apply: "serve", transformIndexHtml: () => [{ tag: "script", children: MIRROR, injectTo: "body" }] }`;
   return `// Written by the UI tweak kit to run this version next to the one you're editing. Safe to delete.
-${load}const MIRROR = ${JSON.stringify(MIRROR_SCRIPT)};
+${load}${kit ? `import kitPlugin from ${JSON.stringify(kit)};\n` : ""}const MIRROR = ${JSON.stringify(MIRROR_SCRIPT)};
 export default async (env) => {
   const c = (typeof user === "function" ? await user(env) : await user) || {};
   const plugins = [c.plugins || []].flat(Infinity).filter((p) => !(p && typeof p.name === "string" && p.name.startsWith("ui-tweaks")));
   const server = c.server || {};
   return {
     ...c,
-    cacheDir: "node_modules/.ui-tweaks-version-vite",
-    plugins: [...plugins, { name: "ui-tweaks:version-mirror", apply: "serve", transformIndexHtml: () => [{ tag: "script", children: MIRROR, injectTo: "body" }] }],
+    cacheDir: ${JSON.stringify("node_modules/" + cache)},
+    plugins: [...plugins, ${extra}],
     server: { ...server, port: ${port}, strictPort: true, open: false, hmr: server.hmr === false ? false : { ...(typeof server.hmr === "object" ? server.hmr : {}), port: undefined },
       fs: { ...(server.fs || {}), allow: [...((server.fs && server.fs.allow) || []), ".", ${JSON.stringify(mainRoot)}] } },
   };
@@ -121,12 +129,12 @@ const freePort = () =>
   });
 
 const readMaybe = (f) => fs.readFile(f).catch(() => null);
-const sameFile = async (a, b) => {
+export const sameFile = async (a, b) => {
   const [x, y] = await Promise.all([readMaybe(a), readMaybe(b)]);
   return !!x && !!y && x.equals(y);
 };
 
-function pmOf(dir) {
+export function pmOf(dir) {
   const has = (f) => existsSync(path.join(dir, f));
   return has("pnpm-lock.yaml") ? "pnpm" : has("yarn.lock") ? "yarn" : has("bun.lock") || has("bun.lockb") ? "bun" : "npm";
 }
@@ -139,12 +147,12 @@ export function versionStatus(root) {
   return [...runsOf(root).values()].map(publicRun);
 }
 
-function say(run, line) {
+export function say(run, line) {
   for (const l of String(line).split("\n")) if (l.trim()) run.log.push(l.replace(/\x1b\[[0-9;]*m/g, ""));
   if (run.log.length > LOG_LINES) run.log.splice(0, run.log.length - LOG_LINES);
 }
 
-function exec(run, cmd, args, cwd) {
+export function exec(run, cmd, args, cwd) {
   return new Promise((resolve) => {
     const p = spawn(cmd, args, { cwd, env: { ...process.env, FORCE_COLOR: "0" }, stdio: ["ignore", "pipe", "pipe"] });
     p.stdout.on("data", (d) => say(run, d));
@@ -172,7 +180,7 @@ export async function startVersion(root, ref) {
   return publicRun(run);
 }
 
-function fail(run, message) {
+export function fail(run, message) {
   if (run.status === "stopped") return;
   run.status = "failed";
   run.error = message;
@@ -196,6 +204,14 @@ async function prepare(root, run, commit) {
     if (!add.ok) return fail(run, `Couldn't check out ${run.ref}: ${add.err}`);
   }
   if (run.status === "stopped") return;
+  if (!(await provide(root, run))) return;
+  if (run.status === "stopped") return;
+  await serve(root, run);
+}
+
+/** What the checkout needs to run that git doesn't hold: the .env files, and dependencies (linked when they match). */
+export async function provide(root, run) {
+  const dir = run.dir;
   // Untracked settings the app needs to start (.env.local and friends), copied from your checkout.
   for (const name of await fs.readdir(root).catch(() => [])) {
     if (/^\.env(\..+)?$/.test(name) && !existsSync(path.join(dir, name))) await fs.copyFile(path.join(root, name), path.join(dir, name)).catch(() => {});
@@ -215,13 +231,12 @@ async function prepare(root, run, commit) {
     run.status = "installing";
     const pm = pmOf(dir);
     say(run, `${pm} install (this version's dependencies differ from yours)`);
-    if (!(await exec(run, pm, ["install"], dir))) return fail(run, `${pm} install failed in the ${run.ref} checkout`);
+    if (!(await exec(run, pm, ["install"], dir))) return fail(run, `${pm} install failed in the ${run.ref} checkout`), false;
   }
-  if (run.status === "stopped") return;
-  await serve(root, run);
+  return true;
 }
 
-async function serve(root, run) {
+export async function serve(root, run, { kit = null } = {}) {
   const dir = run.dir;
   const port = await freePort();
   run.status = "starting";
@@ -229,8 +244,17 @@ async function serve(root, run) {
   const viteBin = path.join(dir, "node_modules", "vite", "bin", "vite.js");
   let cmd, args;
   if (existsSync(viteBin)) {
-    await fs.writeFile(path.join(dir, CONFIG_NAME), versionViteConfig({ userConfig, port, mainRoot: root }));
-    [cmd, args] = [process.execPath, [viteBin, "--config", CONFIG_NAME, "--port", String(port), "--strictPort"]];
+    // Its own optimizer cache: the checkouts share the project's node_modules.
+    await fs.writeFile(path.join(dir, CONFIG_NAME), versionViteConfig({ userConfig, port, mainRoot: root, kit, cache: `.ui-tweaks-vite-${path.basename(dir)}` }));
+    // Loaded without bundling where Vite can (6.1+): a config that imports something by a path outside the
+    // project (a local plugin like ../ui-tweak-kit) fails to bundle from a checkout elsewhere, even when it's
+    // imported with a fallback.
+    const viteVersion = await fs.readFile(path.join(dir, "node_modules", "vite", "package.json"), "utf8").then((t) => JSON.parse(t).version, () => "0");
+    const [major, minor] = viteVersion.split(".").map(Number);
+    const runner = major > 6 || (major === 6 && minor >= 1) ? ["--configLoader", "runner"] : [];
+    [cmd, args] = [process.execPath, [viteBin, "--config", CONFIG_NAME, ...runner, "--port", String(port), "--strictPort"]];
+  } else if (kit) {
+    return fail(run, "Canvas copies need a Vite project for now.");
   } else if (existsSync(path.join(dir, "node_modules", "next"))) {
     [cmd, args] = [process.execPath, [path.join(dir, "node_modules", "next", "dist", "bin", "next"), "dev", "-p", String(port)]];
   } else if (existsSync(path.join(dir, "index.html")) || !existsSync(path.join(dir, "package.json"))) {
@@ -241,12 +265,14 @@ async function serve(root, run) {
   }
   say(run, `starting ${run.ref} on port ${port}`);
   stopWithParent();
+  live.add(run);
   const proc = spawn(cmd, args, { cwd: dir, env: { ...process.env, FORCE_COLOR: "0", BROWSER: "none", PORT: String(port) }, stdio: ["ignore", "pipe", "pipe"] });
   run.proc = proc;
   proc.stdout.on("data", (d) => say(run, d));
   proc.stderr.on("data", (d) => say(run, d));
   proc.on("exit", (code) => {
     run.proc = null;
+    live.delete(run);
     if (run.status !== "stopped") fail(run, `The ${run.ref} dev server stopped (exit ${code}).`);
   });
   const url = `http://localhost:${port}`;
@@ -274,11 +300,11 @@ export async function stopVersion(root, ref) {
 
 // The versions' dev servers go when this one does. Set up with the first version, so a dev server that
 // never opens one is left exactly as it was; a signal only exits here if nothing else was listening for it.
-let watching = false;
+export const sharedRuns = shared;
 function stopWithParent() {
-  if (watching) return;
-  watching = true;
-  const stopAll = () => { for (const m of runs.values()) for (const run of m.values()) if (run.proc) run.proc.kill(); };
+  if (shared.watching) return;
+  shared.watching = true;
+  const stopAll = () => { for (const run of live) if (run.proc) run.proc.kill(); };
   process.once("exit", stopAll);
   for (const [sig, code] of [["SIGINT", 130], ["SIGTERM", 143], ["SIGHUP", 129]]) process.once(sig, () => { stopAll(); if (!process.listenerCount(sig)) process.exit(code); });
 }

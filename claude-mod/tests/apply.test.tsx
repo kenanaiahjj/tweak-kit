@@ -400,3 +400,12 @@ test('every state: the prompt follows the state-machine skill, and the report ca
   const done = askOutcome('edit', '{"summary":"Built it","url":"/states/x","states":[{"group":"Data","name":"empty"}]}', ['main.tsx'])
   expect(done.states?.[0]?.name).toBe('empty')
 })
+
+test('an ask from a canvas copy works in the copy, never the project', () => {
+  const text = askPrompt({ id: 'c', kind: 'edit', instruction: 'bigger title', dir: '/cache/app/copy-home', branch: 'tweak/home', copyName: 'Home copy', refs: ['.ui-tweaks/refs/r1.png'] }, '/p')
+  expect(text).toContain('Work in the canvas copy at /cache/app/copy-home')
+  expect(text).toContain('tweak/home')
+  expect(text).toContain('never touch /p')
+  expect(text).toContain('/cache/app/copy-home/.ui-tweaks/refs/r1.png')
+  expect(askPrompt({ id: 'd', kind: 'edit', instruction: 'x' }, '/p')).toContain('The project is /p')
+})

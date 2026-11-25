@@ -851,9 +851,6 @@ export function studioPage(appPath) {
           <button class="prev" data-icon="chevron-left" title="Previous screen (←)">‹</button>
           <select class="focus-pick" title="Screen"></select>
           <button class="next" data-icon="chevron-right" title="Next screen (→)">›</button>
-          <button class="scr-add" data-icon="plus" title="New screen: a copy of this one (then edit its URL)">＋</button>
-          <button class="scr-edit" data-icon="pencil" title="Rename this screen or change its URL">✎</button>
-          <button class="scr-del" data-icon="trash" title="Remove this screen">🗑</button>
           <button class="pages-toggle" data-icon="list" title="Screens and routes">☰</button>
           <button class="overview" data-icon="grid" title="All screens at a glance">▦</button>
           <button class="canvas-toggle" data-icon="canvas" title="Canvas: every screen as a picture with your pinned explorations beside it and the flow between screens. Double-click a screen to work on it">Canvas</button>
@@ -1769,29 +1766,6 @@ export function studioPage(appPath) {
   });
   addEventListener("keydown", (e) => { if (e.key === "Escape") $(".overview-pop").hidden = true; });
   $(".focus-pick").addEventListener("change", (e) => { select(e.target.value); setMode("focus", e.target.value); });
-  $(".scr-add").addEventListener("click", () => {
-    const a = current();
-    const copy = addArtboard({ name: a ? a.name + " copy" : "Screen", url: a && a.url, device: a && a.device });
-    setMode("focus", copy.id);
-  });
-  $(".scr-edit").addEventListener("click", () => {
-    const a = current();
-    if (!a) return;
-    const name = prompt("Screen name", a.name || "");
-    if (name === null) return;
-    const url = prompt("Screen URL (path, query and #hash of your app, e.g. /?screen=settings)", a.url || "/");
-    if (url === null) return;
-    a.name = name.trim() || a.name;
-    a.url = url.trim() ? (url.trim().startsWith("/") ? url.trim() : "/" + url.trim()) : a.url;
-    save();
-    render();
-  });
-  $(".scr-del").addEventListener("click", () => {
-    const a = current();
-    if (!a || !confirm('Remove the screen "' + (a.name || a.url) + '"? (Your app is not changed.)')) return;
-    removeArtboard(a.id);
-    setMode("focus", focusedId());
-  });
   $(".prev").addEventListener("click", () => step(-1));
   $(".next").addEventListener("click", () => step(1));
   $(".focus-device").addEventListener("change", (e) => {
